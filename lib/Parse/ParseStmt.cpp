@@ -89,6 +89,8 @@ StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc) {
 ///         'break' ';'
 ///         'return' expression[opt] ';'
 /// [GNU]   'goto' '*' expression ';'
+/// [CP]    '_Cilk_spawn' statement ';'
+/// [CP]    '_Cilk_sync' ';'
 ///
 /// [OBC] objc-throw-statement:
 /// [OBC]   '@' 'throw' expression ';'
@@ -339,6 +341,34 @@ Retry:
   case tok::annot_pragma_captured:
     ProhibitAttributes(Attrs);
     return HandlePragmaCaptured();
+
+  case tok::kw__Cilk_sync:               // [CP] _Cilk_sync statement
+    if (!getLangOpts().CilkPlus) {
+      Diag(Tok, diag::err_cilkplus_disable);
+      SkipUntil(tok::semi);
+      return StmtError();
+    }
+    Res = ParseCilkSyncStatement();
+    SemiError = "_Cilk_sync";
+    break;
+
+  case tok::kw__Cilk_spawn:              // [CP] _Cilk_spawn statement
+    if (!getLangOpts().CilkPlus) {
+      Diag(Tok, diag::err_cilkplus_disable);
+      SkipUntil(tok::semi);
+      return StmtError();
+    }
+    Res = ParseCilkSpawnStatement();
+    SemiError = "_Cilk_spawn";
+    break;
+
+  // case tok::kw__Cilk_for:
+  //   if (!getLangOpts().CilkPlus) {
+  //     Diag(Tok, diag::err_cilkplus_disable);
+  //     SkipUntil(tok::semi);
+  //     return StmtError();
+  //   }
+  //   return ParseCilkForStmt();
 
   case tok::annot_pragma_openmp:
     ProhibitAttributes(Attrs);
@@ -1826,6 +1856,30 @@ StmtResult Parser::ParseReturnStatement() {
     }
   }
   return Actions.ActOnReturnStmt(ReturnLoc, R.get(), getCurScope());
+}
+
+/// ParseCilkSyncStatement
+///       jump-statement:
+///         '_Cilk_sync' ';'
+StmtResult Parser::ParseCilkSyncStatement() {
+  assert(Tok.is(tok::kw__Cilk_sync) && "Not a _Cilk_sync stmt!");
+  return Actions.ActOnCilkSyncStmt(ConsumeToken());
+}
+
+/// ParseCilkSpawnStatement
+///       jump-statement:
+///         '_Cilk_spawn' statement
+StmtResult Parser::ParseCilkSpawnStatement() {
+  assert(Tok.is(tok::kw__Cilk_spawn) && "Not a _Cilk_spawn stmt!");
+  SourceLocation SpawnLoc = ConsumeToken();  // eat the '_Cilk_spawn'.
+
+  // Parse statement of spawned child
+  StmtResult SubStmt = ParseStatement();
+  if (SubStmt.isInvalid()) {
+    SkipUntil(tok::semi);
+    return StmtError();
+  }
+  return Actions.ActOnCilkSpawnStmt(SpawnLoc, SubStmt.get());
 }
 
 StmtResult Parser::ParsePragmaLoopHint(StmtVector &Stmts, bool OnlyStatement,

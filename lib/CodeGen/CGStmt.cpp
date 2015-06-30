@@ -89,6 +89,7 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
   case Stmt::DefaultStmtClass:
   case Stmt::CaseStmtClass:
   case Stmt::SEHLeaveStmtClass:
+  case Stmt::CilkSyncStmtClass:
     llvm_unreachable("should have emitted these statements as simple");
 
 #define STMT(Type, Base)
@@ -143,6 +144,8 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
     EmitCapturedStmt(*CS, CS->getCapturedRegionKind());
     }
     break;
+  case Stmt::CilkSpawnStmtClass:
+                              EmitCilkSpawnStmt(cast<CilkSpawnStmt>(*S)); break;
   case Stmt::ObjCAtTryStmtClass:
     EmitObjCAtTryStmt(cast<ObjCAtTryStmt>(*S));
     break;
@@ -258,9 +261,21 @@ bool CodeGenFunction::EmitSimpleStmt(const Stmt *S) {
   case Stmt::DefaultStmtClass:  EmitDefaultStmt(cast<DefaultStmt>(*S));   break;
   case Stmt::CaseStmtClass:     EmitCaseStmt(cast<CaseStmt>(*S));         break;
   case Stmt::SEHLeaveStmtClass: EmitSEHLeaveStmt(cast<SEHLeaveStmt>(*S)); break;
+  case Stmt::CilkSyncStmtClass: EmitCilkSyncStmt(cast<CilkSyncStmt>(*S)); break;
   }
 
   return true;
+}
+
+/// EmitCilkSyncStmt - Emit a _Cilk_sync node.
+void CodeGenFunction::EmitCilkSyncStmt(const CilkSyncStmt &S) {
+  // If this code is reachable then emit a stop point (if generating
+  // debug info). We have to do this ourselves because we are on the
+  // "simple" statement path.
+  if (HaveInsertPoint())
+    EmitStopPoint(&S);
+
+  Builder.CreateFence(llvm::AtomicOrdering::Acquire);  // TODO: replace with sync
 }
 
 /// EmitCompoundStmt - Emit a compound statement {..} node.  If GetLast is true,
@@ -1091,6 +1106,55 @@ void CodeGenFunction::EmitReturnStmt(const ReturnStmt &S) {
 
   cleanupScope.ForceCleanup();
   EmitBranchThroughCleanup(ReturnBlock);
+}
+
+void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
+
+  llvm::BasicBlock *ChildBlock = createBasicBlock("detach.child");
+  llvm::BasicBlock *ParentBlock = createBasicBlock("detach.parent");
+
+  // Handle spawning of calls in a special manner, to evaluate
+  // arguments before spawn.
+  // if (const auto *SpawnedCall = dyn_cast_or_null<CallExpr>(S.getSpawnedStmt())) {
+  //   CallArgList Args;
+    
+  //   // If this code is reachable then emit a stop point (if generating
+  //   // debug info). We have to do this ourselves because we are on the
+  //   // "simple" statement path.
+  //   if (HaveInsertPoint())
+  //     EmitStopPoint(&S);
+
+  //   // Emit argument evaluation
+
+  //   // Emit the callee
+  //   llvm::Value *Callee = EmitScalarExpr(SpawnedCall->getCallee());
+
+  //   // Perform detach
+  //   Builder.CreateSpawn(ContinueBlock, SpawnedBlock);
+  //   EmitBlock(SpawnedBlock);
+    
+  //   // Emit the call to the spawned function
+  //   EmitCallOrInvoke(Callee, Args);
+    
+  // } else {
+    // If this code is reachable then emit a stop point (if generating
+    // debug info). We have to do this ourselves because we are on the
+    // "simple" statement path.
+    if (HaveInsertPoint())
+      EmitStopPoint(&S);
+
+    // Otherwise, we assume that the programmer dealt with races
+    // correctly.
+    Builder.CreateDetach(ChildBlock, ParentBlock);
+    EmitBlock(ChildBlock);
+    // Emit the spawned statement
+    EmitStmt(S.getSpawnedStmt());
+  // }
+  // The CFG path into the spawned statement should terminate with a
+  // `reattach'.
+  Builder.CreateReattach();
+  // Now emit the parent block
+  EmitBlock(ParentBlock);
 }
 
 void CodeGenFunction::EmitDeclStmt(const DeclStmt &S) {

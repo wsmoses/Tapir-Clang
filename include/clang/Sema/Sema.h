@@ -1685,7 +1685,6 @@ public:
   void ActOnParamDefaultArgumentError(Decl *param, SourceLocation EqualLoc);
   bool SetParamDefaultArgument(ParmVarDecl *Param, Expr *DefaultArg,
                                SourceLocation EqualLoc);
-
   void AddInitializerToDecl(Decl *dcl, Expr *init, bool DirectInit,
                             bool TypeMayContainAuto);
   void ActOnUninitializedDecl(Decl *dcl, bool TypeMayContainAuto);
@@ -3352,6 +3351,12 @@ public:
   RecordDecl *CreateCapturedStmtRecordDecl(CapturedDecl *&CD,
                                            SourceLocation Loc,
                                            unsigned NumParams);
+
+  void DiagnoseCilkSpawn(Stmt *S);
+
+  StmtResult ActOnCilkSyncStmt(SourceLocation SyncLoc);
+  StmtResult ActOnCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *S);
+
   VarDecl *getCopyElisionCandidate(QualType ReturnType, Expr *E,
                                    bool AllowFunctionParameters);
   bool isCopyElisionCandidate(QualType ReturnType, const VarDecl *VD,

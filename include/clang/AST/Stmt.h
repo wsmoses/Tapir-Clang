@@ -2198,6 +2198,70 @@ public:
   friend class ASTStmtReader;
 };
 
+/// CilkSpawnStmt - This represents a _Cilk_spawn.
+///
+class CilkSpawnStmt : public Stmt {
+  SourceLocation SpawnLoc;
+  Stmt *SpawnedStmt;
+
+public:
+  explicit CilkSpawnStmt(SourceLocation SL)
+      : CilkSpawnStmt(SL, nullptr) {}
+
+  CilkSpawnStmt(SourceLocation SL, Stmt *S)
+      : Stmt(CilkSpawnStmtClass), SpawnLoc(SL), SpawnedStmt(S) { }
+
+  // \brief Build an empty _Cilk_spawn statement.
+  explicit CilkSpawnStmt(EmptyShell Empty)
+      : Stmt(CilkSpawnStmtClass, Empty) { }
+
+  const Stmt *getSpawnedStmt() const;
+  Stmt *getSpawnedStmt();
+  void setSpawnedStmt(Stmt *S) { SpawnedStmt = S; }
+
+  SourceLocation getSpawnLoc() const { return SpawnLoc; }
+  void setSpawnLoc(SourceLocation L) { SpawnLoc = L; }
+
+  SourceLocation getLocStart() const LLVM_READONLY { return SpawnLoc; }
+  SourceLocation getLocEnd() const LLVM_READONLY {
+    return SpawnedStmt->getLocEnd();
+  }
+
+  static bool classof(const Stmt *T) {
+    return T->getStmtClass() == CilkSpawnStmtClass;
+  }
+
+  // Iterators
+  child_range children() {
+    return child_range(&SpawnedStmt, &SpawnedStmt+1);
+  }
+};
+
+/// CilkSyncStmt - This represents a _Cilk_sync.
+///
+class CilkSyncStmt : public Stmt {
+  SourceLocation SyncLoc;
+
+public:
+  CilkSyncStmt(SourceLocation SL) : Stmt(CilkSyncStmtClass), SyncLoc(SL) {}
+
+  // \brief Build an empty _Cilk_sync statement.
+  explicit CilkSyncStmt(EmptyShell Empty) : Stmt(CilkSyncStmtClass, Empty) { }
+
+  SourceLocation getSyncLoc() const { return SyncLoc; }
+  void setSyncLoc(SourceLocation L) { SyncLoc = L; }
+
+  SourceLocation getLocStart() const LLVM_READONLY { return SyncLoc; }
+  SourceLocation getLocEnd() const LLVM_READONLY { return SyncLoc; }
+
+  static bool classof(const Stmt *T) {
+    return T->getStmtClass() == CilkSyncStmtClass;
+  }
+
+  // Iterators
+  child_range children() { return child_range(); }
+};
+
 }  // end namespace clang
 
 #endif

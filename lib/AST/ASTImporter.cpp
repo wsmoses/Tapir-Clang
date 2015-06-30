@@ -206,6 +206,8 @@ namespace clang {
     Stmt *VisitObjCAtSynchronizedStmt(ObjCAtSynchronizedStmt *S);
     Stmt *VisitObjCAtThrowStmt(ObjCAtThrowStmt *S);
     Stmt *VisitObjCAutoreleasePoolStmt(ObjCAutoreleasePoolStmt *S);
+    Stmt *VisitCilkSpawnStmt(CilkSpawnStmt *S);
+    Stmt *VisitCilkSyncStmt(CilkSyncStmt *S);
 
     // Importing expressions
     Expr *VisitExpr(Expr *E);
@@ -4954,6 +4956,19 @@ Stmt *ASTNodeImporter::VisitObjCAutoreleasePoolStmt
     return nullptr;
   return new (Importer.getToContext()) ObjCAutoreleasePoolStmt(ToAtLoc,
                                                                ToSubStmt);
+}
+
+Stmt *ASTNodeImporter::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
+  SourceLocation SpawnLoc = Importer.Import(S->getSpawnLoc());
+  Stmt *Child = Importer.Import(S->getSpawnedStmt());
+  if (!Child && S->getSpawnedStmt())
+    return nullptr;
+  return new (Importer.getToContext()) CilkSpawnStmt(SpawnLoc, Child);
+}
+
+Stmt *ASTNodeImporter::VisitCilkSyncStmt(CilkSyncStmt *S) {
+  SourceLocation SyncLoc = Importer.Import(S->getSyncLoc());
+  return new (Importer.getToContext()) CilkSyncStmt(SyncLoc);
 }
 
 //----------------------------------------------------------------------------

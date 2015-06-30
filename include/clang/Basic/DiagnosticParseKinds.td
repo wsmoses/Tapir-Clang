@@ -969,6 +969,32 @@ def warn_pragma_expected_enable_disable : Warning<
 def warn_pragma_unknown_extension : Warning<
   "unknown OpenCL extension %0 - ignoring">, InGroup<IgnoredPragmas>;
 
+// Cilk Plus
+def err_cilkplus_disable: Error<
+  "Cilk Plus support disabled - compile with -fcilkplus">;
+
+def err_cilk_for_missing_control_variable: Error<
+  "missing control variable declaration and initialization in '_Cilk_for'">;
+
+def err_cilk_for_missing_condition: Error<
+  "missing loop condition expression in '_Cilk_for'">;
+
+def err_cilk_for_missing_increment: Error<
+  "missing loop increment expression in '_Cilk_for'">;
+
+def err_cilk_for_missing_semi: Error<
+  "expected ';' in '_Cilk_for'">;
+
+def err_cilk_for_expect_grainsize: Error<
+  "expected 'grainsize' in '#pragma cilk'">;
+
+def err_cilk_for_expect_assign: Error<
+  "expected '=' in '#pragma cilk'">;
+
+def warn_cilk_for_following_grainsize: Warning<
+  "'#pragma cilk' ignored, because it is not followed by a '_Cilk_for' loop">,
+  InGroup<SourceUsesCilkPlus>;
+
 // OpenMP support.
 def warn_pragma_omp_ignored : Warning<
   "unexpected '#pragma omp ...' in program">, InGroup<SourceUsesOpenMP>, DefaultIgnore;

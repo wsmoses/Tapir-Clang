@@ -1562,6 +1562,7 @@ private:
   bool HasImplicitReturnZero : 1;
   bool IsLateTemplateParsed : 1;
   bool IsConstexpr : 1;
+  bool IsSpawning: 1;
 
   /// \brief Indicates if the function uses __try.
   bool UsesSEHTry : 1;
@@ -1838,6 +1839,10 @@ public:
   /// Whether this is a (C++11) constexpr function or constexpr constructor.
   bool usesSEHTry() const { return UsesSEHTry; }
   void setUsesSEHTry(bool UST) { UsesSEHTry = UST; }
+
+  /// \brief Whether this function is a Cilk spawning function.
+  bool isSpawning() const { return IsSpawning; }
+  void setSpawning() { IsSpawning = true; }
 
   /// \brief Whether this function has been deleted.
   ///
@@ -3621,6 +3626,8 @@ private:
   unsigned ContextParam;
   /// \brief The body of the outlined function.
   llvm::PointerIntPair<Stmt *, 1, bool> BodyAndNothrow;
+  /// \brief Whether this CapturedDecl contains Cilk spawns.
+  bool IsSpawning;
 
   explicit CapturedDecl(DeclContext *DC, unsigned NumParams)
     : Decl(Captured, DC, SourceLocation()), DeclContext(Captured),
@@ -3639,6 +3646,9 @@ public:
 
   Stmt *getBody() const override { return BodyAndNothrow.getPointer(); }
   void setBody(Stmt *B) { BodyAndNothrow.setPointer(B); }
+
+  void setSpawning() { IsSpawning = true; }
+  bool isSpawning() const { return IsSpawning; }
 
   bool isNothrow() const { return BodyAndNothrow.getInt(); }
   void setNothrow(bool Nothrow = true) { BodyAndNothrow.setInt(Nothrow); }
@@ -3690,6 +3700,42 @@ public:
   friend class ASTDeclReader;
   friend class ASTDeclWriter;
 };
+
+// /// \brief This represents a Cilk_Spawn declaration.
+// class CilkSpawnDecl : public Decl {
+//   /// \brief The CapturedStmt associated to the expression or statement with
+//   /// a Cilk spawn call.
+//   CapturedStmt *CapturedSpawn;
+
+//   CilkSpawnDecl(DeclContext *DC, CapturedStmt *Spawn);
+
+// public:
+//   static CilkSpawnDecl *Create(ASTContext &C, DeclContext *DC,
+//                                CapturedStmt *Spawn);
+//   static CilkSpawnDecl *CreateDeserialized(ASTContext &C, unsigned ID);
+
+//   /// \brief Returns if this Cilk spawn has a receiver.
+//   bool hasReceiver() const;
+
+//   /// \brief Returns the receiver declaration.
+//   VarDecl *getReceiverDecl() const;
+
+//   /// \brief Returns the expression or statement with a Cilk spawn.
+//   Stmt *getSpawnStmt();
+//   const Stmt *getSpawnStmt() const {
+//     return const_cast<CilkSpawnDecl *>(this)->getSpawnStmt();
+//   }
+
+//   /// \brief Returns the associated CapturedStmt.
+//   CapturedStmt *getCapturedStmt() { return CapturedSpawn; }
+//   const CapturedStmt *getCapturedStmt() const { return CapturedSpawn; }
+
+//   static bool classof(const Decl *D) { return classofKind(D->getKind()); }
+//   static bool classofKind(Kind K) { return K == CilkSpawn; }
+
+//   friend class ASTDeclReader;
+//   friend class ASTDeclWriter;
+// };
 
 /// \brief Describes a module import declaration, which makes the contents
 /// of the named module visible in the current translation unit.

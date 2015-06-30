@@ -723,6 +723,8 @@ def fno_implicit_modules :
   Flag <["-"], "fno-implicit-modules">,
   Group<f_Group>, Flags<[DriverOption, CC1Option]>;
 def fretain_comments_from_system_headers : Flag<["-"], "fretain-comments-from-system-headers">, Group<f_Group>, Flags<[CC1Option]>;
+def fcilkplus : Flag <["-"], "fcilkplus">, Group<f_Group>, Flags<[CC1Option]>,
+  HelpText<"Enable Cilk Plus extensions">;
 
 def fmudflapth : Flag<["-"], "fmudflapth">, Group<f_Group>;
 def fmudflap : Flag<["-"], "fmudflap">, Group<f_Group>;

@@ -886,6 +886,10 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
     Builder.defineMacro("_OPENMP", "201307");
   }
 
+  // Cilk definition
+  if (LangOpts.CilkPlus)
+    Builder.defineMacro("__cilk", "200");
+
   // CUDA device path compilaton
   if (LangOpts.CUDAIsDevice) {
     // The CUDA_ARCH value is set for the GPU target specified in the NVPTX

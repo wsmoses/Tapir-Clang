@@ -9129,6 +9129,7 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init,
   //   struct T { S a, b; } t = { Temp(), Temp() }
   //
   // we should destroy the first Temp before constructing the second.
+  //
   ExprResult Result = ActOnFinishFullExpr(Init, VDecl->getLocation(),
                                           false,
                                           VDecl->isConstexpr());

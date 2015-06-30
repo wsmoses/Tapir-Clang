@@ -1638,6 +1638,22 @@ void ASTStmtWriter::VisitAsTypeExpr(AsTypeExpr *E) {
 }
 
 //===----------------------------------------------------------------------===//
+// Cilk spawn and Cilk sync
+//===----------------------------------------------------------------------===//
+void ASTStmtWriter::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
+  VisitStmt(S);
+  Writer.AddSourceLocation(S->getSpawnLoc(), Record);
+  Writer.AddStmt(S->getSpawnedStmt());
+  Code = serialization::STMT_CILKSPAWN;
+}
+
+void ASTStmtWriter::VisitCilkSyncStmt(CilkSyncStmt *S) {
+  VisitStmt(S);
+  Writer.AddSourceLocation(S->getSyncLoc(), Record);
+  Code = serialization::STMT_CILKSYNC;
+}
+
+//===----------------------------------------------------------------------===//
 // Microsoft Expressions and Statements.
 //===----------------------------------------------------------------------===//
 void ASTStmtWriter::VisitMSPropertyRefExpr(MSPropertyRefExpr *E) {

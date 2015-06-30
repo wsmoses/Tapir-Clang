@@ -2227,10 +2227,18 @@ enum CXCursorKind {
 
   /** \brief OpenMP taskwait directive.
    */
-  CXCursor_OMPTaskgroupDirective          = 254,
+  CXCursor_OMPTaskgroupDirective         = 254,
 
+  /** \brief A _Cilk_spawn statement.
+   */
+  CXCursor_CilkSpawnStmt                 = 255,
 
-  CXCursor_LastStmt                      = CXCursor_OMPTaskgroupDirective,
+  /** \brief A _Cilk_sync statement.
+   */
+  CXCursor_CilkSyncStmt                  = 256,
+
+  /* CXCursor_LastStmt                      = CXCursor_OMPTaskgroupDirective, */
+  CXCursor_LastStmt                      = CXCursor_CilkSyncStmt,
 
   /**
    * \brief Cursor that represents the translation unit itself.

@@ -1498,6 +1498,11 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.PascalStrings = Args.hasArg(OPT_fpascal_strings);
   Opts.VtorDispMode = getLastArgIntValue(Args, OPT_vtordisp_mode_EQ, 1, Diags);
   Opts.Borland = Args.hasArg(OPT_fborland_extensions);
+
+  Opts.CilkPlus = Args.hasArg(OPT_fcilkplus);
+  if (Opts.CilkPlus && (Opts.ObjC1 || Opts.ObjC2))
+    Diags.Report(diag::err_drv_cilk_objc);
+
   Opts.WritableStrings = Args.hasArg(OPT_fwritable_strings);
   Opts.ConstStrings = Args.hasFlag(OPT_fconst_strings, OPT_fno_const_strings,
                                    Opts.ConstStrings);

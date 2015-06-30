@@ -4283,6 +4283,10 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
     return cxstring::createRef("OMPTargetDirective");
   case CXCursor_OMPTeamsDirective:
     return cxstring::createRef("OMPTeamsDirective");
+  case CXCursor_CilkSpawnStmt:
+    return cxstring::createRef("CilkSpawnStmt");
+  case CXCursor_CilkSyncStmt:
+    return cxstring::createRef("CilkSyncStmt");
   case CXCursor_OverloadCandidate:
       return cxstring::createRef("OverloadCandidate");
   }

@@ -14290,3 +14290,45 @@ Sema::ActOnObjCBoolLiteral(SourceLocation OpLoc, tok::TokenKind Kind) {
   return new (Context)
       ObjCBoolLiteralExpr(Kind == tok::kw___objc_yes, BoolT, OpLoc);
 }
+
+// ExprResult
+// Sema::ActOnCilkSpawnCall(SourceLocation SpawnLoc, Expr *E) {
+//   assert(FunctionScopes.size() > 0 && "FunctionScopes missing TU scope");
+//   if (FunctionScopes.size() < 1 ||
+//       getCurFunction()->CompoundScopes.size() < 1) {
+//     Diag(SpawnLoc, diag::err_spawn_invalid_scope);
+//     return ExprError();
+//   }
+
+//   return BuildCilkSpawnCall(SpawnLoc, E);
+// }
+
+// ExprResult
+// Sema::BuildCilkSpawnCall(SourceLocation SpawnLoc, Expr *E) {
+//   assert(E && "null expression");
+
+//   Expr *InnerE = E;
+//   if (CXXBindTemporaryExpr *T = dyn_cast<CXXBindTemporaryExpr>(E))
+//     InnerE = T->getSubExpr();
+
+//   bool isCall = isa<CallExpr>(InnerE);
+//   if (CXXOperatorCallExpr *O = dyn_cast<CXXOperatorCallExpr>(InnerE))
+//     isCall = O->getOperator() == OO_Call;
+
+//   if (!isCall) {
+//     Diag(E->getExprLoc(), PDiag(diag::err_not_a_call) << getExprRange(E));
+//     return ExprError();
+//   }
+
+//   CallExpr *Call = cast<CallExpr>(InnerE);
+//   if (Call->isCilkSpawnCall()) {
+//     Diag(E->getExprLoc(), diag::err_spawn_spawn);
+//     return ExprError();
+//   }
+
+//   Call->setCilkSpawnLoc(SpawnLoc);
+//   getCurCompoundScope().setHasCilkSpawn();
+//   CilkSpawnCalls.push_back(Call);
+
+//   return Owned(E);
+// }

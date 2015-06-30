@@ -1616,6 +1616,8 @@ private:
   StmtResult ParseContinueStatement();
   StmtResult ParseBreakStatement();
   StmtResult ParseReturnStatement();
+  StmtResult ParseCilkSpawnStatement();
+  StmtResult ParseCilkSyncStatement();
   StmtResult ParseAsmStatement(bool &msAsm);
   StmtResult ParseMicrosoftAsmStatement(SourceLocation AsmLoc);
   StmtResult ParsePragmaLoopHint(StmtVector &Stmts, bool OnlyStatement,

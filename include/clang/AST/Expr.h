@@ -2154,6 +2154,8 @@ class CallExpr : public Expr {
   Stmt **SubExprs;
   unsigned NumArgs;
   SourceLocation RParenLoc;
+  // Valid only if it is a Cilk spawn call
+  SourceLocation CilkSpawnLoc;
 
 protected:
   // These versions of the constructor are for derived classes.
@@ -2285,6 +2287,10 @@ public:
 
   SourceLocation getLocStart() const LLVM_READONLY;
   SourceLocation getLocEnd() const LLVM_READONLY;
+
+  void setCilkSpawnLoc(SourceLocation Loc) { CilkSpawnLoc = Loc; }
+  SourceLocation getCilkSpawnLoc() const LLVM_READONLY { return CilkSpawnLoc; }
+  bool isCilkSpawnCall() const { return CilkSpawnLoc.isValid(); }
 
   static bool classof(const Stmt *T) {
     return T->getStmtClass() >= firstCallExprConstant &&

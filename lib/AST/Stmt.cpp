@@ -2211,3 +2211,10 @@ OMPTeamsDirective *OMPTeamsDirective::CreateEmpty(const ASTContext &C,
   return new (Mem) OMPTeamsDirective(NumClauses);
 }
 
+// CilkSpawnStmt
+const Stmt* CilkSpawnStmt::getSpawnedStmt() const {
+  return SpawnedStmt;
+}
+Stmt* CilkSpawnStmt::getSpawnedStmt() {
+  return SpawnedStmt;
+}

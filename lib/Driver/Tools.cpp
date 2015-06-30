@@ -3884,6 +3884,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     Args.AddLastArg(CmdArgs, options::OPT_faltivec);
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_show_template_tree);
   Args.AddLastArg(CmdArgs, options::OPT_fno_elide_type);
+  Args.AddLastArg(CmdArgs, options::OPT_fcilkplus);
+
+  if (Args.hasArg(options::OPT_fcilkplus))
+    if (getToolChain().getTriple().getOS() != llvm::Triple::Linux &&
+        getToolChain().getTriple().getOS() != llvm::Triple::UnknownOS &&
+        !getToolChain().getTriple().isMacOSX())
+      D.Diag(diag::err_drv_cilk_unsupported);
 
   // Forward flags for OpenMP
   if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
@@ -6361,6 +6368,9 @@ void darwin::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       break;
     }
   }
+
+  if (Args.hasArg(options::OPT_fcilkplus))
+    CmdArgs.push_back("-lcilkrts");
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
   // Build the input file for -filelist (list of linker input files) in case we

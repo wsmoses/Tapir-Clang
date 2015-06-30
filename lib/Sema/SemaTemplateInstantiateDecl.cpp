@@ -2453,6 +2453,13 @@ Decl *TemplateDeclInstantiator::VisitOMPThreadPrivateDecl(
   return TD;
 }
 
+// Decl *TemplateDeclInstantiator::VisitCilkSpawnDecl(CilkSpawnDecl *D) {
+//   VarDecl *VD = D->getReceiverDecl();
+//   assert(VD && "Cilk spawn receiver expected");
+//   Decl *NewDecl = SemaRef.SubstDecl(VD, Owner, TemplateArgs);
+//   return SemaRef.BuildCilkSpawnDecl(NewDecl);
+// }
+
 Decl *TemplateDeclInstantiator::VisitFunctionDecl(FunctionDecl *D) {
   return VisitFunctionDecl(D, nullptr);
 }

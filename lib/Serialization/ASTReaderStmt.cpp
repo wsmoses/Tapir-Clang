@@ -2250,6 +2250,21 @@ void ASTStmtReader::VisitOMPTeamsDirective(OMPTeamsDirective *D) {
 }
 
 //===----------------------------------------------------------------------===//
+// Cilk spawn and Cilk sync
+//===----------------------------------------------------------------------===//
+
+void ASTStmtReader::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
+  VisitStmt(S);
+  S->setSpawnLoc(ReadSourceLocation(Record, Idx));
+  S->setSpawnedStmt(Reader.ReadSubStmt());
+}
+
+void ASTStmtReader::VisitCilkSyncStmt(CilkSyncStmt *S) {
+  VisitStmt(S);
+  S->setSyncLoc(ReadSourceLocation(Record, Idx));
+}
+
+//===----------------------------------------------------------------------===//
 // ASTReader Implementation
 //===----------------------------------------------------------------------===//
 
@@ -2419,7 +2434,15 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
                                            Record[ASTStmtReader::NumStmtFields]);
       break;
 
-    case EXPR_PREDEFINED:
+    case STMT_CILKSPAWN:
+      S = new (Context) CilkSpawnStmt(Empty);
+      break;
+      
+    case STMT_CILKSYNC:
+      S = new (Context) CilkSyncStmt(Empty);
+      break;
+
+      case EXPR_PREDEFINED:
       S = new (Context) PredefinedExpr(Empty);
       break;
 

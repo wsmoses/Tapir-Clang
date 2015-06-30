@@ -109,9 +109,10 @@ namespace {
     KEYNOMS18 = 0x01000,
     KEYNOOPENCL = 0x02000,
     WCHARSUPPORT = 0x04000,
-    HALFSUPPORT = 0x08000,
-    KEYCONCEPTS = 0x10000,
-    KEYALL = (0x1ffff & ~KEYNOMS18 &
+    KEYCILKPLUS = 0x08000,
+    HALFSUPPORT = 0x10000,
+    KEYCONCEPTS = 0x20000,
+    KEYALL = (0x3ffff & ~KEYNOMS18 &
               ~KEYNOOPENCL) // KEYNOMS18 and KEYNOOPENCL are used to exclude.
   };
 

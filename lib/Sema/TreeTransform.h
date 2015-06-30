@@ -1219,6 +1219,14 @@ public:
     return getSema().BuildReturnStmt(ReturnLoc, Result);
   }
 
+  /// \brief Build a new Cilk spawn statment.
+  ///
+  /// By default, performs semantic analysis to build the new expression.
+  /// Subclasses may override this routine to provide different behavior.
+  StmtResult RebuildCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *S) {
+    return getSema().ActOnCilkSpawnStmt(SpawnLoc, S);
+  }
+
   /// \brief Build a new declaration statement.
   ///
   /// By default, performs semantic analysis to build the new statement.
@@ -10900,6 +10908,26 @@ TreeTransform<Derived>::TransformCapturedStmt(CapturedStmt *S) {
   }
 
   return getSema().ActOnCapturedRegionEnd(Body.get());
+}
+
+template<typename Derived>
+StmtResult
+TreeTransform<Derived>::TransformCilkSpawnStmt(CilkSpawnStmt *S) {
+  StmtResult Child = getDerived().TransformStmt(S->getSpawnedStmt());
+  if (Child.isInvalid())
+    return StmtError();
+
+  if (!getDerived().AlwaysRebuild() &&
+      Child.get() == S->getSpawnedStmt())
+    return S;
+
+  return getDerived().RebuildCilkSpawnStmt(S->getSpawnLoc(), Child.get());
+}
+
+template<typename Derived>
+StmtResult
+TreeTransform<Derived>::TransformCilkSyncStmt(CilkSyncStmt *S) {
+  return S;
 }
 
 } // end namespace clang

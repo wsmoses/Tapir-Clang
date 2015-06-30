@@ -2291,6 +2291,9 @@ DEF_TRAVERSE_STMT(OpaqueValueExpr, {})
 DEF_TRAVERSE_STMT(TypoExpr, {})
 DEF_TRAVERSE_STMT(CUDAKernelCallExpr, {})
 
+DEF_TRAVERSE_STMT(CilkSpawnStmt, {})
+DEF_TRAVERSE_STMT(CilkSyncStmt, {})
+
 // These operators (all of them) do not need any action except
 // iterating over the children.
 DEF_TRAVERSE_STMT(BinaryConditionalOperator, {})
