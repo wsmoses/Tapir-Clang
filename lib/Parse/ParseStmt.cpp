@@ -342,25 +342,13 @@ Retry:
     ProhibitAttributes(Attrs);
     return HandlePragmaCaptured();
 
-  case tok::kw__Cilk_sync:               // [CP] _Cilk_sync statement
-    if (!getLangOpts().CilkPlus) {
-      Diag(Tok, diag::err_cilkplus_disable);
-      SkipUntil(tok::semi);
-      return StmtError();
-    }
-    Res = ParseCilkSyncStatement();
-    SemiError = "_Cilk_sync";
-    break;
-
   case tok::kw__Cilk_spawn:              // [CP] _Cilk_spawn statement
-    if (!getLangOpts().CilkPlus) {
-      Diag(Tok, diag::err_cilkplus_disable);
-      SkipUntil(tok::semi);
-      return StmtError();
-    }
-    Res = ParseCilkSpawnStatement();
-    SemiError = "_Cilk_spawn";
-    break;
+    // if (!getLangOpts().CilkPlus) {
+    //   Diag(Tok, diag::err_cilkplus_disable);
+    //   SkipUntil(tok::semi);
+    //   return StmtError();
+    // }
+    return ParseCilkSpawnStatement();
 
   // case tok::kw__Cilk_for:
   //   if (!getLangOpts().CilkPlus) {
@@ -369,6 +357,16 @@ Retry:
   //     return StmtError();
   //   }
   //   return ParseCilkForStmt();
+
+  case tok::kw__Cilk_sync:               // [CP] _Cilk_sync statement
+    // if (!getLangOpts().CilkPlus) {
+    //   Diag(Tok, diag::err_cilkplus_disable);
+    //   SkipUntil(tok::semi);
+    //   return StmtError();
+    // }
+    Res = ParseCilkSyncStatement();
+    SemiError = "_Cilk_sync";
+    break;
 
   case tok::annot_pragma_openmp:
     ProhibitAttributes(Attrs);
