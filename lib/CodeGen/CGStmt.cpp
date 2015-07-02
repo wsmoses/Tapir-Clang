@@ -246,6 +246,9 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
   case Stmt::OMPCancellationPointDirectiveClass:
     EmitOMPCancellationPointDirective(cast<OMPCancellationPointDirective>(*S));
     break;
+  case Stmt::OMPCancelDirectiveClass:
+    EmitOMPCancelDirective(cast<OMPCancelDirective>(*S));
+    break;
   }
 }
 

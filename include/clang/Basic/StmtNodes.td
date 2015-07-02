@@ -210,3 +210,4 @@ def OMPAtomicDirective : DStmt<OMPExecutableDirective>;
 def OMPTargetDirective : DStmt<OMPExecutableDirective>;
 def OMPTeamsDirective : DStmt<OMPExecutableDirective>;
 def OMPCancellationPointDirective : DStmt<OMPExecutableDirective>;
+def OMPCancelDirective : DStmt<OMPExecutableDirective>;
