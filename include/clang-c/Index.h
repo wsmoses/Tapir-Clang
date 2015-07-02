@@ -2225,19 +2225,23 @@ enum CXCursorKind {
    */
   CXCursor_OMPTeamsDirective             = 253,
 
-  /** \brief OpenMP taskwait directive.
+  /** \brief OpenMP taskgroup directive.
    */
   CXCursor_OMPTaskgroupDirective         = 254,
 
+  /** \brief OpenMP cancellation point directive.
+   */
+  CXCursor_OMPCancellationPointDirective = 255,
+
   /** \brief A _Cilk_spawn statement.
    */
-  CXCursor_CilkSpawnStmt                 = 255,
+  CXCursor_CilkSpawnStmt                 = 256,
 
   /** \brief A _Cilk_sync statement.
    */
-  CXCursor_CilkSyncStmt                  = 256,
+  CXCursor_CilkSyncStmt                  = 257,
 
-  /* CXCursor_LastStmt                      = CXCursor_OMPTaskgroupDirective, */
+  /* CXCursor_LastStmt                    = CXCursor_OMPCancellationPointDirective, */
   CXCursor_LastStmt                      = CXCursor_CilkSyncStmt,
 
   /**
