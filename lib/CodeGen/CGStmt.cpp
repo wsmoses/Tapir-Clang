@@ -275,13 +275,16 @@ bool CodeGenFunction::EmitSimpleStmt(const Stmt *S) {
 
 /// EmitCilkSyncStmt - Emit a _Cilk_sync node.
 void CodeGenFunction::EmitCilkSyncStmt(const CilkSyncStmt &S) {
+  llvm::BasicBlock *ContinueBlock = createBasicBlock("sync.continue");
+
   // If this code is reachable then emit a stop point (if generating
   // debug info). We have to do this ourselves because we are on the
   // "simple" statement path.
   if (HaveInsertPoint())
     EmitStopPoint(&S);
 
-  Builder.CreateFence(llvm::AtomicOrdering::Acquire);  // TODO: replace with sync
+  Builder.CreateSync(ContinueBlock);
+  EmitBlock(ContinueBlock);
 }
 
 /// EmitCompoundStmt - Emit a compound statement {..} node.  If GetLast is true,
