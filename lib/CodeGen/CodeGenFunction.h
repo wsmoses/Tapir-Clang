@@ -2225,6 +2225,8 @@ public:
       const llvm::function_ref<void(CodeGenFunction &)> &BodyGen,
       const llvm::function_ref<void(CodeGenFunction &)> &PostIncGen);
 
+  JumpDest getOMPCancelDestination(OpenMPDirectiveKind Kind);
+
 private:
 
   /// Helpers for the OpenMP loop directives.
@@ -2877,6 +2879,10 @@ public:
   /// \brief Create a basic block that will call the trap intrinsic, and emit a
   /// conditional branch to it, for the -ftrapv checks.
   void EmitTrapCheck(llvm::Value *Checked);
+
+  /// \brief Emit a call to trap or debugtrap and attach function attribute
+  /// "trap-func-name" if specified.
+  llvm::CallInst *EmitTrapCall(llvm::Intrinsic::ID IntrID);
 
   /// \brief Create a check for a function parameter that may potentially be
   /// declared as non-null.

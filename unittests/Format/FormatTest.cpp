@@ -3216,6 +3216,24 @@ TEST_F(FormatTest, PutEmptyBlocksIntoOneLine) {
   verifyFormat("enum E {}");
 }
 
+TEST_F(FormatTest, FormatBeginBlockEndMacros) {
+  FormatStyle Style = getLLVMStyle();
+  Style.MacroBlockBegin = "^[A-Z_]+_BEGIN$";
+  Style.MacroBlockEnd = "^[A-Z_]+_END$";
+  verifyFormat("FOO_BEGIN\n"
+               "  FOO_ENTRY\n"
+               "FOO_END", Style);
+  verifyFormat("FOO_BEGIN\n"
+               "  NESTED_FOO_BEGIN\n"
+               "    NESTED_FOO_ENTRY\n"
+               "  NESTED_FOO_END\n"
+               "FOO_END", Style);
+  verifyFormat("FOO_BEGIN(Foo, Bar)\n"
+               "  int x;\n"
+               "  x = 1;\n"
+               "FOO_END(Baz)", Style);
+}
+
 //===----------------------------------------------------------------------===//
 // Line break tests.
 //===----------------------------------------------------------------------===//
@@ -5535,6 +5553,11 @@ TEST_F(FormatTest, UnderstandsAttributes) {
   verifyFormat("SomeType s __attribute__((unused)) (InitValue);");
   verifyFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa __attribute__((unused))\n"
                "aaaaaaaaaaaaaaaaaaaaaaa(int i);");
+  FormatStyle AfterType = getLLVMStyle();
+  AfterType.AlwaysBreakAfterDefinitionReturnType = FormatStyle::DRTBS_All;
+  verifyFormat("__attribute__((nodebug)) void\n"
+               "foo() {}\n",
+               AfterType);
 }
 
 TEST_F(FormatTest, UnderstandsEllipsis) {

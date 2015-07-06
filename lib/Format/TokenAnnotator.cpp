@@ -505,7 +505,8 @@ private:
       if (Line.MustBeDeclaration && Contexts.size() == 1 &&
           !Contexts.back().IsExpression && !Line.startsWith(TT_ObjCProperty) &&
           (!Tok->Previous ||
-           !Tok->Previous->isOneOf(tok::kw_decltype, TT_LeadingJavaAnnotation)))
+           !Tok->Previous->isOneOf(tok::kw_decltype, tok::kw___attribute,
+                                   TT_LeadingJavaAnnotation)))
         Line.MightBeFunctionDecl = true;
       break;
     case tok::l_square:
@@ -1008,7 +1009,7 @@ private:
     if (Tok.isNot(tok::identifier) || !Tok.Previous)
       return false;
 
-    if (Tok.Previous->is(TT_LeadingJavaAnnotation))
+    if (Tok.Previous->isOneOf(TT_LeadingJavaAnnotation, Keywords.kw_instanceof))
       return false;
 
     // Skip "const" as it does not have an influence on whether this is a name.
@@ -1336,6 +1337,10 @@ private:
         return 0;
       if (Current->is(TT_RangeBasedForLoopColon))
         return prec::Comma;
+      if ((Style.Language == FormatStyle::LK_Java ||
+           Style.Language == FormatStyle::LK_JavaScript) &&
+          Current->is(Keywords.kw_instanceof))
+        return prec::Relational;
       if (Current->is(TT_BinaryOperator) || Current->is(tok::comma))
         return Current->getPrecedence();
       if (Current->isOneOf(tok::period, tok::arrow))
@@ -2132,6 +2137,8 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
   } else if (Style.Language == FormatStyle::LK_JavaScript) {
     if (Left.is(TT_JsFatArrow) && Right.is(tok::l_brace))
       return false;
+    if (Left.is(TT_JsTypeColon))
+      return true;
   }
 
   if (Left.is(tok::at))
@@ -2238,7 +2245,8 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
     return true;
   if (Right.is(tok::kw_typename) && Left.isNot(tok::kw_const))
     return true;
-  if (Left.isBinaryOperator() && !Left.isOneOf(tok::arrowstar, tok::lessless) &&
+  if ((Left.isBinaryOperator() || Left.is(TT_BinaryOperator)) &&
+      !Left.isOneOf(tok::arrowstar, tok::lessless) &&
       Style.BreakBeforeBinaryOperators != FormatStyle::BOS_All &&
       (Style.BreakBeforeBinaryOperators == FormatStyle::BOS_None ||
        Left.getPrecedence() == prec::Assignment))
