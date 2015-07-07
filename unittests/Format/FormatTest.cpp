@@ -516,6 +516,10 @@ TEST_F(FormatTest, FormatsForLoop) {
                "         aaaaaaaaaa);\n"
                "     iter; ++iter) {\n"
                "}");
+  verifyFormat("for (auto aaaaaaaaaaaaaaaaaaaaaaaaaaa(\n"
+               "         aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa);\n"
+               "     aaaaaaaaaaaaaaaaaaaaaaaaaaa != bbbbbbbbbbbbbbbbbbbbbbb;\n"
+               "     ++aaaaaaaaaaaaaaaaaaaaaaaaaaa) {");
 
   FormatStyle NoBinPacking = getLLVMStyle();
   NoBinPacking.BinPackParameters = false;
@@ -9811,6 +9815,11 @@ TEST_F(FormatTest, FormatsLambdas) {
                "             << std::count_if(v.begin(), v.end(), [](int x) {\n"
                "                  return x == 2; // force break\n"
                "                });");
+  verifyFormat("return aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa([=](\n"
+               "    int iiiiiiiiiiii) {\n"
+               "  return aaaaaaaaaaaaaaaaaaaaaaa != aaaaaaaaaaaaaaaaaaaaaaa;\n"
+               "});",
+               getLLVMStyleWithColumns(60));
 
   // Lambdas with return types.
   verifyFormat("int c = []() -> int { return 2; }();\n");

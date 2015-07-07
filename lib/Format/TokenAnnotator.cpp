@@ -1706,7 +1706,8 @@ unsigned TokenAnnotator::splitPenalty(const AnnotatedLine &Line,
 
   if (Left.is(tok::l_paren) && InFunctionDecl && Style.AlignAfterOpenBracket)
     return 100;
-  if (Left.is(tok::l_paren) && Left.Previous && Left.Previous->is(tok::kw_if))
+  if (Left.is(tok::l_paren) && Left.Previous &&
+      Left.Previous->isOneOf(tok::kw_if, tok::kw_for))
     return 1000;
   if (Left.is(tok::equal) && InFunctionDecl)
     return 110;
@@ -2205,6 +2206,9 @@ bool TokenAnnotator::canBreakBefore(const AnnotatedLine &Line,
     return false;
 
   if (Right.is(tok::r_paren) || Right.is(TT_TemplateCloser))
+    return false;
+  if (Right.is(tok::r_square) && Right.MatchingParen &&
+      Right.MatchingParen->is(TT_LambdaLSquare))
     return false;
 
   // We only break before r_brace if there was a corresponding break before

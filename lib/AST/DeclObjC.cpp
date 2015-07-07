@@ -1266,7 +1266,8 @@ ObjCTypeParamList *ObjCTypeParamList::create(
                      SourceLocation rAngleLoc) {
   unsigned size = sizeof(ObjCTypeParamList)
                 + sizeof(ObjCTypeParamDecl *) * typeParams.size();
-  static_assert(alignof(ObjCTypeParamList) >= alignof(ObjCTypeParamDecl*),
+  static_assert(llvm::AlignOf<ObjCTypeParamList>::Alignment >=
+                    llvm::AlignOf<ObjCTypeParamDecl *>::Alignment,
                 "type parameter list needs greater alignment");
   unsigned align = llvm::alignOf<ObjCTypeParamList>();
   void *mem = ctx.Allocate(size, align);
