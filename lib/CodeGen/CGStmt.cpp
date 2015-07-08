@@ -283,6 +283,10 @@ void CodeGenFunction::EmitCilkSyncStmt(const CilkSyncStmt &S) {
   if (HaveInsertPoint())
     EmitStopPoint(&S);
 
+  // For now, we assume that _Cilk_sync statements are not used
+  // dynamically.
+  //
+  // TODO: Perform transformations to make this true in the IR.
   Builder.CreateSync(ContinueBlock);
   EmitBlock(ContinueBlock);
 }
@@ -1119,19 +1123,13 @@ void CodeGenFunction::EmitReturnStmt(const ReturnStmt &S) {
 
 void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
 
-  llvm::BasicBlock *ChildBlock = createBasicBlock("detach.child");
-  llvm::BasicBlock *ParentBlock = createBasicBlock("detach.parent");
+  llvm::BasicBlock *DetachedBlock = createBasicBlock("detach.child");
+  llvm::BasicBlock *ContinueBlock = createBasicBlock("detach.parent");
 
   // Handle spawning of calls in a special manner, to evaluate
   // arguments before spawn.
   // if (const auto *SpawnedCall = dyn_cast_or_null<CallExpr>(S.getSpawnedStmt())) {
   //   CallArgList Args;
-    
-  //   // If this code is reachable then emit a stop point (if generating
-  //   // debug info). We have to do this ourselves because we are on the
-  //   // "simple" statement path.
-  //   if (HaveInsertPoint())
-  //     EmitStopPoint(&S);
 
   //   // Emit argument evaluation
 
@@ -1146,24 +1144,21 @@ void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
   //   EmitCallOrInvoke(Callee, Args);
     
   // } else {
-    // If this code is reachable then emit a stop point (if generating
-    // debug info). We have to do this ourselves because we are on the
-    // "simple" statement path.
-    if (HaveInsertPoint())
-      EmitStopPoint(&S);
 
-    // Otherwise, we assume that the programmer dealt with races
-    // correctly.
-    Builder.CreateDetach(ChildBlock, ParentBlock);
-    EmitBlock(ChildBlock);
-    // Emit the spawned statement
-    EmitStmt(S.getSpawnedStmt());
+  // Otherwise, we assume that the programmer dealt with races
+  // correctly.
+  Builder.CreateDetach(DetachedBlock, ContinueBlock);
+  EmitBlock(DetachedBlock);
+  // Emit the spawned statement
+  EmitStmt(S.getSpawnedStmt());
+
   // }
   // The CFG path into the spawned statement should terminate with a
   // `reattach'.
-  Builder.CreateReattach();
+  Builder.CreateReattach(ContinueBlock);
+
   // Now emit the parent block
-  EmitBlock(ParentBlock);
+  EmitBlock(ContinueBlock);
 }
 
 void CodeGenFunction::EmitDeclStmt(const DeclStmt &S) {
