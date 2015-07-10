@@ -2298,6 +2298,7 @@ static void addProfileRT(const ToolChain &TC, const ArgList &Args,
   if (!(Args.hasFlag(options::OPT_fprofile_arcs, options::OPT_fno_profile_arcs,
                      false) ||
         Args.hasArg(options::OPT_fprofile_generate) ||
+        Args.hasArg(options::OPT_fprofile_generate_EQ) ||
         Args.hasArg(options::OPT_fprofile_instr_generate) ||
         Args.hasArg(options::OPT_fprofile_instr_generate_EQ) ||
         Args.hasArg(options::OPT_fcreate_profile) ||
@@ -3532,23 +3533,47 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddAllArgs(CmdArgs, options::OPT_finstrument_functions);
 
-  if ((Args.hasArg(options::OPT_fprofile_instr_generate) ||
-       Args.hasArg(options::OPT_fprofile_instr_generate_EQ)) &&
-      (Args.hasArg(options::OPT_fprofile_instr_use) ||
-       Args.hasArg(options::OPT_fprofile_instr_use_EQ)))
-    D.Diag(diag::err_drv_argument_not_allowed_with)
-        << "-fprofile-instr-generate"
-        << "-fprofile-instr-use";
+  auto *ProfileGenerateArg = Args.getLastArg(
+      options::OPT_fprofile_instr_generate,
+      options::OPT_fprofile_instr_generate_EQ, options::OPT_fprofile_generate,
+      options::OPT_fprofile_generate_EQ);
 
-  if (Arg *A = Args.getLastArg(options::OPT_fprofile_instr_generate_EQ))
-    A->render(Args, CmdArgs);
-  else
+  auto *ProfileUseArg = Args.getLastArg(
+      options::OPT_fprofile_instr_use, options::OPT_fprofile_instr_use_EQ,
+      options::OPT_fprofile_use, options::OPT_fprofile_use_EQ);
+
+  if (ProfileGenerateArg && ProfileUseArg)
+    D.Diag(diag::err_drv_argument_not_allowed_with)
+        << ProfileGenerateArg->getSpelling()
+        << ProfileUseArg->getSpelling();
+
+  SmallString<128> Path;
+  if (ProfileGenerateArg &&
+      ProfileGenerateArg->getOption().matches(
+          options::OPT_fprofile_instr_generate_EQ))
+    ProfileGenerateArg->render(Args, CmdArgs);
+  else if (ProfileGenerateArg &&
+           ProfileGenerateArg->getOption().matches(
+               options::OPT_fprofile_generate_EQ)) {
+    Path = ProfileGenerateArg->getValue();
+    llvm::sys::path::append(Path, "default.profraw");
+    CmdArgs.push_back(
+        Args.MakeArgString(Twine("-fprofile-instr-generate=") + Path));
+  } else
     Args.AddAllArgs(CmdArgs, options::OPT_fprofile_instr_generate);
 
-  if (Arg *A = Args.getLastArg(options::OPT_fprofile_instr_use_EQ))
-    A->render(Args, CmdArgs);
-  else if (Args.hasArg(options::OPT_fprofile_instr_use))
-    CmdArgs.push_back("-fprofile-instr-use=pgo-data");
+  if (ProfileUseArg &&
+      ProfileUseArg->getOption().matches(options::OPT_fprofile_instr_use_EQ))
+    ProfileUseArg->render(Args, CmdArgs);
+  else if (ProfileUseArg &&
+           (ProfileUseArg->getOption().matches(options::OPT_fprofile_use_EQ) ||
+            ProfileUseArg->getOption().matches(
+                options::OPT_fprofile_instr_use))) {
+    Path = ProfileUseArg->getNumValues() == 0 ? "" : ProfileUseArg->getValue();
+    if (Path.empty() || llvm::sys::fs::is_directory(Path))
+      llvm::sys::path::append(Path, "default.profdata");
+    CmdArgs.push_back(Args.MakeArgString(Twine("-fprofile-instr-use=") + Path));
+  }
 
   if (Args.hasArg(options::OPT_ftest_coverage) ||
       Args.hasArg(options::OPT_coverage))
@@ -3558,9 +3583,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       Args.hasArg(options::OPT_coverage))
     CmdArgs.push_back("-femit-coverage-data");
 
-  if (Args.hasArg(options::OPT_fcoverage_mapping) &&
-      !(Args.hasArg(options::OPT_fprofile_instr_generate) ||
-        Args.hasArg(options::OPT_fprofile_instr_generate_EQ)))
+  if (Args.hasArg(options::OPT_fcoverage_mapping) && !ProfileGenerateArg)
     D.Diag(diag::err_drv_argument_only_allowed_with)
         << "-fcoverage-mapping"
         << "-fprofile-instr-generate";
@@ -3579,10 +3602,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
         CoverageFilename = llvm::sys::path::filename(Output.getBaseInput());
       }
       if (llvm::sys::path::is_relative(CoverageFilename)) {
-        SmallString<128> Pwd;
-        if (!llvm::sys::fs::current_path(Pwd)) {
-          llvm::sys::path::append(Pwd, CoverageFilename);
-          CoverageFilename.swap(Pwd);
+        if (!llvm::sys::fs::current_path(Path)) {
+          llvm::sys::path::append(Path, CoverageFilename);
+          CoverageFilename.swap(Path);
         }
       }
       CmdArgs.push_back(Args.MakeArgString(CoverageFilename));
@@ -4180,27 +4202,27 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // -fmodule-cache-path specifies where our implicitly-built module files
   // should be written.
-  SmallString<128> ModuleCachePath;
+  Path = "";
   if (Arg *A = Args.getLastArg(options::OPT_fmodules_cache_path))
-    ModuleCachePath = A->getValue();
+    Path = A->getValue();
   if (HaveModules) {
     if (C.isForDiagnostics()) {
       // When generating crash reports, we want to emit the modules along with
       // the reproduction sources, so we ignore any provided module path.
-      ModuleCachePath = Output.getFilename();
-      llvm::sys::path::replace_extension(ModuleCachePath, ".cache");
-      llvm::sys::path::append(ModuleCachePath, "modules");
-    } else if (ModuleCachePath.empty()) {
+      Path = Output.getFilename();
+      llvm::sys::path::replace_extension(Path, ".cache");
+      llvm::sys::path::append(Path, "modules");
+    } else if (Path.empty()) {
       // No module path was provided: use the default.
       llvm::sys::path::system_temp_directory(/*erasedOnReboot=*/false,
-                                             ModuleCachePath);
-      llvm::sys::path::append(ModuleCachePath, "org.llvm.clang.");
-      appendUserToPath(ModuleCachePath);
-      llvm::sys::path::append(ModuleCachePath, "ModuleCache");
+                                             Path);
+      llvm::sys::path::append(Path, "org.llvm.clang.");
+      appendUserToPath(Path);
+      llvm::sys::path::append(Path, "ModuleCache");
     }
     const char Arg[] = "-fmodules-cache-path=";
-    ModuleCachePath.insert(ModuleCachePath.begin(), Arg, Arg + strlen(Arg));
-    CmdArgs.push_back(Args.MakeArgString(ModuleCachePath));
+    Path.insert(Path.begin(), Arg, Arg + strlen(Arg));
+    CmdArgs.push_back(Args.MakeArgString(Path));
   }
 
   // When building modules and generating crashdumps, we need to dump a module
