@@ -844,7 +844,7 @@ static std::string getAArch64TargetCPU(const ArgList &Args) {
   std::string CPU;
   // If we have -mtune or -mcpu, use that.
   if ((A = Args.getLastArg(options::OPT_mtune_EQ))) {
-    CPU = A->getValue();
+    CPU = StringRef(A->getValue()).lower();
   } else if ((A = Args.getLastArg(options::OPT_mcpu_EQ))) {
     StringRef Mcpu = A->getValue();
     CPU = Mcpu.split("+").first.lower();
@@ -1908,10 +1908,11 @@ static bool
 getAArch64MicroArchFeaturesFromMtune(const Driver &D, StringRef Mtune,
                                      const ArgList &Args,
                                      std::vector<const char *> &Features) {
+  std::string MtuneLowerCase = Mtune.lower();
   // Handle CPU name is 'native'.
-  if (Mtune == "native")
-    Mtune = llvm::sys::getHostCPUName();
-  if (Mtune == "cyclone") {
+  if (MtuneLowerCase == "native")
+    MtuneLowerCase = llvm::sys::getHostCPUName();
+  if (MtuneLowerCase == "cyclone") {
     Features.push_back("+zcm");
     Features.push_back("+zcz");
   }
@@ -4807,7 +4808,6 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Forward -Xclang arguments to -cc1, and -mllvm arguments to the LLVM option
   // parser.
   Args.AddAllArgValues(CmdArgs, options::OPT_Xclang);
-  bool OptDisabled = false;
   for (const Arg *A : Args.filtered(options::OPT_mllvm)) {
     A->claim();
 
@@ -4815,17 +4815,15 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     // it and developers have been trained to spell it with -mllvm.
     if (StringRef(A->getValue(0)) == "-disable-llvm-optzns") {
       CmdArgs.push_back("-disable-llvm-optzns");
-      OptDisabled = true;
     } else
       A->render(Args, CmdArgs);
   }
 
   // With -save-temps, we want to save the unoptimized bitcode output from the
-  // CompileJobAction, so disable optimizations if they are not already
-  // disabled.
-  if (C.getDriver().isSaveTempsEnabled() && !OptDisabled &&
-      isa<CompileJobAction>(JA))
-    CmdArgs.push_back("-disable-llvm-optzns");
+  // CompileJobAction, use -disable-llvm-passes to get pristine IR generated
+  // by the frontend.
+  if (C.getDriver().isSaveTempsEnabled() && isa<CompileJobAction>(JA))
+    CmdArgs.push_back("-disable-llvm-passes");
 
   if (Output.getType() == types::TY_Dependencies) {
     // Handled with other dependency code.
@@ -5786,6 +5784,26 @@ void hexagon::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                           CmdArgs, Inputs));
 }
 // Hexagon tools end.
+
+void amdgpu::Linker::ConstructJob(Compilation &C, const JobAction &JA,
+                                  const InputInfo &Output,
+                                  const InputInfoList &Inputs,
+                                  const ArgList &Args,
+                                  const char *LinkingOutput) const {
+
+  std::string Linker = getToolChain().GetProgramPath(getShortName());
+  ArgStringList CmdArgs;
+  CmdArgs.push_back("-flavor");
+  CmdArgs.push_back("gnu");
+  CmdArgs.push_back("-target");
+  CmdArgs.push_back(Args.MakeArgString(getToolChain().getTripleString()));
+  AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+  CmdArgs.push_back("-o");
+  CmdArgs.push_back(Output.getFilename());
+  C.addCommand(llvm::make_unique<Command>(JA, *this, Args.MakeArgString(Linker),
+                                          CmdArgs, Inputs));
+}
+// AMDGPU tools end.
 
 const std::string arm::getARMArch(const ArgList &Args,
                                   const llvm::Triple &Triple) {

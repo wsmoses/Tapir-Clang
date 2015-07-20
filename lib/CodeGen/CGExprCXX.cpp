@@ -196,7 +196,7 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
         // Trivial move and copy ctor are the same.
         assert(CE->getNumArgs() == 1 && "unexpected argcount for trivial ctor");
         llvm::Value *RHS = EmitLValue(*CE->arg_begin()).getAddress();
-        EmitAggregateCopy(This, RHS, CE->arg_begin()->getType());
+        EmitAggregateCopy(This, RHS, (*CE->arg_begin())->getType());
         return RValue::get(This);
       }
       llvm_unreachable("unknown trivial member function");
@@ -1089,8 +1089,7 @@ RValue CodeGenFunction::EmitBuiltinNewDeleteCall(const FunctionProtoType *Type,
                                                  bool IsDelete) {
   CallArgList Args;
   const Stmt *ArgS = Arg;
-  EmitCallArgs(Args, *Type->param_type_begin(),
-               ConstExprIterator(&ArgS), ConstExprIterator(&ArgS + 1));
+  EmitCallArgs(Args, *Type->param_type_begin(), &ArgS, &ArgS + 1);
   // Find the allocation or deallocation function that we're calling.
   ASTContext &Ctx = getContext();
   DeclarationName Name = Ctx.DeclarationNames
@@ -1844,8 +1843,8 @@ void CodeGenFunction::EmitLambdaExpr(const LambdaExpr *E, AggValueSlot Slot) {
       MakeAddrLValue(Slot.getAddr(), E->getType(), Slot.getAlignment());
 
   CXXRecordDecl::field_iterator CurField = E->getLambdaClass()->field_begin();
-  for (LambdaExpr::capture_init_iterator i = E->capture_init_begin(),
-                                         e = E->capture_init_end();
+  for (LambdaExpr::const_capture_init_iterator i = E->capture_init_begin(),
+                                               e = E->capture_init_end();
        i != e; ++i, ++CurField) {
     // Emit initialization
     LValue LV = EmitLValueForFieldInitialization(SlotLV, *CurField);
