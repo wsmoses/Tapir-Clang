@@ -3103,6 +3103,8 @@ class ASTIdentifierTableTrait {
   Preprocessor &PP;
   IdentifierResolver &IdResolver;
   bool IsModule;
+  bool NeedDecls;
+  ASTWriter::RecordData *InterestingIdentifierOffsets;
   
   /// \brief Determines whether this is an "interesting" identifier that needs a
   /// full IdentifierInfo structure written into the hash table. Notably, this
@@ -3113,7 +3115,7 @@ class ASTIdentifierTableTrait {
         II->isPoisoned() ||
         (IsModule ? II->hasRevertedBuiltin() : II->getObjCOrBuiltinID()) ||
         II->hasRevertedTokenIDToIdentifier() ||
-        II->getFETokenInfo<void>())
+        (NeedDecls && II->getFETokenInfo<void>()))
       return true;
 
     return false;
@@ -3130,13 +3132,20 @@ public:
   typedef unsigned offset_type;
 
   ASTIdentifierTableTrait(ASTWriter &Writer, Preprocessor &PP,
-                          IdentifierResolver &IdResolver, bool IsModule)
-      : Writer(Writer), PP(PP), IdResolver(IdResolver), IsModule(IsModule) {}
+                          IdentifierResolver &IdResolver, bool IsModule,
+                          ASTWriter::RecordData *InterestingIdentifierOffsets)
+      : Writer(Writer), PP(PP), IdResolver(IdResolver), IsModule(IsModule),
+        NeedDecls(!IsModule || !Writer.getLangOpts().CPlusPlus),
+        InterestingIdentifierOffsets(InterestingIdentifierOffsets) {}
 
   static hash_value_type ComputeHash(const IdentifierInfo* II) {
     return llvm::HashString(II->getName());
   }
 
+  bool isInterestingIdentifier(const IdentifierInfo *II) {
+    auto MacroOffset = Writer.getMacroDirectivesOffset(II);
+    return isInterestingIdentifier(II, MacroOffset);
+  }
   bool isInterestingNonMacroIdentifier(const IdentifierInfo *II) {
     return isInterestingIdentifier(II, 0);
   }
@@ -3152,10 +3161,12 @@ public:
       if (MacroOffset)
         DataLen += 4; // MacroDirectives offset.
 
-      for (IdentifierResolver::iterator D = IdResolver.begin(II),
-                                     DEnd = IdResolver.end();
-           D != DEnd; ++D)
-        DataLen += 4;
+      if (NeedDecls) {
+        for (IdentifierResolver::iterator D = IdResolver.begin(II),
+                                       DEnd = IdResolver.end();
+             D != DEnd; ++D)
+          DataLen += 4;
+      }
     }
     using namespace llvm::support;
     endian::Writer<little> LE(Out);
@@ -3174,6 +3185,12 @@ public:
     // Record the location of the key data.  This is used when generating
     // the mapping from persistent IDs to strings.
     Writer.SetIdentifierOffset(II, Out.tell());
+
+    // Emit the offset of the key/data length information to the interesting
+    // identifiers table if necessary.
+    if (InterestingIdentifierOffsets && isInterestingIdentifier(II))
+      InterestingIdentifierOffsets->push_back(Out.tell() - 4);
+
     Out.write(II->getNameStart(), KeyLen);
   }
 
@@ -3205,18 +3222,21 @@ public:
     if (HadMacroDefinition)
       LE.write<uint32_t>(MacroOffset);
 
-    // Emit the declaration IDs in reverse order, because the
-    // IdentifierResolver provides the declarations as they would be
-    // visible (e.g., the function "stat" would come before the struct
-    // "stat"), but the ASTReader adds declarations to the end of the list
-    // (so we need to see the struct "stat" before the function "stat").
-    // Only emit declarations that aren't from a chained PCH, though.
-    SmallVector<NamedDecl *, 16> Decls(IdResolver.begin(II), IdResolver.end());
-    for (SmallVectorImpl<NamedDecl *>::reverse_iterator D = Decls.rbegin(),
-                                                        DEnd = Decls.rend();
-         D != DEnd; ++D)
-      LE.write<uint32_t>(
-          Writer.getDeclID(getDeclForLocalLookup(PP.getLangOpts(), *D)));
+    if (NeedDecls) {
+      // Emit the declaration IDs in reverse order, because the
+      // IdentifierResolver provides the declarations as they would be
+      // visible (e.g., the function "stat" would come before the struct
+      // "stat"), but the ASTReader adds declarations to the end of the list
+      // (so we need to see the struct "stat" before the function "stat").
+      // Only emit declarations that aren't from a chained PCH, though.
+      SmallVector<NamedDecl *, 16> Decls(IdResolver.begin(II),
+                                         IdResolver.end());
+      for (SmallVectorImpl<NamedDecl *>::reverse_iterator D = Decls.rbegin(),
+                                                          DEnd = Decls.rend();
+           D != DEnd; ++D)
+        LE.write<uint32_t>(
+            Writer.getDeclID(getDeclForLocalLookup(PP.getLangOpts(), *D)));
+    }
   }
 };
 } // end anonymous namespace
@@ -3231,11 +3251,15 @@ void ASTWriter::WriteIdentifierTable(Preprocessor &PP,
                                      bool IsModule) {
   using namespace llvm;
 
+  RecordData InterestingIdents;
+
   // Create and write out the blob that contains the identifier
   // strings.
   {
     llvm::OnDiskChainedHashTableGenerator<ASTIdentifierTableTrait> Generator;
-    ASTIdentifierTableTrait Trait(*this, PP, IdResolver, IsModule);
+    ASTIdentifierTableTrait Trait(
+        *this, PP, IdResolver, IsModule,
+        (getLangOpts().CPlusPlus && IsModule) ? &InterestingIdents : nullptr);
 
     // Look for any identifiers that were named while processing the
     // headers, but are otherwise not needed. We add these to the hash
@@ -3309,6 +3333,11 @@ void ASTWriter::WriteIdentifierTable(Preprocessor &PP,
   Record.push_back(FirstIdentID - NUM_PREDEF_IDENT_IDS);
   Stream.EmitRecordWithBlob(IdentifierOffsetAbbrev, Record,
                             bytes(IdentifierOffsets));
+
+  // In C++, write the list of interesting identifiers (those that are
+  // defined as macros, poisoned, or similar unusual things).
+  if (!InterestingIdents.empty())
+    Stream.EmitRecord(INTERESTING_IDENTIFIERS, InterestingIdents);
 }
 
 //===----------------------------------------------------------------------===//

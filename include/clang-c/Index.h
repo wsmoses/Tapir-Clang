@@ -2237,15 +2237,19 @@ enum CXCursorKind {
    */
   CXCursor_OMPCancelDirective            = 256,
 
+  /** \brief OpenMP target data directive.
+   */
+  CXCursor_OMPTargetDataDirective        = 257,
+
   /** \brief A _Cilk_spawn statement.
    */
-  CXCursor_CilkSpawnStmt                 = 257,
+  CXCursor_CilkSpawnStmt                 = 258,
 
   /** \brief A _Cilk_sync statement.
    */
-  CXCursor_CilkSyncStmt                  = 258,
+  CXCursor_CilkSyncStmt                  = 259,
 
-  /* CXCursor_LastStmt                    = CXCursor_OMPCancelDirective, */
+  /* CXCursor_LastStmt                      = CXCursor_OMPTargetDataDirective, */
   CXCursor_LastStmt                      = CXCursor_CilkSyncStmt,
 
   /**

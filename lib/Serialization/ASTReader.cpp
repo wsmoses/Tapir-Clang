@@ -735,12 +735,14 @@ ASTIdentifierLookupTraitBase::ReadKey(const unsigned char* d, unsigned n) {
 }
 
 /// \brief Whether the given identifier is "interesting".
-static bool isInterestingIdentifier(IdentifierInfo &II, bool IsModule) {
+static bool isInterestingIdentifier(ASTReader &Reader, IdentifierInfo &II,
+                                    bool IsModule) {
   return II.hadMacroDefinition() ||
          II.isPoisoned() ||
          (IsModule ? II.hasRevertedBuiltin() : II.getObjCOrBuiltinID()) ||
          II.hasRevertedTokenIDToIdentifier() ||
-         II.getFETokenInfo<void>();
+         (!(IsModule && Reader.getContext().getLangOpts().CPlusPlus) &&
+          II.getFETokenInfo<void>());
 }
 
 static bool readBit(unsigned &Bits) {
@@ -767,7 +769,7 @@ IdentifierInfo *ASTIdentifierLookupTrait::ReadData(const internal_key_type& k,
   }
   if (!II->isFromAST()) {
     II->setIsFromAST();
-    if (isInterestingIdentifier(*II, F.isModule()))
+    if (isInterestingIdentifier(Reader, *II, F.isModule()))
       II->setChangedSinceDeserialization();
   }
   Reader.markIdentifierUpToDate(II);
@@ -2562,6 +2564,10 @@ ASTReader::ReadASTBlock(ModuleFile &F, unsigned ClientLoadCapabilities) {
       break;
     }
 
+    case INTERESTING_IDENTIFIERS:
+      F.PreloadIdentifierOffsets.assign(Record.begin(), Record.end());
+      break;
+
     case EAGERLY_DESERIALIZED_DECLS:
       // FIXME: Skip reading this record if our ASTConsumer doesn't care
       // about "interesting" decls (for instance, if we're building a module).
@@ -3408,6 +3414,18 @@ ASTReader::ASTReadResult ASTReader::ReadAST(const std::string &FileName,
       // SourceManager.
       SourceMgr.getLoadedSLocEntryByID(Index);
     }
+
+    // Preload all the pending interesting identifiers by marking them out of
+    // date.
+    for (auto Offset : F.PreloadIdentifierOffsets) {
+      const unsigned char *Data = reinterpret_cast<const unsigned char *>(
+          F.IdentifierTableData + Offset);
+
+      ASTIdentifierLookupTrait Trait(*this, F);
+      auto KeyDataLen = Trait.ReadKeyDataLength(Data);
+      auto Key = Trait.ReadKey(Data, KeyDataLen.first);
+      PP.getIdentifierTable().getOwn(Key).setOutOfDate(true);
+    }
   }
 
   // Setup the import locations and notify the module manager that we've
@@ -3428,13 +3446,20 @@ ASTReader::ASTReadResult ASTReader::ReadAST(const std::string &FileName,
                                        M->ImportLoc.getRawEncoding());
   }
 
-  // Mark all of the identifiers in the identifier table as being out of date,
-  // so that various accessors know to check the loaded modules when the
-  // identifier is used.
-  for (IdentifierTable::iterator Id = PP.getIdentifierTable().begin(),
-                              IdEnd = PP.getIdentifierTable().end();
-       Id != IdEnd; ++Id)
-    Id->second->setOutOfDate(true);
+  if (!Context.getLangOpts().CPlusPlus ||
+      (Type != MK_ImplicitModule && Type != MK_ExplicitModule)) {
+    // Mark all of the identifiers in the identifier table as being out of date,
+    // so that various accessors know to check the loaded modules when the
+    // identifier is used.
+    //
+    // For C++ modules, we don't need information on many identifiers (just
+    // those that provide macros or are poisoned), so we mark all of
+    // the interesting ones via PreloadIdentifierOffsets.
+    for (IdentifierTable::iterator Id = PP.getIdentifierTable().begin(),
+                                IdEnd = PP.getIdentifierTable().end();
+         Id != IdEnd; ++Id)
+      Id->second->setOutOfDate(true);
+  }
   
   // Resolve any unresolved module exports.
   for (unsigned I = 0, N = UnresolvedModuleRefs.size(); I != N; ++I) {
@@ -5883,10 +5908,13 @@ void ASTReader::CompleteRedeclChain(const Decl *D) {
   if (isa<TranslationUnitDecl>(DC) || isa<NamespaceDecl>(DC) ||
       isa<CXXRecordDecl>(DC) || isa<EnumDecl>(DC)) {
     if (DeclarationName Name = cast<NamedDecl>(D)->getDeclName()) {
-      auto *II = Name.getAsIdentifierInfo();
-      if (isa<TranslationUnitDecl>(DC) && II) {
+      if (!getContext().getLangOpts().CPlusPlus &&
+          isa<TranslationUnitDecl>(DC)) {
         // Outside of C++, we don't have a lookup table for the TU, so update
-        // the identifier instead. In C++, either way should work fine.
+        // the identifier instead. (For C++ modules, we don't store decls
+        // in the serialized identifier table, so we do the lookup in the TU.)
+        auto *II = Name.getAsIdentifierInfo();
+        assert(II && "non-identifier name in C?");
         if (II->isOutOfDate())
           updateOutOfDateIdentifier(*II);
       } else
@@ -6822,19 +6850,32 @@ IdentifierInfo *ASTReader::get(StringRef Name) {
   // Note that we are loading an identifier.
   Deserializing AnIdentifier(this);
 
-  // If there is a global index, look there first to determine which modules
-  // provably do not have any results for this identifier.
-  GlobalModuleIndex::HitSet Hits;
-  GlobalModuleIndex::HitSet *HitsPtr = nullptr;
-  if (!loadGlobalIndex()) {
-    if (GlobalIndex->lookupIdentifier(Name, Hits)) {
-      HitsPtr = &Hits;
-    }
-  }
   IdentifierLookupVisitor Visitor(Name, /*PriorGeneration=*/0,
                                   NumIdentifierLookups,
                                   NumIdentifierLookupHits);
-  ModuleMgr.visit(IdentifierLookupVisitor::visit, &Visitor, HitsPtr);
+
+  // We don't need to do identifier table lookups in C++ modules (we preload
+  // all interesting declarations, and don't need to use the scope for name
+  // lookups). Perform the lookup in PCH files, though, since we don't build
+  // a complete initial identifier table if we're carrying on from a PCH.
+  if (Context.getLangOpts().CPlusPlus) {
+    for (auto F : ModuleMgr.pch_modules())
+      if (Visitor.visit(*F, &Visitor))
+        break;
+  } else {
+    // If there is a global index, look there first to determine which modules
+    // provably do not have any results for this identifier.
+    GlobalModuleIndex::HitSet Hits;
+    GlobalModuleIndex::HitSet *HitsPtr = nullptr;
+    if (!loadGlobalIndex()) {
+      if (GlobalIndex->lookupIdentifier(Name, Hits)) {
+        HitsPtr = &Hits;
+      }
+    }
+
+    ModuleMgr.visit(IdentifierLookupVisitor::visit, &Visitor, HitsPtr);
+  }
+
   IdentifierInfo *II = Visitor.getIdentifierInfo();
   markIdentifierUpToDate(II);
   return II;
@@ -8443,7 +8484,7 @@ void ASTReader::pushExternalDeclIntoScope(NamedDecl *D, DeclarationName Name) {
     // Remove any fake results before adding any real ones.
     auto It = PendingFakeLookupResults.find(II);
     if (It != PendingFakeLookupResults.end()) {
-      for (auto *ND : PendingFakeLookupResults[II])
+      for (auto *ND : It->second)
         SemaObj->IdResolver.RemoveDecl(ND);
       // FIXME: this works around module+PCH performance issue.
       // Rather than erase the result from the map, which is O(n), just clear
