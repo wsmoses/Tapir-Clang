@@ -919,11 +919,6 @@ void Clang::AddAArch64TargetArgs(const ArgList &Args,
     else
       CmdArgs.push_back("-aarch64-global-merge=true");
   }
-
-  if (Args.hasArg(options::OPT_ffixed_x18)) {
-    CmdArgs.push_back("-backend-option");
-    CmdArgs.push_back("-aarch64-reserve-x18");
-  }
 }
 
 // Get CPU and ABI names. They are not independent
@@ -1971,6 +1966,9 @@ static void getAArch64TargetFeatures(const Driver &D, const ArgList &Args,
     else
       Features.push_back("-crc");
   }
+
+  if (Args.hasArg(options::OPT_ffixed_x18))
+    Features.push_back("+reserve-x18");
 }
 
 static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
@@ -2293,13 +2291,6 @@ SmallString<128> tools::getCompilerRT(const ToolChain &TC, StringRef Component,
 static void addClangRT(const ToolChain &TC, const ArgList &Args,
                        ArgStringList &CmdArgs) {
   CmdArgs.push_back(Args.MakeArgString(getCompilerRT(TC, "builtins")));
-
-  if (!TC.getTriple().isOSWindows()) {
-    // FIXME: why do we link against gcc when we are using compiler-rt?
-    CmdArgs.push_back("-lgcc_s");
-    if (TC.getDriver().CCCIsCXX())
-      CmdArgs.push_back("-lgcc_eh");
-  }
 }
 
 static void addProfileRT(const ToolChain &TC, const ArgList &Args,
@@ -5112,39 +5103,46 @@ void Clang::AddClangCLArgs(const ArgList &Args, ArgStringList &CmdArgs) const {
   if (Arg *A = Args.getLastArg(options::OPT__SLASH_M_Group))
     RTOptionID = A->getOption().getID();
 
+  StringRef FlagForCRT;
   switch (RTOptionID) {
   case options::OPT__SLASH_MD:
     if (Args.hasArg(options::OPT__SLASH_LDd))
       CmdArgs.push_back("-D_DEBUG");
     CmdArgs.push_back("-D_MT");
     CmdArgs.push_back("-D_DLL");
-    CmdArgs.push_back("--dependent-lib=msvcrt");
+    FlagForCRT = "--dependent-lib=msvcrt";
     break;
   case options::OPT__SLASH_MDd:
     CmdArgs.push_back("-D_DEBUG");
     CmdArgs.push_back("-D_MT");
     CmdArgs.push_back("-D_DLL");
-    CmdArgs.push_back("--dependent-lib=msvcrtd");
+    FlagForCRT = "--dependent-lib=msvcrtd";
     break;
   case options::OPT__SLASH_MT:
     if (Args.hasArg(options::OPT__SLASH_LDd))
       CmdArgs.push_back("-D_DEBUG");
     CmdArgs.push_back("-D_MT");
-    CmdArgs.push_back("--dependent-lib=libcmt");
+    FlagForCRT = "--dependent-lib=libcmt";
     break;
   case options::OPT__SLASH_MTd:
     CmdArgs.push_back("-D_DEBUG");
     CmdArgs.push_back("-D_MT");
-    CmdArgs.push_back("--dependent-lib=libcmtd");
+    FlagForCRT = "--dependent-lib=libcmtd";
     break;
   default:
     llvm_unreachable("Unexpected option ID.");
   }
 
-  // This provides POSIX compatibility (maps 'open' to '_open'), which most
-  // users want.  The /Za flag to cl.exe turns this off, but it's not
-  // implemented in clang.
-  CmdArgs.push_back("--dependent-lib=oldnames");
+  if (Args.hasArg(options::OPT__SLASH_Zl)) {
+    CmdArgs.push_back("-D_VC_NODEFAULTLIB");
+  } else {
+    CmdArgs.push_back(FlagForCRT.data());
+
+    // This provides POSIX compatibility (maps 'open' to '_open'), which most
+    // users want.  The /Za flag to cl.exe turns this off, but it's not
+    // implemented in clang.
+    CmdArgs.push_back("--dependent-lib=oldnames");
+  }
 
   // Both /showIncludes and /E (and /EP) write to stdout. Allowing both
   // would produce interleaved output, so ignore /showIncludes in such cases.
@@ -7899,13 +7897,15 @@ static std::string getLinuxDynamicLinker(const ArgList &Args,
   else if (Arch == llvm::Triple::aarch64_be)
     return "/lib/ld-linux-aarch64_be.so.1";
   else if (Arch == llvm::Triple::arm || Arch == llvm::Triple::thumb) {
-    if (ToolChain.getTriple().getEnvironment() == llvm::Triple::GNUEABIHF)
+    if (ToolChain.getTriple().getEnvironment() == llvm::Triple::GNUEABIHF ||
+        tools::arm::getARMFloatABI(ToolChain.getDriver(), Args, ToolChain.getTriple()) == "hard")
       return "/lib/ld-linux-armhf.so.3";
     else
       return "/lib/ld-linux.so.3";
   } else if (Arch == llvm::Triple::armeb || Arch == llvm::Triple::thumbeb) {
     // TODO: check which dynamic linker name.
-    if (ToolChain.getTriple().getEnvironment() == llvm::Triple::GNUEABIHF)
+    if (ToolChain.getTriple().getEnvironment() == llvm::Triple::GNUEABIHF ||
+        tools::arm::getARMFloatABI(ToolChain.getDriver(), Args, ToolChain.getTriple()) == "hard")
       return "/lib/ld-linux-armhf.so.3";
     else
       return "/lib/ld-linux.so.3";
@@ -8840,17 +8840,31 @@ std::unique_ptr<Command> visualstudio::Compiler::GetCommand(
   Args.AddAllArgs(CmdArgs, options::OPT_I);
 
   // Optimization level.
+  if (Arg *A = Args.getLastArg(options::OPT_fbuiltin, options::OPT_fno_builtin))
+    CmdArgs.push_back(A->getOption().getID() == options::OPT_fbuiltin ? "/Oi"
+                                                                      : "/Oi-");
   if (Arg *A = Args.getLastArg(options::OPT_O, options::OPT_O0)) {
     if (A->getOption().getID() == options::OPT_O0) {
       CmdArgs.push_back("/Od");
     } else {
+      CmdArgs.push_back("/Og");
+
       StringRef OptLevel = A->getValue();
-      if (OptLevel == "1" || OptLevel == "2" || OptLevel == "s")
-        A->render(Args, CmdArgs);
-      else if (OptLevel == "3")
-        CmdArgs.push_back("/Ox");
+      if (OptLevel == "s" || OptLevel == "z")
+        CmdArgs.push_back("/Os");
+      else
+        CmdArgs.push_back("/Ot");
+
+      CmdArgs.push_back("/Ob2");
     }
   }
+  if (Arg *A = Args.getLastArg(options::OPT_fomit_frame_pointer,
+                               options::OPT_fno_omit_frame_pointer))
+    CmdArgs.push_back(A->getOption().getID() == options::OPT_fomit_frame_pointer
+                          ? "/Oy"
+                          : "/Oy-");
+  if (!Args.hasArg(options::OPT_fwritable_strings))
+    CmdArgs.push_back("/GF");
 
   // Flags for which clang-cl has an alias.
   // FIXME: How can we ensure this stays in sync with relevant clang-cl options?
@@ -8881,6 +8895,7 @@ std::unique_ptr<Command> visualstudio::Compiler::GetCommand(
   Args.AddAllArgs(CmdArgs, options::OPT__SLASH_LD);
   Args.AddAllArgs(CmdArgs, options::OPT__SLASH_LDd);
   Args.AddAllArgs(CmdArgs, options::OPT__SLASH_EH);
+  Args.AddAllArgs(CmdArgs, options::OPT__SLASH_Zl);
 
   // The order of these flags is relevant, so pick the last one.
   if (Arg *A = Args.getLastArg(options::OPT__SLASH_MD, options::OPT__SLASH_MDd,

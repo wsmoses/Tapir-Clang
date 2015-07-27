@@ -4000,8 +4000,8 @@ public:
                         MacroBuilder &Builder) const override {
     WindowsX86_64TargetInfo::getTargetDefines(Opts, Builder);
     WindowsX86_64TargetInfo::getVisualStudioDefines(Opts, Builder);
-    Builder.defineMacro("_M_X64");
-    Builder.defineMacro("_M_AMD64");
+    Builder.defineMacro("_M_X64", "100");
+    Builder.defineMacro("_M_AMD64", "100");
   }
 };
 
@@ -4314,7 +4314,7 @@ class ARMTargetInfo : public TargetInfo {
     switch(ArchKind) {
     default:
       CPUAttr = llvm::ARMTargetParser::getCPUAttr(ArchKind);
-      return CPUAttr ? CPUAttr : "";      
+      return CPUAttr ? CPUAttr : "";
     case llvm::ARM::AK_ARMV6M:
     case llvm::ARM::AK_ARMV6SM:
     case llvm::ARM::AK_ARMV6HL:
@@ -4366,10 +4366,10 @@ public:
       PtrDiffType = SignedInt;
       break;
     }
-   
+
     // cache arch related info
     setArchInfo();
-  
+
     // {} in inline assembly are neon specifiers, not assembly variant
     // specifiers.
     NoAsmVariants = true;
@@ -7070,6 +7070,10 @@ public:
   AndroidX86_64TargetInfo(const llvm::Triple &Triple)
       : LinuxTargetInfo<X86_64TargetInfo>(Triple) {
     LongDoubleFormat = &llvm::APFloat::IEEEquad;
+  }
+
+  bool useFloat128ManglingForLongDouble() const override {
+    return true;
   }
 };
 } // end anonymous namespace

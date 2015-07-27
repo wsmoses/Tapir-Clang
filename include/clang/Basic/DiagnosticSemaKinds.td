@@ -1137,15 +1137,13 @@ def err_rref_in_exception_spec : Error<
   "rvalue reference type %0 is not allowed in exception specification">;
 def err_mismatched_exception_spec : Error<
   "exception specification in declaration does not match previous declaration">;
-def ext_mismatched_exception_spec : ExtWarn<
-  "exception specification in declaration does not match previous declaration">,
+def ext_mismatched_exception_spec : ExtWarn<err_mismatched_exception_spec.Text>,
   InGroup<Microsoft>;
 def err_override_exception_spec : Error<
   "exception specification of overriding function is more lax than "
   "base version">;
-def ext_override_exception_spec : ExtWarn<
-  "exception specification of overriding function is more lax than "
-  "base version">, InGroup<Microsoft>;
+def ext_override_exception_spec : ExtWarn<err_override_exception_spec.Text>,
+  InGroup<Microsoft>;
 def err_incompatible_exception_specs : Error<
   "target exception specification is not superset of source">;
 def err_deep_exception_specs_differ : Error<
@@ -2101,25 +2099,18 @@ def err_field_with_address_space : Error<
   "field may not be qualified with an address space">;
 def err_attr_objc_ownership_redundant : Error<
   "the type %0 is already explicitly ownership-qualified">;
-def err_undeclared_nsnumber : Error<
-  "NSNumber must be available to use Objective-C literals">;
-def err_undeclared_nsvalue : Error<
-  "NSValue must be available to use Objective-C boxed expressions">;
 def err_invalid_nsnumber_type : Error<
   "%0 is not a valid literal type for NSNumber">;
-def err_undeclared_nsstring : Error<
-  "cannot box a string value because NSString has not been declared">;
 def err_objc_illegal_boxed_expression_type : Error<
   "illegal type %0 used in a boxed expression">;
 def err_objc_non_trivially_copyable_boxed_expression_type : Error<
   "non-trivially copyable type %0 cannot be used in a boxed expression">;
 def err_objc_incomplete_boxed_expression_type : Error<
   "incomplete type %0 used in a boxed expression">;
-def err_undeclared_nsarray : Error<
-  "NSArray must be available to use Objective-C array literals">;
-def err_undeclared_nsdictionary : Error<
-  "NSDictionary must be available to use Objective-C dictionary "
-  "literals">;
+def err_undeclared_objc_literal_class : Error<
+  "definition of class %0 must be available to use Objective-C "
+  "%select{array literals|dictionary literals|numeric literals|boxed expressions|"
+  "string literals}1">;
 def err_undeclared_boxing_method : Error<
   "declaration of %0 is missing in %1 class">;
 def err_objc_literal_method_sig : Error<
