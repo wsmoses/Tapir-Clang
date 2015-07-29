@@ -502,46 +502,79 @@ static bool isNoCommonDefault(const llvm::Triple &Triple) {
   }
 }
 
-// Handle -mhwdiv=.
-static void getARMHWDivFeatures(const Driver &D, const Arg *A,
-                                const ArgList &Args,
-                                std::vector<const char *> &Features) {
-  StringRef HWDiv = A->getValue();
-  if (HWDiv == "arm") {
-    Features.push_back("+hwdiv-arm");
-    Features.push_back("-hwdiv");
-  } else if (HWDiv == "thumb") {
-    Features.push_back("-hwdiv-arm");
-    Features.push_back("+hwdiv");
-  } else if (HWDiv == "arm,thumb" || HWDiv == "thumb,arm") {
-    Features.push_back("+hwdiv-arm");
-    Features.push_back("+hwdiv");
-  } else if (HWDiv == "none") {
-    Features.push_back("-hwdiv-arm");
-    Features.push_back("-hwdiv");
-  } else
-    D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
-}
+// ARM tools start.
 
-// Handle -mfpu=.
-static void getARMFPUFeatures(const Driver &D, const Arg *A,
-                              const ArgList &Args,
-                              std::vector<const char *> &Features) {
-  StringRef FPU = A->getValue();
-  unsigned FPUID = llvm::ARMTargetParser::parseFPU(FPU);
-  if (!llvm::ARMTargetParser::getFPUFeatures(FPUID, Features))
-    D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
-}
-
+// Get SubArch (vN).
 static int getARMSubArchVersionNumber(const llvm::Triple &Triple) {
   llvm::StringRef Arch = Triple.getArchName();
   return llvm::ARMTargetParser::parseArchVersion(Arch);
 }
 
+// True if M-profile.
 static bool isARMMProfile(const llvm::Triple &Triple) {
   llvm::StringRef Arch = Triple.getArchName();
   unsigned Profile = llvm::ARMTargetParser::parseArchProfile(Arch);
   return Profile == llvm::ARM::PK_M;
+}
+
+// Get Arch/CPU from args.
+static void getARMArchCPUFromArgs(const ArgList &Args, llvm::StringRef &Arch,
+                                  llvm::StringRef &CPU, bool FromAs = false) {
+  if (const Arg *A = Args.getLastArg(options::OPT_mcpu_EQ))
+    CPU = A->getValue();
+  if (const Arg *A = Args.getLastArg(options::OPT_march_EQ))
+    Arch = A->getValue();
+  if (!FromAs)
+    return;
+
+  for (const Arg *A :
+       Args.filtered(options::OPT_Wa_COMMA, options::OPT_Xassembler)) {
+    StringRef Value = A->getValue();
+    if (Value.startswith("-mcpu="))
+      CPU = Value.substr(6);
+    if (Value.startswith("-march="))
+      Arch = Value.substr(7);
+  }
+}
+
+// Handle -mhwdiv=.
+// FIXME: Use ARMTargetParser.
+static void getARMHWDivFeatures(const Driver &D, const Arg *A,
+                                const ArgList &Args, StringRef HWDiv,
+                                std::vector<const char *> &Features) {
+  unsigned HWDivID = llvm::ARMTargetParser::parseHWDiv(HWDiv);
+  if (!llvm::ARMTargetParser::getHWDivFeatures(HWDivID, Features))
+    D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
+}
+
+// Handle -mfpu=.
+static void getARMFPUFeatures(const Driver &D, const Arg *A,
+                              const ArgList &Args, StringRef FPU,
+                              std::vector<const char *> &Features) {
+  unsigned FPUID = llvm::ARMTargetParser::parseFPU(FPU);
+  if (!llvm::ARMTargetParser::getFPUFeatures(FPUID, Features))
+    D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
+}
+
+// Check if -march is valid by checking if it can be canonicalised and parsed.
+// getARMArch is used here instead of just checking the -march value in order
+// to handle -march=native correctly.
+static void checkARMArchName(const Driver &D, const Arg *A, const ArgList &Args,
+                             llvm::StringRef ArchName,
+                             const llvm::Triple &Triple) {
+  std::string MArch = arm::getARMArch(ArchName, Triple);
+  if (llvm::ARMTargetParser::parseArch(MArch) == llvm::ARM::AK_INVALID)
+    D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
+}
+
+// Check -mcpu=. Needs ArchName to handle -mcpu=generic.
+static void checkARMCPUName(const Driver &D, const Arg *A, const ArgList &Args,
+                            llvm::StringRef CPUName, llvm::StringRef ArchName,
+                            const llvm::Triple &Triple) {
+  std::string CPU = arm::getARMTargetCPU(CPUName, ArchName, Triple);
+  std::string Arch = arm::getARMArch(ArchName, Triple);
+  if (strcmp(arm::getLLVMArchSuffixForARM(CPU, Arch), "") == 0)
+    D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
 }
 
 // Select the float ABI as determined by -msoft-float, -mhard-float, and
@@ -641,6 +674,9 @@ static void getARMTargetFeatures(const Driver &D, const llvm::Triple &Triple,
   bool KernelOrKext =
       Args.hasArg(options::OPT_mkernel, options::OPT_fapple_kext);
   StringRef FloatABI = tools::arm::getARMFloatABI(D, Args, Triple);
+  const Arg *WaCPU = nullptr, *WaFPU = nullptr;
+  const Arg *WaHDiv = nullptr, *WaArch = nullptr;
+
   if (!ForAS) {
     // FIXME: Note, this is a hack, the LLVM backend doesn't actually use these
     // yet (it uses the -mfloat-abi and -msoft-float options), and it is
@@ -661,31 +697,75 @@ static void getARMTargetFeatures(const Driver &D, const llvm::Triple &Triple,
     // Use software floating point argument passing?
     if (FloatABI != "hard")
       Features.push_back("+soft-float-abi");
+  } else {
+    // Here, we make sure that -Wa,-mfpu/cpu/arch/hwdiv will be passed down
+    // to the assembler correctly.
+    for (const Arg *A :
+         Args.filtered(options::OPT_Wa_COMMA, options::OPT_Xassembler)) {
+      StringRef Value = A->getValue();
+      if (Value.startswith("-mfpu=")) {
+        WaFPU = A;
+      } else if (Value.startswith("-mcpu=")) {
+        WaCPU = A;
+      } else if (Value.startswith("-mhwdiv=")) {
+        WaHDiv = A;
+      } else if (Value.startswith("-march=")) {
+        WaArch = A;
+      }
+    }
   }
 
-  // Honor -mfpu=.
-  if (const Arg *A = Args.getLastArg(options::OPT_mfpu_EQ))
-    getARMFPUFeatures(D, A, Args, Features);
-  if (const Arg *A = Args.getLastArg(options::OPT_mhwdiv_EQ))
-    getARMHWDivFeatures(D, A, Args, Features);
-
-  // Check if -march is valid by checking if it can be canonicalised and parsed.
-  // getARMArch is used here instead of just checking the -march value in order
-  // to handle -march=native correctly.
-  if (const Arg *A = Args.getLastArg(options::OPT_march_EQ)) {
-    std::string Arch = arm::getARMArch(Args, Triple);
-    if (llvm::ARMTargetParser::parseArch(Arch) == llvm::ARM::AK_INVALID)
-      D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
+  // Honor -mfpu=. ClangAs gives preference to -Wa,-mfpu=.
+  const Arg *FPUArg = Args.getLastArg(options::OPT_mfpu_EQ);
+  if (WaFPU) {
+    if (FPUArg)
+      D.Diag(clang::diag::warn_drv_unused_argument)
+          << FPUArg->getAsString(Args);
+    getARMFPUFeatures(D, WaFPU, Args, StringRef(WaFPU->getValue()).substr(6),
+                      Features);
+  } else if (FPUArg) {
+    getARMFPUFeatures(D, FPUArg, Args, FPUArg->getValue(), Features);
   }
 
-  // We do a similar thing with -mcpu, but here things are complicated because
-  // the only function we have to check if a cpu is valid is
-  // getLLVMArchSuffixForARM which also needs an architecture.
-  if (const Arg *A = Args.getLastArg(options::OPT_mcpu_EQ)) {
-    std::string CPU = arm::getARMTargetCPU(Args, Triple);
-    std::string Arch = arm::getARMArch(Args, Triple);
-    if (strcmp(arm::getLLVMArchSuffixForARM(CPU, Arch), "") == 0)
-      D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
+  // Honor -mhwdiv=. ClangAs gives preference to -Wa,-mhwdiv=.
+  const Arg *HDivArg = Args.getLastArg(options::OPT_mhwdiv_EQ);
+  if (WaHDiv) {
+    if (HDivArg)
+      D.Diag(clang::diag::warn_drv_unused_argument)
+          << HDivArg->getAsString(Args);
+    getARMHWDivFeatures(D, WaHDiv, Args,
+                        StringRef(WaHDiv->getValue()).substr(8), Features);
+  } else if (HDivArg)
+    getARMHWDivFeatures(D, HDivArg, Args, HDivArg->getValue(), Features);
+
+  // Check -march. ClangAs gives preference to -Wa,-march=.
+  const Arg *ArchArg = Args.getLastArg(options::OPT_march_EQ);
+  StringRef ArchName;
+  if (WaArch) {
+    if (ArchArg)
+      D.Diag(clang::diag::warn_drv_unused_argument)
+          << ArchArg->getAsString(Args);
+    ArchName = StringRef(WaArch->getValue()).substr(7);
+    checkARMArchName(D, WaArch, Args, ArchName, Triple);
+    // FIXME: Set Arch.
+    D.Diag(clang::diag::warn_drv_unused_argument) << WaArch->getAsString(Args);
+  } else if (ArchArg) {
+    ArchName = ArchArg->getValue();
+    checkARMArchName(D, ArchArg, Args, ArchName, Triple);
+  }
+
+  // Check -mcpu. ClangAs gives preference to -Wa,-mcpu=.
+  const Arg *CPUArg = Args.getLastArg(options::OPT_mcpu_EQ);
+  StringRef CPUName;
+  if (WaCPU) {
+    if (CPUArg)
+      D.Diag(clang::diag::warn_drv_unused_argument)
+          << CPUArg->getAsString(Args);
+    CPUName = StringRef(WaCPU->getValue()).substr(6);
+    checkARMCPUName(D, WaCPU, Args, CPUName, ArchName, Triple);
+  } else if (CPUArg) {
+    CPUName = CPUArg->getValue();
+    checkARMCPUName(D, CPUArg, Args, CPUName, ArchName, Triple);
   }
 
   // Setting -msoft-float effectively disables NEON because of the GCC
@@ -717,6 +797,42 @@ static void getARMTargetFeatures(const Driver &D, const llvm::Triple &Triple,
       Features.push_back("+long-calls");
   } else if (KernelOrKext && (!Triple.isiOS() || Triple.isOSVersionLT(6))) {
       Features.push_back("+long-calls");
+  }
+
+  // Kernel code has more strict alignment requirements.
+  if (KernelOrKext)
+    Features.push_back("+strict-align");
+  else if (Arg *A = Args.getLastArg(options::OPT_mno_unaligned_access,
+                                    options::OPT_munaligned_access)) {
+    if (A->getOption().matches(options::OPT_munaligned_access)) {
+      // No v6M core supports unaligned memory access (v6M ARM ARM A3.2).
+      if (Triple.getSubArch() == llvm::Triple::SubArchType::ARMSubArch_v6m)
+        D.Diag(diag::err_target_unsupported_unaligned) << "v6m";
+    } else
+      Features.push_back("+strict-align");
+  } else {
+    // Assume pre-ARMv6 doesn't support unaligned accesses.
+    //
+    // ARMv6 may or may not support unaligned accesses depending on the
+    // SCTLR.U bit, which is architecture-specific. We assume ARMv6
+    // Darwin and NetBSD targets support unaligned accesses, and others don't.
+    //
+    // ARMv7 always has SCTLR.U set to 1, but it has a new SCTLR.A bit
+    // which raises an alignment fault on unaligned accesses. Linux
+    // defaults this bit to 0 and handles it as a system-wide (not
+    // per-process) setting. It is therefore safe to assume that ARMv7+
+    // Linux targets support unaligned accesses. The same goes for NaCl.
+    //
+    // The above behavior is consistent with GCC.
+    int VersionNum = getARMSubArchVersionNumber(Triple);
+    if (Triple.isOSDarwin() || Triple.isOSNetBSD()) {
+      if (VersionNum < 6)
+        Features.push_back("+strict-align");
+    } else if (Triple.isOSLinux() || Triple.isOSNaCl()) {
+      if (VersionNum < 7)
+        Features.push_back("+strict-align");
+    } else
+      Features.push_back("+strict-align");
   }
 
   // llvm does not support reserving registers in general. There is support
@@ -799,27 +915,6 @@ void Clang::AddARMTargetArgs(const ArgList &Args, ArgStringList &CmdArgs,
     CmdArgs.push_back("hard");
   }
 
-  // Kernel code has more strict alignment requirements.
-  if (KernelOrKext) {
-    CmdArgs.push_back("-backend-option");
-    CmdArgs.push_back("-arm-strict-align");
-  }
-
-  // -mkernel implies -mstrict-align; don't add the redundant option.
-  if (!KernelOrKext) {
-    if (Arg *A = Args.getLastArg(options::OPT_mno_unaligned_access,
-                                 options::OPT_munaligned_access)) {
-      CmdArgs.push_back("-backend-option");
-      if (A->getOption().matches(options::OPT_mno_unaligned_access))
-        CmdArgs.push_back("-arm-strict-align");
-      else {
-        if (Triple.getSubArch() == llvm::Triple::SubArchType::ARMSubArch_v6m)
-          D.Diag(diag::err_target_unsupported_unaligned) << "v6m";
-        CmdArgs.push_back("-arm-no-strict-align");
-      }
-    }
-  }
-
   // Forward the -mglobal-merge option for explicit control over the pass.
   if (Arg *A = Args.getLastArg(options::OPT_mglobal_merge,
                                options::OPT_mno_global_merge)) {
@@ -833,8 +928,8 @@ void Clang::AddARMTargetArgs(const ArgList &Args, ArgStringList &CmdArgs,
   if (!Args.hasFlag(options::OPT_mimplicit_float,
                     options::OPT_mno_implicit_float, true))
     CmdArgs.push_back("-no-implicit-float");
-
 }
+// ARM tools end.
 
 /// getAArch64TargetCPU - Get the (LLVM) name of the AArch64 cpu we are
 /// targeting.
@@ -935,7 +1030,7 @@ void mips::getMipsCPUAndABI(const ArgList &Args, const llvm::Triple &Triple,
     DefMips32CPU = "mips32r6";
     DefMips64CPU = "mips64r6";
   }
- 
+
   // MIPS64r6 is the default for Android MIPS64 (mips64el-linux-android).
   if (Triple.getEnvironment() == llvm::Triple::Android)
     DefMips64CPU = "mips64r6";
@@ -1461,7 +1556,8 @@ static const char *getX86TargetCPU(const ArgList &Args,
   }
 }
 
-static std::string getCPUName(const ArgList &Args, const llvm::Triple &T) {
+static std::string getCPUName(const ArgList &Args, const llvm::Triple &T,
+                              bool FromAs = false) {
   switch (T.getArch()) {
   default:
     return "";
@@ -1473,9 +1569,11 @@ static std::string getCPUName(const ArgList &Args, const llvm::Triple &T) {
   case llvm::Triple::arm:
   case llvm::Triple::armeb:
   case llvm::Triple::thumb:
-  case llvm::Triple::thumbeb:
-    return arm::getARMTargetCPU(Args, T);
-
+  case llvm::Triple::thumbeb: {
+    StringRef MArch, MCPU;
+    getARMArchCPUFromArgs(Args, MArch, MCPU, FromAs);
+    return arm::getARMTargetCPU(MCPU, MArch, T);
+  }
   case llvm::Triple::mips:
   case llvm::Triple::mipsel:
   case llvm::Triple::mips64:
@@ -1522,7 +1620,7 @@ static std::string getCPUName(const ArgList &Args, const llvm::Triple &T) {
     return getX86TargetCPU(Args, T);
 
   case llvm::Triple::hexagon:
-    return "hexagon" + toolchains::Hexagon_TC::GetTargetCPU(Args).str();
+    return "hexagon" + toolchains::HexagonToolChain::GetTargetCPU(Args).str();
 
   case llvm::Triple::systemz:
     return getSystemZTargetCPU(Args);
@@ -1798,7 +1896,8 @@ void Clang::AddHexagonTargetArgs(const ArgList &Args,
   CmdArgs.push_back("-mqdsp6-compat");
   CmdArgs.push_back("-Wreturn-type");
 
-  if (const char *v = toolchains::Hexagon_TC::GetSmallDataThreshold(Args)) {
+  if (const char *v =
+          toolchains::HexagonToolChain::GetSmallDataThreshold(Args)) {
     std::string SmallDataThreshold = "-hexagon-small-data-threshold=";
     SmallDataThreshold += v;
     CmdArgs.push_back("-mllvm");
@@ -1926,7 +2025,9 @@ getAArch64MicroArchFeaturesFromMcpu(const Driver &D, StringRef Mcpu,
   return getAArch64MicroArchFeaturesFromMtune(D, CPU, Args, Features);
 }
 
-static void getAArch64TargetFeatures(const Driver &D, const ArgList &Args,
+static void getAArch64TargetFeatures(const Driver &D,
+                                     const llvm::Triple &Triple,
+                                     const ArgList &Args,
                                      std::vector<const char *> &Features) {
   Arg *A;
   bool success = true;
@@ -1967,7 +2068,7 @@ static void getAArch64TargetFeatures(const Driver &D, const ArgList &Args,
       Features.push_back("-crc");
   }
 
-  if (Args.hasArg(options::OPT_ffixed_x18))
+  if (Args.hasArg(options::OPT_ffixed_x18) || Triple.isOSDarwin())
     Features.push_back("+reserve-x18");
 }
 
@@ -2002,7 +2103,7 @@ static void getTargetFeatures(const Driver &D, const llvm::Triple &Triple,
     break;
   case llvm::Triple::aarch64:
   case llvm::Triple::aarch64_be:
-    getAArch64TargetFeatures(D, Args, Features);
+    getAArch64TargetFeatures(D, Triple, Args, Features);
     break;
   case llvm::Triple::x86:
   case llvm::Triple::x86_64:
@@ -2200,12 +2301,12 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
        Args.filtered(options::OPT_Wa_COMMA, options::OPT_Xassembler)) {
     A->claim();
 
-      for (const StringRef Value : A->getValues()) {
-        if (TakeNextArg) {
-          CmdArgs.push_back(Value.data());
-          TakeNextArg = false;
-          continue;
-        }
+    for (const StringRef Value : A->getValues()) {
+      if (TakeNextArg) {
+        CmdArgs.push_back(Value.data());
+        TakeNextArg = false;
+        continue;
+      }
 
       if (Value == "-force_cpusubtype_ALL") {
         // Do nothing, this is the default and we don't support anything else.
@@ -2229,6 +2330,9 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
           TakeNextArg = true;
       } else if (Value.startswith("-gdwarf-")) {
         CmdArgs.push_back(Value.data());
+      } else if (Value.startswith("-mcpu") || Value.startswith("-mfpu") ||
+                 Value.startswith("-mhwdiv") || Value.startswith("-march")) {
+        // Do nothing, we'll validate it later.
       } else {
         D.Diag(diag::err_drv_unsupported_option_argument)
             << A->getOption().getName() << Value;
@@ -2747,8 +2851,7 @@ static void addPGOAndCoverageFlags(Compilation &C, const Driver &D,
 
   if (ProfileGenerateArg && ProfileUseArg)
     D.Diag(diag::err_drv_argument_not_allowed_with)
-        << ProfileGenerateArg->getSpelling()
-        << ProfileUseArg->getSpelling();
+        << ProfileGenerateArg->getSpelling() << ProfileUseArg->getSpelling();
 
   if (ProfileGenerateArg &&
       ProfileGenerateArg->getOption().matches(
@@ -2904,8 +3007,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
     assert((isa<CompileJobAction>(JA) || isa<BackendJobAction>(JA)) &&
            "Invalid action for clang tool.");
 
-    if (JA.getType() == types::TY_LTO_IR ||
-        JA.getType() == types::TY_LTO_BC) {
+    if (JA.getType() == types::TY_LTO_IR || JA.getType() == types::TY_LTO_BC) {
       CmdArgs.push_back("-flto");
     }
     if (JA.getType() == types::TY_Nothing) {
@@ -3431,7 +3533,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   }
 
   // Add the target cpu
-  std::string CPU = getCPUName(Args, Triple);
+  std::string CPU = getCPUName(Args, Triple, /*FromAs*/ false);
   if (!CPU.empty()) {
     CmdArgs.push_back("-target-cpu");
     CmdArgs.push_back(Args.MakeArgString(CPU));
@@ -3949,6 +4051,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_fstandalone_debug);
   Args.AddLastArg(CmdArgs, options::OPT_fno_standalone_debug);
   Args.AddLastArg(CmdArgs, options::OPT_fno_operator_names);
+  // Emulated TLS is enabled by default on Android, and can be enabled manually
+  // with -femulated-tls.
+  bool EmulatedTLSDefault = Triple.getEnvironment() == llvm::Triple::Android;
+  if (Args.hasFlag(options::OPT_femulated_tls, options::OPT_fno_emulated_tls,
+                   EmulatedTLSDefault))
+    CmdArgs.push_back("-femulated-tls");
   // AltiVec language extensions aren't relevant for assembling.
   if (!isa<PreprocessJobAction>(JA) || Output.getType() != types::TY_PP_Asm)
     Args.AddLastArg(CmdArgs, options::OPT_faltivec);
@@ -4238,8 +4346,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       llvm::sys::path::append(Path, "modules");
     } else if (Path.empty()) {
       // No module path was provided: use the default.
-      llvm::sys::path::system_temp_directory(/*erasedOnReboot=*/false,
-                                             Path);
+      llvm::sys::path::system_temp_directory(/*erasedOnReboot=*/false, Path);
       llvm::sys::path::append(Path, "org.llvm.clang.");
       appendUserToPath(Path);
       llvm::sys::path::append(Path, "ModuleCache");
@@ -5276,7 +5383,7 @@ void ClangAs::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Add the target cpu
   const llvm::Triple Triple(TripleStr);
-  std::string CPU = getCPUName(Args, Triple);
+  std::string CPU = getCPUName(Args, Triple, /*FromAs*/ true);
   if (!CPU.empty()) {
     CmdArgs.push_back("-target-cpu");
     CmdArgs.push_back(Args.MakeArgString(CPU));
@@ -5556,7 +5663,7 @@ void hexagon::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
   ArgStringList CmdArgs;
 
   std::string MarchString = "-march=";
-  MarchString += toolchains::Hexagon_TC::GetTargetCPU(Args);
+  MarchString += toolchains::HexagonToolChain::GetTargetCPU(Args);
   CmdArgs.push_back(Args.MakeArgString(MarchString));
 
   RenderExtraToolArgs(JA, CmdArgs);
@@ -5569,7 +5676,7 @@ void hexagon::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back("-fsyntax-only");
   }
 
-  if (const char *v = toolchains::Hexagon_TC::GetSmallDataThreshold(Args))
+  if (const char *v = toolchains::HexagonToolChain::GetSmallDataThreshold(Args))
     CmdArgs.push_back(Args.MakeArgString(std::string("-G") + v));
 
   Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA, options::OPT_Xassembler);
@@ -5613,13 +5720,12 @@ void hexagon::Linker::RenderExtraToolArgs(const JobAction &JA,
   // The types are (hopefully) good enough.
 }
 
-static void constructHexagonLinkArgs(Compilation &C, const JobAction &JA,
-                                     const toolchains::Hexagon_TC &ToolChain,
-                                     const InputInfo &Output,
-                                     const InputInfoList &Inputs,
-                                     const ArgList &Args,
-                                     ArgStringList &CmdArgs,
-                                     const char *LinkingOutput) {
+static void
+constructHexagonLinkArgs(Compilation &C, const JobAction &JA,
+                         const toolchains::HexagonToolChain &ToolChain,
+                         const InputInfo &Output, const InputInfoList &Inputs,
+                         const ArgList &Args, ArgStringList &CmdArgs,
+                         const char *LinkingOutput) {
 
   const Driver &D = ToolChain.getDriver();
 
@@ -5651,7 +5757,7 @@ static void constructHexagonLinkArgs(Compilation &C, const JobAction &JA,
   for (const auto &Opt : ToolChain.ExtraOpts)
     CmdArgs.push_back(Opt.c_str());
 
-  std::string MarchString = toolchains::Hexagon_TC::GetTargetCPU(Args);
+  std::string MarchString = toolchains::HexagonToolChain::GetTargetCPU(Args);
   CmdArgs.push_back(Args.MakeArgString("-m" + MarchString));
 
   if (buildingLib) {
@@ -5666,9 +5772,10 @@ static void constructHexagonLinkArgs(Compilation &C, const JobAction &JA,
   if (buildPIE && !buildingLib)
     CmdArgs.push_back("-pie");
 
-  if (const char *v = toolchains::Hexagon_TC::GetSmallDataThreshold(Args)) {
+  if (const char *v =
+          toolchains::HexagonToolChain::GetSmallDataThreshold(Args)) {
     CmdArgs.push_back(Args.MakeArgString(std::string("-G") + v));
-    useG0 = toolchains::Hexagon_TC::UsesG0(v);
+    useG0 = toolchains::HexagonToolChain::UsesG0(v);
   }
 
   //----------------------------------------------------------------------------
@@ -5681,7 +5788,7 @@ static void constructHexagonLinkArgs(Compilation &C, const JobAction &JA,
   const std::string G0Suffix = "/G0";
   const std::string MarchG0Suffix = MarchSuffix + G0Suffix;
   const std::string RootDir =
-      toolchains::Hexagon_TC::GetGnuDir(D.InstalledDir, Args) + "/";
+      toolchains::HexagonToolChain::GetGnuDir(D.InstalledDir, Args) + "/";
   const std::string StartFilesDir =
       RootDir + "hexagon/lib" + (useG0 ? MarchG0Suffix : MarchSuffix);
 
@@ -5771,8 +5878,8 @@ void hexagon::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                    const ArgList &Args,
                                    const char *LinkingOutput) const {
 
-  const toolchains::Hexagon_TC &ToolChain =
-      static_cast<const toolchains::Hexagon_TC &>(getToolChain());
+  const toolchains::HexagonToolChain &ToolChain =
+      static_cast<const toolchains::HexagonToolChain &>(getToolChain());
 
   ArgStringList CmdArgs;
   constructHexagonLinkArgs(C, JA, ToolChain, Output, Inputs, Args, CmdArgs,
@@ -5804,16 +5911,12 @@ void amdgpu::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 }
 // AMDGPU tools end.
 
-const std::string arm::getARMArch(const ArgList &Args,
-                                  const llvm::Triple &Triple) {
+const std::string arm::getARMArch(StringRef Arch, const llvm::Triple &Triple) {
   std::string MArch;
-  if (Arg *A = Args.getLastArg(options::OPT_march_EQ)) {
-    // Otherwise, if we have -march= choose the base CPU for that arch.
-    MArch = A->getValue();
-  } else {
-    // Otherwise, use the Arch from the triple.
+  if (!Arch.empty())
+    MArch = Arch;
+  else
     MArch = Triple.getArchName();
-  }
   MArch = StringRef(MArch).lower();
 
   // Handle -march=native.
@@ -5834,9 +5937,8 @@ const std::string arm::getARMArch(const ArgList &Args,
   return MArch;
 }
 /// Get the (LLVM) name of the minimum ARM CPU for the arch we are targeting.
-const char *arm::getARMCPUForMArch(const ArgList &Args,
-                                   const llvm::Triple &Triple) {
-  std::string MArch = getARMArch(Args, Triple);
+const char *arm::getARMCPUForMArch(StringRef Arch, const llvm::Triple &Triple) {
+  std::string MArch = getARMArch(Arch, Triple);
   // getARMCPUForArch defaults to the triple if MArch is empty, but empty MArch
   // here means an -march=native that we can't handle, so instead return no CPU.
   if (MArch.empty())
@@ -5852,12 +5954,12 @@ const char *arm::getARMCPUForMArch(const ArgList &Args,
 }
 
 /// getARMTargetCPU - Get the (LLVM) name of the ARM cpu we are targeting.
-std::string arm::getARMTargetCPU(const ArgList &Args,
+std::string arm::getARMTargetCPU(StringRef CPU, StringRef Arch,
                                  const llvm::Triple &Triple) {
   // FIXME: Warn on inconsistent use of -mcpu and -march.
   // If we have -mcpu=, use that.
-  if (Arg *A = Args.getLastArg(options::OPT_mcpu_EQ)) {
-    std::string MCPU = StringRef(A->getValue()).lower();
+  if (!CPU.empty()) {
+    std::string MCPU = StringRef(CPU).lower();
     // Handle -mcpu=native.
     if (MCPU == "native")
       return llvm::sys::getHostCPUName();
@@ -5865,7 +5967,7 @@ std::string arm::getARMTargetCPU(const ArgList &Args,
       return MCPU;
   }
 
-  return getARMCPUForMArch(Args, Triple);
+  return getARMCPUForMArch(Arch, Triple);
 }
 
 /// getLLVMArchSuffixForARM - Get the LLVM arch name to use for a particular
@@ -7367,8 +7469,11 @@ void netbsd::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
   case llvm::Triple::armeb:
   case llvm::Triple::thumb:
   case llvm::Triple::thumbeb: {
-    std::string MArch = arm::getARMTargetCPU(Args, getToolChain().getTriple());
-    CmdArgs.push_back(Args.MakeArgString("-mcpu=" + MArch));
+    StringRef MArch, MCPU;
+    getARMArchCPUFromArgs(Args, MArch, MCPU, /*FromAs*/ true);
+    std::string Arch =
+        arm::getARMTargetCPU(MCPU, MArch, getToolChain().getTriple());
+    CmdArgs.push_back(Args.MakeArgString("-mcpu=" + Arch));
     break;
   }
 
@@ -8238,8 +8343,8 @@ void nacltools::AssemblerARM::ConstructJob(Compilation &C, const JobAction &JA,
                                            const InputInfoList &Inputs,
                                            const ArgList &Args,
                                            const char *LinkingOutput) const {
-  const toolchains::NaCl_TC &ToolChain =
-      static_cast<const toolchains::NaCl_TC &>(getToolChain());
+  const toolchains::NaClToolChain &ToolChain =
+      static_cast<const toolchains::NaClToolChain &>(getToolChain());
   InputInfo NaClMacros(ToolChain.GetNaClArmMacrosPath(), types::TY_PP_Asm,
                        "nacl-arm-macros.s");
   InputInfoList NewInputs;
@@ -8259,8 +8364,8 @@ void nacltools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                                      const ArgList &Args,
                                      const char *LinkingOutput) const {
 
-  const toolchains::NaCl_TC &ToolChain =
-      static_cast<const toolchains::NaCl_TC &>(getToolChain());
+  const toolchains::NaClToolChain &ToolChain =
+      static_cast<const toolchains::NaClToolChain &>(getToolChain());
   const Driver &D = ToolChain.getDriver();
   const llvm::Triple::ArchType Arch = ToolChain.getArch();
   const bool IsStatic =
@@ -8285,8 +8390,8 @@ void nacltools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasArg(options::OPT_s))
     CmdArgs.push_back("-s");
 
-  // NaCl_TC doesn't have ExtraOpts like Linux; the only relevant flag from
-  // there is --build-id, which we do want.
+  // NaClToolChain doesn't have ExtraOpts like Linux; the only relevant flag
+  // from there is --build-id, which we do want.
   CmdArgs.push_back("--build-id");
 
   if (!IsStatic)

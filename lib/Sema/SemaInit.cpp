@@ -2372,14 +2372,12 @@ InitListChecker::CheckDesignatedInitializer(const InitializedEntity &Entity,
       return true;
     }
   } else {
-    // Make sure the bit-widths and signedness match.
-    if (DesignatedStartIndex.getBitWidth() > DesignatedEndIndex.getBitWidth())
-      DesignatedEndIndex
-        = DesignatedEndIndex.extend(DesignatedStartIndex.getBitWidth());
-    else if (DesignatedStartIndex.getBitWidth() <
-             DesignatedEndIndex.getBitWidth())
-      DesignatedStartIndex
-        = DesignatedStartIndex.extend(DesignatedEndIndex.getBitWidth());
+    unsigned DesignatedIndexBitWidth =
+      ConstantArrayType::getMaxSizeBits(SemaRef.Context);
+    DesignatedStartIndex =
+      DesignatedStartIndex.extOrTrunc(DesignatedIndexBitWidth);
+    DesignatedEndIndex =
+      DesignatedEndIndex.extOrTrunc(DesignatedIndexBitWidth);
     DesignatedStartIndex.setIsUnsigned(true);
     DesignatedEndIndex.setIsUnsigned(true);
   }
@@ -5985,8 +5983,18 @@ static void CheckMoveOnConstruction(Sema &S, const Expr *InitExpr,
     if (!VD || !VD->hasLocalStorage())
       return;
 
-    if (!VD->getType()->isRecordType())
+    QualType SourceType = VD->getType();
+    if (!SourceType->isRecordType())
       return;
+
+    if (!S.Context.hasSameUnqualifiedType(DestType, SourceType)) {
+      if (CXXRecordDecl *RD = SourceType->getAsCXXRecordDecl()) {
+        for (auto* Construct : RD->ctors()) {
+          if (Construct->isCopyConstructor() && Construct->isDeleted())
+            return;
+        }
+      }
+    }
 
     // If we're returning a function parameter, copy elision
     // is not possible.
