@@ -412,9 +412,9 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
     A->render(Args, CmdArgs);
   }
 
-  Args.AddAllArgs(CmdArgs, options::OPT_D, options::OPT_U);
-  Args.AddAllArgs(CmdArgs, options::OPT_I_Group, options::OPT_F,
-                  options::OPT_index_header_map);
+  Args.AddAllArgs(CmdArgs,
+                  {options::OPT_D, options::OPT_U, options::OPT_I_Group,
+                   options::OPT_F, options::OPT_index_header_map});
 
   // Add -Wp, and -Xassembler if using the preprocessor.
 
@@ -715,29 +715,6 @@ static void getARMTargetFeatures(const Driver &D, const llvm::Triple &Triple,
     }
   }
 
-  // Honor -mfpu=. ClangAs gives preference to -Wa,-mfpu=.
-  const Arg *FPUArg = Args.getLastArg(options::OPT_mfpu_EQ);
-  if (WaFPU) {
-    if (FPUArg)
-      D.Diag(clang::diag::warn_drv_unused_argument)
-          << FPUArg->getAsString(Args);
-    getARMFPUFeatures(D, WaFPU, Args, StringRef(WaFPU->getValue()).substr(6),
-                      Features);
-  } else if (FPUArg) {
-    getARMFPUFeatures(D, FPUArg, Args, FPUArg->getValue(), Features);
-  }
-
-  // Honor -mhwdiv=. ClangAs gives preference to -Wa,-mhwdiv=.
-  const Arg *HDivArg = Args.getLastArg(options::OPT_mhwdiv_EQ);
-  if (WaHDiv) {
-    if (HDivArg)
-      D.Diag(clang::diag::warn_drv_unused_argument)
-          << HDivArg->getAsString(Args);
-    getARMHWDivFeatures(D, WaHDiv, Args,
-                        StringRef(WaHDiv->getValue()).substr(8), Features);
-  } else if (HDivArg)
-    getARMHWDivFeatures(D, HDivArg, Args, HDivArg->getValue(), Features);
-
   // Check -march. ClangAs gives preference to -Wa,-march=.
   const Arg *ArchArg = Args.getLastArg(options::OPT_march_EQ);
   StringRef ArchName;
@@ -767,6 +744,38 @@ static void getARMTargetFeatures(const Driver &D, const llvm::Triple &Triple,
     CPUName = CPUArg->getValue();
     checkARMCPUName(D, CPUArg, Args, CPUName, ArchName, Triple);
   }
+
+  // Add CPU features for generic CPUs
+  if (CPUName == "native") {
+    llvm::StringMap<bool> HostFeatures;
+    if (llvm::sys::getHostCPUFeatures(HostFeatures))
+      for (auto &F : HostFeatures)
+        Features.push_back(
+            Args.MakeArgString((F.second ? "+" : "-") + F.first()));
+  }
+
+  // Honor -mfpu=. ClangAs gives preference to -Wa,-mfpu=.
+  const Arg *FPUArg = Args.getLastArg(options::OPT_mfpu_EQ);
+  if (WaFPU) {
+    if (FPUArg)
+      D.Diag(clang::diag::warn_drv_unused_argument)
+          << FPUArg->getAsString(Args);
+    getARMFPUFeatures(D, WaFPU, Args, StringRef(WaFPU->getValue()).substr(6),
+                      Features);
+  } else if (FPUArg) {
+    getARMFPUFeatures(D, FPUArg, Args, FPUArg->getValue(), Features);
+  }
+
+  // Honor -mhwdiv=. ClangAs gives preference to -Wa,-mhwdiv=.
+  const Arg *HDivArg = Args.getLastArg(options::OPT_mhwdiv_EQ);
+  if (WaHDiv) {
+    if (HDivArg)
+      D.Diag(clang::diag::warn_drv_unused_argument)
+          << HDivArg->getAsString(Args);
+    getARMHWDivFeatures(D, WaHDiv, Args,
+                        StringRef(WaHDiv->getValue()).substr(8), Features);
+  } else if (HDivArg)
+    getARMHWDivFeatures(D, HDivArg, Args, HDivArg->getValue(), Features);
 
   // Setting -msoft-float effectively disables NEON because of the GCC
   // implementation, although the same isn't true of VFP or VFP3.
@@ -982,15 +991,6 @@ void Clang::AddAArch64TargetArgs(const ArgList &Args,
 
   CmdArgs.push_back("-target-abi");
   CmdArgs.push_back(ABIName);
-
-  if (Arg *A = Args.getLastArg(options::OPT_mno_unaligned_access,
-                               options::OPT_munaligned_access)) {
-    CmdArgs.push_back("-backend-option");
-    if (A->getOption().matches(options::OPT_mno_unaligned_access))
-      CmdArgs.push_back("-aarch64-strict-align");
-    else
-      CmdArgs.push_back("-aarch64-no-strict-align");
-  }
 
   if (Arg *A = Args.getLastArg(options::OPT_mfix_cortex_a53_835769,
                                options::OPT_mno_fix_cortex_a53_835769)) {
@@ -2067,6 +2067,11 @@ static void getAArch64TargetFeatures(const Driver &D,
     else
       Features.push_back("-crc");
   }
+
+  if (Arg *A = Args.getLastArg(options::OPT_mno_unaligned_access,
+                               options::OPT_munaligned_access))
+    if (A->getOption().matches(options::OPT_mno_unaligned_access))
+      Features.push_back("+strict-align");
 
   if (Args.hasArg(options::OPT_ffixed_x18) || Triple.isOSDarwin())
     Features.push_back("+reserve-x18");
@@ -3639,9 +3644,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Use the last option from "-g" group. "-gline-tables-only" and "-gdwarf-x"
   // are preserved, all other debug options are substituted with "-g".
   Args.ClaimAllArgs(options::OPT_g_Group);
+  Arg *SplitDwarfArg = Args.getLastArg(options::OPT_gsplit_dwarf);
   if (Arg *A = Args.getLastArg(options::OPT_g_Group)) {
-    if (A->getOption().matches(options::OPT_gline_tables_only) ||
-        A->getOption().matches(options::OPT_g1)) {
+    if ((A->getOption().matches(options::OPT_gline_tables_only) ||
+         A->getOption().matches(options::OPT_g1)) &&
+        (!SplitDwarfArg || A->getIndex() > SplitDwarfArg->getIndex())) {
       // FIXME: we should support specifying dwarf version with
       // -gline-tables-only.
       CmdArgs.push_back("-gline-tables-only");
@@ -3651,6 +3658,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
           Triple.getOS() == llvm::Triple::FreeBSD ||
           Triple.getOS() == llvm::Triple::Solaris)
         CmdArgs.push_back("-gdwarf-2");
+      SplitDwarfArg = nullptr;
     } else if (A->getOption().matches(options::OPT_gdwarf_2))
       CmdArgs.push_back("-gdwarf-2");
     else if (A->getOption().matches(options::OPT_gdwarf_3))
@@ -3680,8 +3688,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // -gsplit-dwarf should turn on -g and enable the backend dwarf
   // splitting and extraction.
   // FIXME: Currently only works on Linux.
-  if (getToolChain().getTriple().isOSLinux() &&
-      Args.hasArg(options::OPT_gsplit_dwarf)) {
+  if (getToolChain().getTriple().isOSLinux() && SplitDwarfArg) {
     CmdArgs.push_back("-g");
     CmdArgs.push_back("-backend-option");
     CmdArgs.push_back("-split-dwarf=Enable");
@@ -4057,9 +4064,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   if (Args.hasFlag(options::OPT_femulated_tls, options::OPT_fno_emulated_tls,
                    EmulatedTLSDefault))
     CmdArgs.push_back("-femulated-tls");
-  // AltiVec language extensions aren't relevant for assembling.
-  if (!isa<PreprocessJobAction>(JA) || Output.getType() != types::TY_PP_Asm)
+  // AltiVec-like language extensions aren't relevant for assembling.
+  if (!isa<PreprocessJobAction>(JA) || Output.getType() != types::TY_PP_Asm) {
     Args.AddLastArg(CmdArgs, options::OPT_faltivec);
+    Args.AddLastArg(CmdArgs, options::OPT_fzvector);
+  }
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_show_template_tree);
   Args.AddLastArg(CmdArgs, options::OPT_fno_elide_type);
   Args.AddLastArg(CmdArgs, options::OPT_fcilkplus);
@@ -4110,6 +4119,12 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       D.Diag(diag::err_drv_argument_only_allowed_with) << A->getAsString(Args)
                                                        << "ppc/ppc64/ppc64le";
   }
+
+  // -fzvector is incompatible with -faltivec.
+  if (Arg *A = Args.getLastArg(options::OPT_fzvector))
+    if (Args.hasArg(options::OPT_faltivec))
+      D.Diag(diag::err_drv_argument_not_allowed_with) << A->getAsString(Args)
+                                                      << "-faltivec";
 
   if (getToolChain().SupportsProfiling())
     Args.AddLastArg(CmdArgs, options::OPT_pg);
@@ -4964,8 +4979,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Add the split debug info name to the command lines here so we
   // can propagate it to the backend.
-  bool SplitDwarf = Args.hasArg(options::OPT_gsplit_dwarf) &&
-                    getToolChain().getTriple().isOSLinux() &&
+  bool SplitDwarf = SplitDwarfArg && getToolChain().getTriple().isOSLinux() &&
                     (isa<AssembleJobAction>(JA) || isa<CompileJobAction>(JA) ||
                      isa<BackendJobAction>(JA));
   const char *SplitDwarfOut;
@@ -5834,11 +5848,9 @@ constructHexagonLinkArgs(Compilation &C, const JobAction &JA,
   //----------------------------------------------------------------------------
   //
   //----------------------------------------------------------------------------
-  Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
-  Args.AddAllArgs(CmdArgs, options::OPT_e);
-  Args.AddAllArgs(CmdArgs, options::OPT_s);
-  Args.AddAllArgs(CmdArgs, options::OPT_t);
-  Args.AddAllArgs(CmdArgs, options::OPT_u_Group);
+  Args.AddAllArgs(CmdArgs,
+                  {options::OPT_T_Group, options::OPT_e, options::OPT_s,
+                   options::OPT_t, options::OPT_u_Group});
 
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
 
@@ -6193,12 +6205,9 @@ void cloudabi::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   const ToolChain::path_list &Paths = ToolChain.getFilePaths();
   for (const auto &Path : Paths)
     CmdArgs.push_back(Args.MakeArgString(StringRef("-L") + Path));
-  Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
-  Args.AddAllArgs(CmdArgs, options::OPT_e);
-  Args.AddAllArgs(CmdArgs, options::OPT_s);
-  Args.AddAllArgs(CmdArgs, options::OPT_t);
-  Args.AddAllArgs(CmdArgs, options::OPT_Z_Flag);
-  Args.AddAllArgs(CmdArgs, options::OPT_r);
+  Args.AddAllArgs(CmdArgs,
+                  {options::OPT_T_Group, options::OPT_e, options::OPT_s,
+                   options::OPT_t, options::OPT_Z_Flag, options::OPT_r});
 
   if (D.IsUsingLTO(Args))
     AddGoldPlugin(ToolChain, Args, CmdArgs);
@@ -6527,13 +6536,11 @@ void darwin::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   // we follow suite for ease of comparison.
   AddLinkArgs(C, Args, CmdArgs, Inputs);
 
-  Args.AddAllArgs(CmdArgs, options::OPT_d_Flag);
-  Args.AddAllArgs(CmdArgs, options::OPT_s);
-  Args.AddAllArgs(CmdArgs, options::OPT_t);
-  Args.AddAllArgs(CmdArgs, options::OPT_Z_Flag);
-  Args.AddAllArgs(CmdArgs, options::OPT_u_Group);
-  Args.AddLastArg(CmdArgs, options::OPT_e);
-  Args.AddAllArgs(CmdArgs, options::OPT_r);
+  // It seems that the 'e' option is completely ignored for dynamic executables
+  // (the default), and with static executables, the last one wins, as expected.
+  Args.AddAllArgs(CmdArgs, {options::OPT_d_Flag, options::OPT_s, options::OPT_t,
+                            options::OPT_Z_Flag, options::OPT_u_Group,
+                            options::OPT_e, options::OPT_r});
 
   // Forward -ObjC when either -ObjC or -ObjC++ is used, to force loading
   // members of static archive libraries which implement Objective-C classes or
@@ -6821,10 +6828,8 @@ void solaris::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   CmdArgs.push_back(Args.MakeArgString("-L" + GCCLibPath));
 
-  Args.AddAllArgs(CmdArgs, options::OPT_L);
-  Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
-  Args.AddAllArgs(CmdArgs, options::OPT_e);
-  Args.AddAllArgs(CmdArgs, options::OPT_r);
+  Args.AddAllArgs(CmdArgs, {options::OPT_L, options::OPT_T_Group,
+                            options::OPT_e, options::OPT_r});
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
@@ -6997,13 +7002,9 @@ void openbsd::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   CmdArgs.push_back(
       Args.MakeArgString("-L/usr/lib/gcc-lib/" + Triple + "/4.2.1"));
 
-  Args.AddAllArgs(CmdArgs, options::OPT_L);
-  Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
-  Args.AddAllArgs(CmdArgs, options::OPT_e);
-  Args.AddAllArgs(CmdArgs, options::OPT_s);
-  Args.AddAllArgs(CmdArgs, options::OPT_t);
-  Args.AddAllArgs(CmdArgs, options::OPT_Z_Flag);
-  Args.AddAllArgs(CmdArgs, options::OPT_r);
+  Args.AddAllArgs(CmdArgs, {options::OPT_L, options::OPT_T_Group,
+                            options::OPT_e, options::OPT_s, options::OPT_t,
+                            options::OPT_Z_Flag, options::OPT_r});
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
@@ -7125,9 +7126,8 @@ void bitrig::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     }
   }
 
-  Args.AddAllArgs(CmdArgs, options::OPT_L);
-  Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
-  Args.AddAllArgs(CmdArgs, options::OPT_e);
+  Args.AddAllArgs(CmdArgs,
+                  {options::OPT_L, options::OPT_T_Group, options::OPT_e});
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
@@ -8554,9 +8554,8 @@ void minix::Linker::ConstructJob(Compilation &C, const JobAction &JA,
     CmdArgs.push_back(Args.MakeArgString(getToolChain().GetFilePath("crtn.o")));
   }
 
-  Args.AddAllArgs(CmdArgs, options::OPT_L);
-  Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
-  Args.AddAllArgs(CmdArgs, options::OPT_e);
+  Args.AddAllArgs(CmdArgs,
+                  {options::OPT_L, options::OPT_T_Group, options::OPT_e});
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
@@ -8679,9 +8678,8 @@ void dragonfly::Linker::ConstructJob(Compilation &C, const JobAction &JA,
           Args.MakeArgString(getToolChain().GetFilePath("crtbegin.o")));
   }
 
-  Args.AddAllArgs(CmdArgs, options::OPT_L);
-  Args.AddAllArgs(CmdArgs, options::OPT_T_Group);
-  Args.AddAllArgs(CmdArgs, options::OPT_e);
+  Args.AddAllArgs(CmdArgs,
+                  {options::OPT_L, options::OPT_T_Group, options::OPT_e});
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
@@ -8941,8 +8939,7 @@ std::unique_ptr<Command> visualstudio::Compiler::GetCommand(
   // any flag accepted by clang-cl.
 
   // These are spelled the same way in clang and cl.exe,.
-  Args.AddAllArgs(CmdArgs, options::OPT_D, options::OPT_U);
-  Args.AddAllArgs(CmdArgs, options::OPT_I);
+  Args.AddAllArgs(CmdArgs, {options::OPT_D, options::OPT_U, options::OPT_I});
 
   // Optimization level.
   if (Arg *A = Args.getLastArg(options::OPT_fbuiltin, options::OPT_fno_builtin))
@@ -9495,10 +9492,10 @@ void tools::SHAVE::Compiler::ConstructJob(Compilation &C, const JobAction &JA,
   assert(II.getType() == types::TY_C || II.getType() == types::TY_CXX);
   assert(Output.getType() == types::TY_PP_Asm); // Require preprocessed asm.
 
-  // Append all -I, -iquote, -isystem paths.
-  Args.AddAllArgs(CmdArgs, options::OPT_clang_i_Group);
+  // Append all -I, -iquote, -isystem paths, and defines/undefines.
   // These are spelled the same way in clang and moviCompile.
-  Args.AddAllArgs(CmdArgs, options::OPT_D, options::OPT_U);
+  Args.AddAllArgs(CmdArgs,
+                  {options::OPT_clang_i_Group, options::OPT_D, options::OPT_U});
 
   CmdArgs.push_back("-DMYRIAD2");
   CmdArgs.push_back("-mcpu=myriad2");
