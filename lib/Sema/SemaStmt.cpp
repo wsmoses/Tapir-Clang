@@ -20,6 +20,7 @@
 #include "clang/AST/EvaluatedExprVisitor.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
+#include "clang/AST/ParentMap.h"
 #include "clang/AST/RecursiveASTVisitor.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/StmtObjC.h"
@@ -2633,6 +2634,57 @@ Sema::ActOnCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *SubStmt) {
 StmtResult
 Sema::ActOnCilkSyncStmt(SourceLocation SyncLoc) {
   return new (Context) CilkSyncStmt(SyncLoc);
+}
+
+StmtResult
+Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
+                       Stmt *First, FullExprArg second, /* Decl *secondVar, */
+                       FullExprArg third,
+                       SourceLocation RParenLoc, Stmt *Body) {
+  if (!getLangOpts().CPlusPlus) {
+    if (DeclStmt *DS = dyn_cast_or_null<DeclStmt>(First)) {
+      // C99 6.8.5p3: The declaration part of a 'for' statement shall only
+      // declare identifiers for objects having storage class 'auto' or
+      // 'register'.
+      for (auto *DI : DS->decls()) {
+        VarDecl *VD = dyn_cast<VarDecl>(DI);
+        if (VD && VD->isLocalVarDecl() && !VD->hasLocalStorage())
+          VD = nullptr;
+        if (!VD) {
+          Diag(DI->getLocation(), diag::err_non_local_variable_decl_in_for);
+          DI->setInvalidDecl();
+        }
+      }
+    }
+  }
+
+  CheckBreakContinueBinding(second.get());
+  CheckBreakContinueBinding(third.get());
+
+  CheckForLoopConditionalStatement(*this, second.get(), third.get(), Body);
+  CheckForRedundantIteration(*this, third.get(), Body);
+
+  // ExprResult SecondResult(second.release());
+  // VarDecl *ConditionVar = nullptr;
+  // if (secondVar) {
+  //   ConditionVar = cast<VarDecl>(secondVar);
+  //   SecondResult = CheckConditionVariable(ConditionVar, CilkForLoc, true);
+  //   SecondResult = ActOnFinishFullExpr(SecondResult.get(), CilkForLoc);
+  //   if (SecondResult.isInvalid())
+  //     return StmtError();
+  // }
+
+  Expr *Increment = third.release().getAs<Expr>();
+
+  DiagnoseUnusedExprResult(First);
+  DiagnoseUnusedExprResult(Increment);
+  DiagnoseUnusedExprResult(Body);
+
+  if (isa<NullStmt>(Body))
+    getCurCompoundScope().setHasEmptyLoopBodies();
+
+  return new (Context) CilkForStmt(Context, First, second.get(), /* ConditionVar, */
+                                   Increment, Body, CilkForLoc, LParenLoc, RParenLoc);
 }
 
 /// \brief Determine whether the given expression is a candidate for

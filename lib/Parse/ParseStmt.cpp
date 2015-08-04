@@ -79,6 +79,7 @@ StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc) {
 ///         while-statement
 ///         do-statement
 ///         for-statement
+/// [CP]    cilk_for-statement
 ///
 ///       expression-statement:
 ///         expression[opt] ';'
@@ -350,14 +351,6 @@ Retry:
     // }
     return ParseCilkSpawnStatement();
 
-  // case tok::kw__Cilk_for:
-  //   if (!getLangOpts().CilkPlus) {
-  //     Diag(Tok, diag::err_cilkplus_disable);
-  //     SkipUntil(tok::semi);
-  //     return StmtError();
-  //   }
-  //   return ParseCilkForStmt();
-
   case tok::kw__Cilk_sync:               // [CP] _Cilk_sync statement
     // if (!getLangOpts().CilkPlus) {
     //   Diag(Tok, diag::err_cilkplus_disable);
@@ -367,6 +360,14 @@ Retry:
     Res = ParseCilkSyncStatement();
     SemiError = "_Cilk_sync";
     break;
+
+  case tok::kw__Cilk_for:
+    // if (!getLangOpts().CilkPlus) {
+    //   Diag(Tok, diag::err_cilkplus_disable);
+    //   SkipUntil(tok::semi);
+    //   return StmtError();
+    // }
+    return ParseCilkForStatement(TrailingElseLoc);
 
   case tok::annot_pragma_openmp:
     ProhibitAttributes(Attrs);
@@ -1878,6 +1879,270 @@ StmtResult Parser::ParseCilkSpawnStatement() {
     return StmtError();
   }
   return Actions.ActOnCilkSpawnStmt(SpawnLoc, SubStmt.get());
+}
+
+/// ParseCilkForStatement
+///       cilk_for-statement:
+///         '_Cilk_for' '(' expr ';' expr ';' expr ')' statement
+///         '_Cilk_for' '(' declaration expr ';' expr ')' statement
+StmtResult Parser::ParseCilkForStatement(SourceLocation *TrailingElseLoc) {
+  assert(Tok.is(tok::kw__Cilk_for) && "Not a _Cilk_for stmt!");
+  SourceLocation ForLoc = ConsumeToken();  // eat the '_Cilk_for'.
+
+  if (Tok.isNot(tok::l_paren)) {
+    Diag(Tok, diag::err_expected_lparen_after) << "_Cilk_for";
+    SkipUntil(tok::semi);
+    return StmtError();
+  }
+
+  bool C99orCXXorObjC = getLangOpts().C99 || getLangOpts().CPlusPlus ||
+    getLangOpts().ObjC1;
+
+  // Treating a _Cilk_for statement as a block.
+  unsigned ScopeFlags = Scope::ContinueScope;
+  if (C99orCXXorObjC)
+    ScopeFlags = Scope::DeclScope | Scope::ControlScope;
+
+  ParseScope CilkForScope(this, ScopeFlags);
+
+  BalancedDelimiterTracker T(*this, tok::l_paren);
+  T.consumeOpen();
+
+  ExprResult Value;
+
+  bool ForEach = false, ForRange = false;
+  StmtResult FirstPart;
+  bool SecondPartIsInvalid = false;
+  FullExprArg SecondPart(Actions);
+  ExprResult Collection;
+  ForRangeInit ForRangeInit;
+  FullExprArg ThirdPart(Actions);
+  Decl *SecondVar = nullptr;
+
+  if (Tok.is(tok::code_completion)) {
+    Actions.CodeCompleteOrdinaryName(getCurScope(),
+                                     C99orCXXorObjC ? Sema::PCC_ForInit
+                                                    : Sema::PCC_Expression);
+    cutOffParsing();
+    return StmtError();
+  }
+
+  ParsedAttributesWithRange attrs(AttrFactory);
+  MaybeParseCXX11Attributes(attrs);
+
+  // Parse the first part of the for specifier.
+  if (Tok.is(tok::semi)) {  // _Cilk_for (;
+    ProhibitAttributes(attrs);
+    // We disallow this syntax for now.
+    Diag(Tok, diag::err_cilk_for_missing_control_variable) << ";";
+    ConsumeToken();
+  } else if (isForInitDeclaration()) {  // _Cilk_for (int X = 4;
+    // Parse declaration, which eats the ';'.
+    if (!C99orCXXorObjC)   // Use of C99-style for loops in C90 mode?
+      Diag(Tok, diag::ext_c99_variable_decl_in_for_loop);
+
+    // // In C++0x, "for (T NS:a" might not be a typo for ::
+    // bool MightBeForRangeStmt = getLangOpts().CPlusPlus;
+    // ColonProtectionRAIIObject ColonProtection(*this, MightBeForRangeStmt);
+    bool MightBeForRangeStmt = false;
+
+    SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
+    DeclGroupPtrTy DG = ParseSimpleDeclaration(
+        Declarator::ForContext, DeclEnd, attrs, false,
+        MightBeForRangeStmt ? &ForRangeInit : nullptr);
+    FirstPart = Actions.ActOnDeclStmt(DG, DeclStart, Tok.getLocation());
+    // if (ForRangeInit.ParsedForRangeDecl()) {
+    //   Diag(ForRangeInit.ColonLoc, getLangOpts().CPlusPlus11 ?
+    //        diag::warn_cxx98_compat_for_range : diag::ext_for_range);
+
+    //   ForRange = true;
+    // } else
+    if (Tok.is(tok::semi)) {  // _Cilk_for (int X = 4;
+      ConsumeToken();
+    } else {
+      Diag(Tok, diag::err_expected_semi_for);
+    }
+  } else {
+    ProhibitAttributes(attrs);
+    Value = Actions.CorrectDelayedTyposInExpr(ParseExpression());
+
+    // ForEach = isTokIdentifier_in();
+
+    // Turn the expression into a stmt.
+    if (!Value.isInvalid()) {
+      // if (ForEach)
+      //   FirstPart = Actions.ActOnForEachLValueExpr(Value.get());
+      // else
+      FirstPart = Actions.ActOnExprStmt(Value);
+    }
+
+    if (Tok.is(tok::semi)) {
+      ConsumeToken();
+    // } else if (ForEach) {
+    //   ConsumeToken(); // consume 'in'
+
+    //   if (Tok.is(tok::code_completion)) {
+    //     Actions.CodeCompleteObjCForCollection(getCurScope(), DeclGroupPtrTy());
+    //     cutOffParsing();
+    //     return StmtError();
+    //   }
+    //   Collection = ParseExpression();
+    // } else if (getLangOpts().CPlusPlus11 && Tok.is(tok::colon) && FirstPart.get()) {
+    //   // User tried to write the reasonable, but ill-formed, for-range-statement
+    //   //   for (expr : expr) { ... }
+    //   Diag(Tok, diag::err_for_range_expected_decl)
+    //     << FirstPart.get()->getSourceRange();
+    //   SkipUntil(tok::r_paren, StopBeforeMatch);
+    //   SecondPartIsInvalid = true;
+    } else {
+      if (!Value.isInvalid()) {
+        Diag(Tok, diag::err_expected_semi_for);
+      } else {
+        // Skip until semicolon or rparen, don't consume it.
+        SkipUntil(tok::r_paren, StopAtSemi | StopBeforeMatch);
+        if (Tok.is(tok::semi))
+          ConsumeToken();
+      }
+    }
+  }
+
+  // Parse the second part of the for specifier.
+  // getCurScope()->AddFlags(Scope::BreakScope | Scope::ContinueScope);
+  if (!ForEach && !ForRange) {
+    assert(!SecondPart.get() && "Shouldn't have a second expression yet.");
+    // Parse the second part of the for specifier.
+    if (Tok.is(tok::semi)) {  // for (...;;
+      // no second part.
+      Diag(Tok, diag::err_cilk_for_missing_condition);
+      ConsumeToken(); // Eat the ';'
+    } else if (Tok.is(tok::r_paren)) {
+      // missing both semicolons.
+      Diag(Tok, diag::err_cilk_for_missing_condition);
+      Diag(Tok, diag::err_cilk_for_missing_increment);
+    } else {
+      ExprResult Second;
+      // if (getLangOpts().CPlusPlus)
+      //   ParseCXXCondition(Second, SecondVar, ForLoc, true);
+      // else {
+      Second = ParseExpression();
+      if (!Second.isInvalid())
+        Second = Actions.ActOnBooleanCondition(getCurScope(), ForLoc,
+                                               Second.get());
+      // }
+      SecondPartIsInvalid = Second.isInvalid();
+      SecondPart = Actions.MakeFullExpr(Second.get(), ForLoc);
+    }
+
+    if (Tok.isNot(tok::semi)) {
+      if (!SecondPartIsInvalid || SecondVar)
+        Diag(Tok, diag::err_expected_semi_for);
+      else
+        // Skip until semicolon or rparen, don't consume it.
+        SkipUntil(tok::r_paren, StopAtSemi | StopBeforeMatch);
+    }
+
+    if (Tok.is(tok::semi)) {
+      ConsumeToken();
+    }
+
+    // Parse the third part of the for specifier.
+    if (Tok.isNot(tok::r_paren)) {   // for (...;...;)
+      ExprResult Third = ParseExpression();
+      // FIXME: The C++11 standard doesn't actually say that this is a
+      // discarded-value expression, but it clearly should be.
+      ThirdPart = Actions.MakeFullDiscardedValueExpr(Third.get());
+    } else {
+      Diag(Tok, diag::err_cilk_for_missing_increment);
+    }
+  }
+  // Match the ')'.
+  T.consumeClose();
+
+  // // We need to perform most of the semantic analysis for a C++0x for-range
+  // // statememt before parsing the body, in order to be able to deduce the type
+  // // of an auto-typed loop variable.
+  // StmtResult ForRangeStmt;
+  // StmtResult ForEachStmt;
+
+  // if (ForRange) {
+  //   ForRangeStmt = Actions.ActOnCXXForRangeStmt(ForLoc, FirstPart.get(),
+  //                                               ForRangeInit.ColonLoc,
+  //                                               ForRangeInit.RangeExpr.get(),
+  //                                               T.getCloseLocation(),
+  //                                               Sema::BFRK_Build);
+
+
+  // // Similarly, we need to do the semantic analysis for a for-range
+  // // statement immediately in order to close over temporaries correctly.
+  // } else if (ForEach) {
+  //   ForEachStmt = Actions.ActOnObjCForCollectionStmt(ForLoc,
+  //                                                    FirstPart.get(),
+  //                                                    Collection.get(),
+  //                                                    T.getCloseLocation());
+  // } else {
+  //   // In OpenMP loop region loop control variable must be captured and be
+  //   // private. Perform analysis of first part (if any).
+  //   if (getLangOpts().OpenMP && FirstPart.isUsable()) {
+  //     Actions.ActOnOpenMPLoopInitialization(ForLoc, FirstPart.get());
+  //   }
+  // }
+
+  // C99 6.8.5p5 - In C99, the body of the for statement is a scope, even if
+  // there is no compound stmt.  C90 does not have this clause.  We only do this
+  // if the body isn't a compound statement to avoid push/pop in common cases.
+  //
+  // C++ 6.5p2:
+  // The substatement in an iteration-statement implicitly defines a local scope
+  // which is entered and exited each time through the loop.
+  //
+  // See comments in ParseIfStatement for why we create a scope for
+  // for-init-statement/condition and a new scope for substatement in C++.
+  //
+  ParseScope InnerScope(this,
+                        Scope::BlockScope | Scope::FnScope |
+                        Scope::DeclScope | Scope::ContinueScope,
+                        C99orCXXorObjC, Tok.is(tok::l_brace));
+
+  // The body of the for loop has the same local mangling number as the
+  // for-init-statement.
+  // It will only be incremented if the body contains other things that would
+  // normally increment the mangling number (like a compound statement).
+  if (C99orCXXorObjC)
+    getCurScope()->decrementMSManglingNumber();
+
+  // Read the body statement.
+  StmtResult Body(ParseStatement(TrailingElseLoc));
+
+  // Pop the body scope if needed.
+  InnerScope.Exit();
+
+  // Leave the for-scope.
+  CilkForScope.Exit();
+
+  // if (Body.isInvalid())
+  //   return StmtError();
+  if (!FirstPart.isUsable() || !SecondPart.get() || !ThirdPart.get() ||
+      !Body.isUsable()) {
+    // Actions.ActOnCilkForStmtError();
+    return StmtError();
+  }
+
+  // if (ForEach)
+  //  return Actions.FinishObjCForCollectionStmt(ForEachStmt.get(),
+  //                                             Body.get());
+
+  // if (ForRange)
+  //   return Actions.FinishCXXForRangeStmt(ForRangeStmt.get(), Body.get());
+
+  StmtResult Result
+      = Actions.ActOnCilkForStmt(ForLoc, T.getOpenLocation(), FirstPart.get(),
+                                 SecondPart, /* SecondVar, */ ThirdPart,
+                                 T.getCloseLocation(), Body.get());
+  if (Result.isInvalid()) {
+    // Actions.ActOnCilkForStmtError();
+    return StmtError();
+  }
+  return Result;
 }
 
 StmtResult Parser::ParsePragmaLoopHint(StmtVector &Stmts, bool OnlyStatement,

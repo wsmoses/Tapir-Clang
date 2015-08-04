@@ -1051,6 +1051,10 @@ void StmtProfiler::VisitCilkSyncStmt(const CilkSyncStmt *S) {
   VisitStmt(S);
 }
 
+void StmtProfiler::VisitCilkForStmt(const CilkForStmt *S) {
+  VisitStmt(S);
+}
+
 void StmtProfiler::VisitCXXNamedCastExpr(const CXXNamedCastExpr *S) {
   VisitExplicitCastExpr(S);
 }

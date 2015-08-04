@@ -183,6 +183,7 @@ def AsTypeExpr : DStmt<Expr>;
 // Cilk Plus Extensions.
 def CilkSyncStmt : Stmt;
 def CilkSpawnStmt : Stmt;
+def CilkForStmt : Stmt;
 
 // OpenMP Directives.
 def OMPExecutableDirective : Stmt<1>;

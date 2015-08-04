@@ -2277,6 +2277,83 @@ public:
   }
 };
 
+/// CilkForStmt - This represents a '_Cilk_for(init;cond;int)' stmt.
+class CilkForStmt : public Stmt {
+  SourceLocation CilkForLoc;
+  enum { INIT, /* CONDVAR, */ COND, INC, BODY,
+         /* LOOP_COUNT, */
+         END_EXPR };
+  Stmt* SubExprs[END_EXPR]; // SubExprs[INIT] is an expression or declstmt.
+  SourceLocation LParenLoc, RParenLoc;
+
+public:
+  CilkForStmt(const ASTContext &C, Stmt *Init, Expr *Cond, /* VarDecl *condVar, */
+              Expr *Inc, Stmt *Body, /* Expr *LoopCount, */
+              SourceLocation CFL, SourceLocation LP, SourceLocation RP);
+
+  /// \brief Build an empty for statement.
+  explicit CilkForStmt(EmptyShell Empty) : Stmt(CilkForStmtClass, Empty) { }
+
+  Stmt *getInit() { return SubExprs[INIT]; }
+
+  // /// \brief Retrieve the variable declared in this "for" statement, if any.
+  // ///
+  // /// In the following example, "y" is the condition variable.
+  // /// \code
+  // /// for (int x = random(); int y = mangle(x); ++x) {
+  // ///   // ...
+  // /// }
+  // /// \endcode
+  // VarDecl *getConditionVariable() const;
+  // void setConditionVariable(const ASTContext &C, VarDecl *V);
+
+  // /// If this CilkForStmt has a condition variable, return the faux DeclStmt
+  // /// associated with the creation of that condition variable.
+  // const DeclStmt *getConditionVariableDeclStmt() const {
+  //   return reinterpret_cast<DeclStmt*>(SubExprs[CONDVAR]);
+  // }
+
+  Expr *getCond() { return reinterpret_cast<Expr*>(SubExprs[COND]); }
+  Expr *getInc()  { return reinterpret_cast<Expr*>(SubExprs[INC]); }
+  Stmt *getBody() { return SubExprs[BODY]; }
+  // /// \brief Retrieve the loop count expression.
+  // Expr *getLoopCount() { return reinterpret_cast<Expr*>(SubExprs[LOOP_COUNT]);}
+
+  const Stmt *getInit() const { return SubExprs[INIT]; }
+  const Expr *getCond() const { return reinterpret_cast<Expr*>(SubExprs[COND]);}
+  const Expr *getInc()  const { return reinterpret_cast<Expr*>(SubExprs[INC]); }
+  const Stmt *getBody() const { return SubExprs[BODY]; }
+  // const Expr *getLoopCount() const {
+  //   return reinterpret_cast<Expr *>(SubExprs[LOOP_COUNT]);
+  // }
+
+  void setInit(Stmt *S) { SubExprs[INIT] = S; }
+  void setCond(Expr *E) { SubExprs[COND] = reinterpret_cast<Stmt*>(E); }
+  void setInc(Expr *E) { SubExprs[INC] = reinterpret_cast<Stmt*>(E); }
+  void setBody(Stmt *S) { SubExprs[BODY] = S; }
+
+  SourceLocation getCilkForLoc() const { return CilkForLoc; }
+  void setCilkForLoc(SourceLocation L) { CilkForLoc = L; }
+  SourceLocation getLParenLoc() const { return LParenLoc; }
+  void setLParenLoc(SourceLocation L) { LParenLoc = L; }
+  SourceLocation getRParenLoc() const { return RParenLoc; }
+  void setRParenLoc(SourceLocation L) { RParenLoc = L; }
+
+  SourceLocation getLocStart() const LLVM_READONLY { return CilkForLoc; }
+  SourceLocation getLocEnd() const LLVM_READONLY {
+    return SubExprs[BODY]->getLocEnd();
+  }
+
+  static bool classof(const Stmt *T) {
+    return T->getStmtClass() == CilkForStmtClass;
+  }
+
+  // Iterators
+  child_range children() {
+    return child_range(&SubExprs[0], &SubExprs[0]+END_EXPR);
+  }
+};
+
 }  // end namespace clang
 
 #endif

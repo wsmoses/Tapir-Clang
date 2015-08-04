@@ -2272,7 +2272,7 @@ void ASTStmtReader::VisitOMPCancelDirective(OMPCancelDirective *D) {
 }
 
 //===----------------------------------------------------------------------===//
-// Cilk spawn and Cilk sync
+// Cilk spawn, Cilk sync, Cilk for
 //===----------------------------------------------------------------------===//
 
 void ASTStmtReader::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
@@ -2284,6 +2284,19 @@ void ASTStmtReader::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
 void ASTStmtReader::VisitCilkSyncStmt(CilkSyncStmt *S) {
   VisitStmt(S);
   S->setSyncLoc(ReadSourceLocation(Record, Idx));
+}
+
+void ASTStmtReader::VisitCilkForStmt(CilkForStmt *S) {
+  VisitStmt(S);
+  S->setInit(Reader.ReadSubStmt());
+  S->setCond(Reader.ReadSubExpr());
+  // S->setConditionVariable(Reader.getContext(),
+  //                         ReadDeclAs<VarDecl>(Record, Idx));
+  S->setInc(Reader.ReadSubExpr());
+  S->setBody(Reader.ReadSubStmt());
+  S->setCilkForLoc(ReadSourceLocation(Record, Idx));
+  S->setLParenLoc(ReadSourceLocation(Record, Idx));
+  S->setRParenLoc(ReadSourceLocation(Record, Idx));
 }
 
 //===----------------------------------------------------------------------===//
@@ -2464,7 +2477,11 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
       S = new (Context) CilkSyncStmt(Empty);
       break;
 
-      case EXPR_PREDEFINED:
+    case STMT_CILKFOR:
+      S = new (Context) CilkForStmt(Empty);
+      break;
+
+    case EXPR_PREDEFINED:
       S = new (Context) PredefinedExpr(Empty);
       break;
 

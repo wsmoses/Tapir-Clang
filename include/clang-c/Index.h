@@ -2249,8 +2249,12 @@ enum CXCursorKind {
    */
   CXCursor_CilkSyncStmt                  = 259,
 
+  /** \brief A _Cilk_for statement.
+   */
+  CXCursor_CilkForStmt                   = 260,
+
   /* CXCursor_LastStmt                      = CXCursor_OMPTargetDataDirective, */
-  CXCursor_LastStmt                      = CXCursor_CilkSyncStmt,
+  CXCursor_LastStmt                      = CXCursor_CilkForStmt,
 
   /**
    * \brief Cursor that represents the translation unit itself.

@@ -11166,6 +11166,76 @@ TreeTransform<Derived>::TransformCilkSyncStmt(CilkSyncStmt *S) {
   return S;
 }
 
+template<typename Derived>
+StmtResult
+TreeTransform<Derived>::TransformCilkForStmt(CilkForStmt *S) {
+  // Transform the initialization statement
+  StmtResult Init = getDerived().TransformStmt(S->getInit());
+  if (Init.isInvalid())
+    return StmtError();
+
+  // Transform the condition
+  ExprResult Cond = getDerived().TransformExpr(S->getCond());
+  if (Cond.isInvalid())
+    return StmtError();
+
+  assert(S->getCond() && "unexpected empty condition in Cilk for");
+  // Convert the condition to a boolean value
+  ExprResult CondE = getSema().ActOnBooleanCondition(nullptr,
+                                                     S->getCilkForLoc(),
+                                                     Cond.get());
+
+  if (CondE.isInvalid())
+    return StmtError();
+
+  Cond = CondE.get();
+
+  Sema::FullExprArg FullCond(getSema().MakeFullExpr(Cond.get()));
+  if (!FullCond.get())
+    return StmtError();
+
+  // Enter the capturing region before processing loop increment.
+  // getSema().ActOnStartOfCilkForStmt(CilkForLoc, /*Scope*/0, Init);
+
+  // Transform the increment
+  ExprResult Inc = getDerived().TransformExpr(S->getInc());
+  if (Inc.isInvalid()) {
+    // getSema().ActOnCilkForStmtError();
+    return StmtError();
+  }
+
+  assert(S->getInc() && "unexpected empty increment in Cilk for");
+  Sema::FullExprArg FullInc(getSema().MakeFullExpr(Inc.get()));
+  if (!FullInc.get()) {
+    // getSema().ActOnCilkForStmtError();
+    return StmtError();
+  }
+
+  // Transform loop body.
+  StmtResult Body = getDerived().TransformStmt(S->getBody());
+  if (Body.isInvalid()) {
+    // getSema().ActOnCilkForStmtError();
+    return StmtError();
+  }
+
+  if (!getDerived().AlwaysRebuild() &&
+      Init.get() == S->getInit() &&
+      FullCond.get() == S->getCond() &&
+      Inc.get() == S->getInc() &&
+      Body.get() == S->getBody())
+    return S;
+
+  StmtResult Result = getSema().ActOnCilkForStmt(S->getCilkForLoc(), S->getLParenLoc(),
+                                                 Init.get(), FullCond,
+                                                 FullInc,  S->getRParenLoc(), Body.get());
+  if (Result.isInvalid()) {
+    // getSema().ActOnCilkForStmtError();
+    return StmtError();
+  }
+
+  return Result;
+}
+
 } // end namespace clang
 
 #endif

@@ -146,6 +146,8 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
     break;
   case Stmt::CilkSpawnStmtClass:
                               EmitCilkSpawnStmt(cast<CilkSpawnStmt>(*S)); break;
+  case Stmt::CilkForStmtClass:
+                              EmitCilkForStmt(cast<CilkForStmt>(*S)); break;
   case Stmt::ObjCAtTryStmtClass:
     EmitObjCAtTryStmt(cast<ObjCAtTryStmt>(*S));
     break;
@@ -286,10 +288,6 @@ void CodeGenFunction::EmitCilkSyncStmt(const CilkSyncStmt &S) {
   if (HaveInsertPoint())
     EmitStopPoint(&S);
 
-  // For now, we assume that _Cilk_sync statements are not used
-  // dynamically.
-  //
-  // TODO: Perform transformations to make this true in the IR.
   Builder.CreateSync(ContinueBlock);
   EmitBlock(ContinueBlock);
 }
@@ -504,6 +502,9 @@ void CodeGenFunction::EmitAttributedStmt(const AttributedStmt &S) {
     break;
   case Stmt::CXXForRangeStmtClass:
     EmitCXXForRangeStmt(cast<CXXForRangeStmt>(*SubStmt), S.getAttrs());
+    break;
+  case Stmt::CilkForStmtClass:
+    EmitCilkForStmt(cast<CilkForStmt>(*SubStmt), S.getAttrs());
     break;
   default:
     EmitStmt(SubStmt);
@@ -1056,6 +1057,104 @@ void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
 
   // Now emit the parent block
   EmitBlock(ContinueBlock);
+}
+
+void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
+                                      ArrayRef<const Attr *> ForAttrs) {
+  JumpDest LoopExit = getJumpDestInCurrentScope("pfor.end");
+
+  LexicalScope ForScope(*this, S.getSourceRange());
+
+  // Evaluate the first part before the loop.
+  if (S.getInit())
+    EmitStmt(S.getInit());
+
+  // Start the loop with a block that tests the condition.
+  // If there's an increment, the continue scope will be overwritten
+  // later.
+  JumpDest Continue = getJumpDestInCurrentScope("pfor.cond");
+  llvm::BasicBlock *CondBlock = Continue.getBlock();
+  EmitBlock(CondBlock);
+
+  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs);
+
+  const Expr *Inc = S.getInc();
+  assert(Inc && "_Cilk_for loop has no increment");
+  Continue = getJumpDestInCurrentScope("for.inc");
+
+  // Store the blocks to use for break and continue.
+  BreakContinueStack.push_back(BreakContinue(LoopExit, Continue));
+
+  // Create a cleanup scope for the condition variable cleanups.
+  LexicalScope ConditionScope(*this, S.getSourceRange());
+
+  const Expr *Cond = S.getCond();
+  assert(Cond && "_Cilk_for loop has no condition");
+  {
+    // // If the for statement has a condition scope, emit the local variable
+    // // declaration.
+    // if (S.getConditionVariable()) {
+    //   EmitAutoVarDecl(*S.getConditionVariable());
+    // }
+
+    llvm::BasicBlock *ExitBlock = LoopExit.getBlock();
+    // If there are any cleanups between here and the loop-exit scope,
+    // create a block to stage a loop exit along.
+    if (ForScope.requiresCleanups())
+      ExitBlock = createBasicBlock("pfor.cond.cleanup");
+
+    // As long as the condition is true, iterate the loop.
+    llvm::BasicBlock *DetachBlock = createBasicBlock("pfor.detach");
+    llvm::BasicBlock *ForBody = createBasicBlock("pfor.body");
+
+    // C99 6.8.5p2/p4: The first substatement is executed if the expression
+    // compares unequal to 0.  The condition must be a scalar type.
+    llvm::Value *BoolCondVal = EvaluateExprAsBool(S.getCond());
+    Builder.CreateCondBr(
+        BoolCondVal, DetachBlock, ExitBlock,
+        createProfileWeightsForLoop(S.getCond(), getProfileCount(S.getBody())));
+
+    if (ExitBlock != LoopExit.getBlock()) {
+      EmitBlock(ExitBlock);
+      EmitBranchThroughCleanup(LoopExit);
+    }
+
+    EmitBlock(DetachBlock);
+    Builder.CreateDetach(ForBody, Continue.getBlock());
+
+    EmitBlock(ForBody);
+  }
+
+  incrementProfileCounter(&S);
+
+  {
+    // Create a separate cleanup scope for the body, in case it is not
+    // a compound statement.
+    RunCleanupsScope BodyScope(*this);
+    EmitStmt(S.getBody());
+    Builder.CreateReattach(Continue.getBlock());
+  }
+
+  // Emit the increment next.
+  EmitBlock(Continue.getBlock());
+  EmitStmt(Inc);
+
+  BreakContinueStack.pop_back();
+
+  ConditionScope.ForceCleanup();
+
+  EmitStopPoint(&S);
+  EmitBranch(CondBlock);
+
+  ForScope.ForceCleanup();
+
+  LoopStack.pop();
+
+  // Emit the fall-through block.
+  EmitBlock(LoopExit.getBlock(), true);
+  llvm::BasicBlock *SyncContinueBlock = createBasicBlock("pfor.end.continue");
+  Builder.CreateSync(SyncContinueBlock);
+  EmitBlock(SyncContinueBlock);
 }
 
 void CodeGenFunction::EmitDeclStmt(const DeclStmt &S) {

@@ -3360,6 +3360,31 @@ public:
   StmtResult ActOnCilkSyncStmt(SourceLocation SyncLoc);
   StmtResult ActOnCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *S);
 
+  // bool CheckIfBodyModifiesLoopControlVar(Stmt *Body);
+  StmtResult ActOnCilkForStmt(SourceLocation CilkForLoc,
+                              SourceLocation LParenLoc,
+                              Stmt *First, FullExprArg second,
+                              /* Decl *SecondVar, */
+                              FullExprArg third,
+                              SourceLocation RParenLoc,
+                              Stmt *Body);
+
+  StmtResult BuildCilkForStmt(SourceLocation CilkForLoc,
+                              SourceLocation LParenLoc,
+                              Stmt *Init, Expr *Cond, Expr *Inc,
+                              SourceLocation RParenLoc, Stmt *Body,
+                              Expr *LoopCount, Expr *Stride,
+                              QualType SpanType);
+
+  // void ActOnStartOfCilkForStmt(SourceLocation CilkForLoc, Scope *CurScope,
+  //                              StmtResult FirstPart);
+
+  // void ActOnCilkForStmtError();
+
+  ExprResult CalculateCilkForLoopCount(SourceLocation CilkForLoc, Expr *Span,
+                                       Expr *Increment, Expr *StrideExpr,
+                                       int Dir, BinaryOperatorKind Opcode);
+
   VarDecl *getCopyElisionCandidate(QualType ReturnType, Expr *E,
                                    bool AllowFunctionParameters);
   bool isCopyElisionCandidate(QualType ReturnType, const VarDecl *VD,
