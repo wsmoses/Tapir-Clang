@@ -4311,7 +4311,7 @@ ASTContext::getCanonicalTemplateArgument(const TemplateArgument &Arg) const {
            A != AEnd; (void)++A, ++Idx)
         CanonArgs[Idx] = getCanonicalTemplateArgument(*A);
 
-      return TemplateArgument(CanonArgs, Arg.pack_size());
+      return TemplateArgument(llvm::makeArrayRef(CanonArgs, Arg.pack_size()));
     }
   }
 
@@ -8118,7 +8118,7 @@ static QualType DecodeTypeFromStr(const char *&Str, const ASTContext &Context,
 QualType ASTContext::GetBuiltinType(unsigned Id,
                                     GetBuiltinTypeError &Error,
                                     unsigned *IntegerConstantArgs) const {
-  const char *TypeStr = BuiltinInfo.GetTypeString(Id);
+  const char *TypeStr = BuiltinInfo.getTypeString(Id);
 
   SmallVector<QualType, 8> ArgTypes;
 

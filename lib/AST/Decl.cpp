@@ -1653,11 +1653,9 @@ void DeclaratorDecl::setQualifierInfo(NestedNameSpecifierLoc QualifierLoc) {
   }
 }
 
-void
-DeclaratorDecl::setTemplateParameterListsInfo(ASTContext &Context,
-                                              unsigned NumTPLists,
-                                              TemplateParameterList **TPLists) {
-  assert(NumTPLists > 0);
+void DeclaratorDecl::setTemplateParameterListsInfo(
+    ASTContext &Context, ArrayRef<TemplateParameterList *> TPLists) {
+  assert(!TPLists.empty());
   // Make sure the extended decl info is allocated.
   if (!hasExtInfo()) {
     // Save (non-extended) type source info pointer.
@@ -1668,7 +1666,7 @@ DeclaratorDecl::setTemplateParameterListsInfo(ASTContext &Context,
     getExtInfo()->TInfo = savedTInfo;
   }
   // Set the template parameter lists info.
-  getExtInfo()->setTemplateParameterListsInfo(Context, NumTPLists, TPLists);
+  getExtInfo()->setTemplateParameterListsInfo(Context, TPLists);
 }
 
 SourceLocation DeclaratorDecl::getOuterLocStart() const {
@@ -1726,13 +1724,8 @@ SourceRange DeclaratorDecl::getSourceRange() const {
   return SourceRange(getOuterLocStart(), RangeEnd);
 }
 
-void
-QualifierInfo::setTemplateParameterListsInfo(ASTContext &Context,
-                                             unsigned NumTPLists,
-                                             TemplateParameterList **TPLists) {
-  assert((NumTPLists == 0 || TPLists != nullptr) &&
-         "Empty array of template parameters with positive size!");
-
+void QualifierInfo::setTemplateParameterListsInfo(
+    ASTContext &Context, ArrayRef<TemplateParameterList *> TPLists) {
   // Free previous template parameters (if any).
   if (NumTemplParamLists > 0) {
     Context.Deallocate(TemplParamLists);
@@ -1740,10 +1733,10 @@ QualifierInfo::setTemplateParameterListsInfo(ASTContext &Context,
     NumTemplParamLists = 0;
   }
   // Set info on matched template parameter lists (if any).
-  if (NumTPLists > 0) {
-    TemplParamLists = new (Context) TemplateParameterList*[NumTPLists];
-    NumTemplParamLists = NumTPLists;
-    std::copy(TPLists, TPLists + NumTPLists, TemplParamLists);
+  if (!TPLists.empty()) {
+    TemplParamLists = new (Context) TemplateParameterList *[TPLists.size()];
+    NumTemplParamLists = TPLists.size();
+    std::copy(TPLists.begin(), TPLists.end(), TemplParamLists);
   }
 }
 
@@ -3482,16 +3475,15 @@ void TagDecl::setQualifierInfo(NestedNameSpecifierLoc QualifierLoc) {
   }
 }
 
-void TagDecl::setTemplateParameterListsInfo(ASTContext &Context,
-                                            unsigned NumTPLists,
-                                            TemplateParameterList **TPLists) {
-  assert(NumTPLists > 0);
+void TagDecl::setTemplateParameterListsInfo(
+    ASTContext &Context, ArrayRef<TemplateParameterList *> TPLists) {
+  assert(!TPLists.empty());
   // Make sure the extended decl info is allocated.
   if (!hasExtInfo())
     // Allocate external info struct.
     NamedDeclOrQualifier = new (getASTContext()) ExtInfo;
   // Set the template parameter lists info.
-  getExtInfo()->setTemplateParameterListsInfo(Context, NumTPLists, TPLists);
+  getExtInfo()->setTemplateParameterListsInfo(Context, TPLists);
 }
 
 //===----------------------------------------------------------------------===//
@@ -3647,10 +3639,6 @@ bool RecordDecl::isMsStruct(const ASTContext &C) const {
   return hasAttr<MSStructAttr>() || C.getLangOpts().MSBitfields == 1;
 }
 
-static bool isFieldOrIndirectField(Decl::Kind K) {
-  return FieldDecl::classofKind(K) || IndirectFieldDecl::classofKind(K);
-}
-
 void RecordDecl::LoadFieldsFromExternalStorage() const {
   ExternalASTSource *Source = getASTContext().getExternalSource();
   assert(hasExternalLexicalStorage() && Source && "No external storage?");
@@ -3659,16 +3647,10 @@ void RecordDecl::LoadFieldsFromExternalStorage() const {
   ExternalASTSource::Deserializing TheFields(Source);
 
   SmallVector<Decl*, 64> Decls;
-  LoadedFieldsFromExternalStorage = true;  
-  switch (Source->FindExternalLexicalDecls(this, isFieldOrIndirectField,
-                                           Decls)) {
-  case ELR_Success:
-    break;
-    
-  case ELR_AlreadyLoaded:
-  case ELR_Failure:
-    return;
-  }
+  LoadedFieldsFromExternalStorage = true;
+  Source->FindExternalLexicalDecls(this, [](Decl::Kind K) {
+    return FieldDecl::classofKind(K) || IndirectFieldDecl::classofKind(K);
+  }, Decls);
 
 #ifndef NDEBUG
   // Check that all decls we got were FieldDecls.
@@ -3757,26 +3739,17 @@ void BlockDecl::setParams(ArrayRef<ParmVarDecl *> NewParamInfo) {
   }
 }
 
-void BlockDecl::setCaptures(ASTContext &Context,
-                            const Capture *begin,
-                            const Capture *end,
-                            bool capturesCXXThis) {
-  CapturesCXXThis = capturesCXXThis;
+void BlockDecl::setCaptures(ASTContext &Context, ArrayRef<Capture> Captures,
+                            bool CapturesCXXThis) {
+  this->CapturesCXXThis = CapturesCXXThis;
+  this->NumCaptures = Captures.size();
 
-  if (begin == end) {
-    NumCaptures = 0;
-    Captures = nullptr;
+  if (Captures.empty()) {
+    this->Captures = nullptr;
     return;
   }
 
-  NumCaptures = end - begin;
-
-  // Avoid new Capture[] because we don't want to provide a default
-  // constructor.
-  size_t allocationSize = NumCaptures * sizeof(Capture);
-  void *buffer = Context.Allocate(allocationSize, /*alignment*/sizeof(void*));
-  memcpy(buffer, begin, allocationSize);
-  Captures = static_cast<Capture*>(buffer);
+  this->Captures = Captures.copy(Context).data();
 }
 
 bool BlockDecl::capturesVariable(const VarDecl *variable) const {
