@@ -1080,7 +1080,7 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
   const Expr *Inc = S.getInc();
   assert(Inc && "_Cilk_for loop has no increment");
-  Continue = getJumpDestInCurrentScope("for.inc");
+  Continue = getJumpDestInCurrentScope("pfor.inc");
 
   // Store the blocks to use for break and continue.
   BreakContinueStack.push_back(BreakContinue(LoopExit, Continue));
