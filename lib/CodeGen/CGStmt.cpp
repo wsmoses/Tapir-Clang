@@ -1021,8 +1021,8 @@ void CodeGenFunction::EmitReturnStmt(const ReturnStmt &S) {
 
 void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
 
-  llvm::BasicBlock *DetachedBlock = createBasicBlock("detach.child");
-  llvm::BasicBlock *ContinueBlock = createBasicBlock("detach.parent");
+  llvm::BasicBlock *DetachedBlock = createBasicBlock("det.achd");
+  llvm::BasicBlock *ContinueBlock = createBasicBlock("det.cont");
 
   // Handle spawning of calls in a special manner, to evaluate
   // arguments before spawn.
