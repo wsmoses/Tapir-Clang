@@ -1883,6 +1883,9 @@ void OMPClauseWriter::VisitOMPLinearClause(OMPLinearClause *C) {
   for (auto *VE : C->varlists()) {
     Writer->Writer.AddStmt(VE);
   }
+  for (auto *VE : C->privates()) {
+    Writer->Writer.AddStmt(VE);
+  }
   for (auto *VE : C->inits()) {
     Writer->Writer.AddStmt(VE);
   }
