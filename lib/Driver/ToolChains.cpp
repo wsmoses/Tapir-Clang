@@ -2328,7 +2328,7 @@ NaClToolChain::NaClToolChain(const Driver &D, const llvm::Triple &Triple,
   switch (Triple.getArch()) {
   case llvm::Triple::x86: {
     file_paths.push_back(FilePath + "x86_64-nacl/lib32");
-    file_paths.push_back(FilePath + "x86_64-nacl/usr/lib32");
+    file_paths.push_back(FilePath + "i686-nacl/usr/lib");
     prog_paths.push_back(ProgPath + "x86_64-nacl/bin");
     file_paths.push_back(ToolPath + "i686-nacl");
     break;
@@ -2380,11 +2380,20 @@ void NaClToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
 
   SmallString<128> P(D.Dir + "/../");
   switch (getTriple().getArch()) {
+  case llvm::Triple::x86:
+    // x86 is special because multilib style uses x86_64-nacl/include for libc
+    // headers but the SDK wants i686-nacl/usr/include. The other architectures
+    // have the same substring.
+    llvm::sys::path::append(P, "i686-nacl/usr/include");
+    addSystemInclude(DriverArgs, CC1Args, P.str());
+    llvm::sys::path::remove_filename(P);
+    llvm::sys::path::remove_filename(P);
+    llvm::sys::path::remove_filename(P);
+    llvm::sys::path::append(P, "x86_64-nacl/include");
+    addSystemInclude(DriverArgs, CC1Args, P.str());
+    return;
   case llvm::Triple::arm:
     llvm::sys::path::append(P, "arm-nacl/usr/include");
-    break;
-  case llvm::Triple::x86:
-    llvm::sys::path::append(P, "x86_64-nacl/usr/include");
     break;
   case llvm::Triple::x86_64:
     llvm::sys::path::append(P, "x86_64-nacl/usr/include");
@@ -3090,6 +3099,10 @@ static std::string getMultiarchTriple(const llvm::Triple &TargetTriple,
     if (llvm::sys::fs::exists(SysRoot + "/lib/sparc64-linux-gnu"))
       return "sparc64-linux-gnu";
     break;
+  case llvm::Triple::systemz:
+    if (llvm::sys::fs::exists(SysRoot + "/lib/s390x-linux-gnu"))
+      return "s390x-linux-gnu";
+    break;
   }
   return TargetTriple.str();
 }
@@ -3433,6 +3446,8 @@ void Linux::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
       "/usr/include/sparc-linux-gnu"};
   const StringRef Sparc64MultiarchIncludeDirs[] = {
       "/usr/include/sparc64-linux-gnu"};
+  const StringRef SYSTEMZMultiarchIncludeDirs[] = {
+      "/usr/include/s390x-linux-gnu"};
   ArrayRef<StringRef> MultiarchIncludeDirs;
   switch (getTriple().getArch()) {
   case llvm::Triple::x86_64:
@@ -3477,6 +3492,9 @@ void Linux::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
     break;
   case llvm::Triple::sparcv9:
     MultiarchIncludeDirs = Sparc64MultiarchIncludeDirs;
+    break;
+  case llvm::Triple::systemz:
+    MultiarchIncludeDirs = SYSTEMZMultiarchIncludeDirs;
     break;
   default:
     break;

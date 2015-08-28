@@ -5998,7 +5998,8 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         break;
       case SC_Register:
         // Local Named register
-        if (!Context.getTargetInfo().isValidGCCRegisterName(Label))
+        if (!Context.getTargetInfo().isValidGCCRegisterName(Label) &&
+            DeclAttrsMatchCUDAMode(getLangOpts(), getCurFunctionDecl()))
           Diag(E->getExprLoc(), diag::err_asm_unknown_register_name) << Label;
         break;
       case SC_Static:
@@ -6009,7 +6010,8 @@ Sema::ActOnVariableDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       }
     } else if (SC == SC_Register) {
       // Global Named register
-      if (!Context.getTargetInfo().isValidGCCRegisterName(Label))
+      if (!Context.getTargetInfo().isValidGCCRegisterName(Label) &&
+          DeclAttrsMatchCUDAMode(getLangOpts(), NewVD))
         Diag(E->getExprLoc(), diag::err_asm_unknown_register_name) << Label;
       if (!R->isIntegralType(Context) && !R->isPointerType()) {
         Diag(D.getLocStart(), diag::err_asm_bad_register_type);
@@ -7474,6 +7476,22 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
         Diag(D.getDeclSpec().getConceptSpecLoc(),
              diag::err_function_concept_not_defined);
         NewFD->setInvalidDecl();
+      }
+
+      // C++ Concepts TS [dcl.spec.concept]p1: [...] A function concept shall
+      // have no exception-specification and is treated as if it were specified
+      // with noexcept(true) (15.4). [...]
+      if (const FunctionProtoType *FPT = R->getAs<FunctionProtoType>()) {
+        if (FPT->hasExceptionSpec()) {
+          SourceRange Range;
+          if (D.isFunctionDeclarator())
+            Range = D.getFunctionTypeInfo().getExceptionSpecRange();
+          Diag(NewFD->getLocation(), diag::err_function_concept_exception_spec)
+              << FixItHint::CreateRemoval(Range);
+          NewFD->setInvalidDecl();
+        } else {
+          Context.adjustExceptionSpec(NewFD, EST_BasicNoexcept);
+        }
       }
 
       // C++ Concepts TS [dcl.spec.concept]p2: Every concept definition is
@@ -9950,9 +9968,17 @@ Sema::FinalizeDeclaration(Decl *ThisDecl) {
   // dllimport/dllexport variables cannot be thread local, their TLS index
   // isn't exported with the variable.
   if (DLLAttr && VD->getTLSKind()) {
-    Diag(VD->getLocation(), diag::err_attribute_dll_thread_local) << VD
-                                                                  << DLLAttr;
-    VD->setInvalidDecl();
+    FunctionDecl *F = dyn_cast<FunctionDecl>(VD->getDeclContext());
+    if (F && getDLLAttr(F)) {
+      assert(VD->isStaticLocal());
+      // But if this is a static local in a dlimport/dllexport function, the
+      // function will never be inlined, which means the var would never be
+      // imported, so having it marked import/export is safe.
+    } else {
+      Diag(VD->getLocation(), diag::err_attribute_dll_thread_local) << VD
+                                                                    << DLLAttr;
+      VD->setInvalidDecl();
+    }
   }
 
   if (UsedAttr *Attr = VD->getAttr<UsedAttr>()) {
@@ -11124,7 +11150,7 @@ NamedDecl *Sema::ImplicitlyDefineFunction(SourceLocation Loc,
                                              /*RestrictQualifierLoc=*/NoLoc,
                                              /*MutableLoc=*/NoLoc,
                                              EST_None,
-                                             /*ESpecLoc=*/NoLoc,
+                                             /*ESpecRange=*/SourceRange(),
                                              /*Exceptions=*/nullptr,
                                              /*ExceptionRanges=*/nullptr,
                                              /*NumExceptions=*/0,
