@@ -2279,7 +2279,7 @@ Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
 
     if (MightBeImplicitMember)
       return BuildPossibleImplicitMemberExpr(SS, TemplateKWLoc,
-                                             R, TemplateArgs);
+                                             R, TemplateArgs, S);
   }
 
   if (TemplateArgs || TemplateKWLoc.isValid()) {
@@ -2303,11 +2303,9 @@ Sema::ActOnIdExpression(Scope *S, CXXScopeSpec &SS,
 /// declaration name, generally during template instantiation.
 /// There's a large number of things which don't need to be done along
 /// this path.
-ExprResult
-Sema::BuildQualifiedDeclarationNameExpr(CXXScopeSpec &SS,
-                                        const DeclarationNameInfo &NameInfo,
-                                        bool IsAddressOfOperand,
-                                        TypeSourceInfo **RecoveryTSI) {
+ExprResult Sema::BuildQualifiedDeclarationNameExpr(
+    CXXScopeSpec &SS, const DeclarationNameInfo &NameInfo,
+    bool IsAddressOfOperand, const Scope *S, TypeSourceInfo **RecoveryTSI) {
   DeclContext *DC = computeDeclContext(SS, false);
   if (!DC)
     return BuildDependentDeclRefExpr(SS, /*TemplateKWLoc=*/SourceLocation(),
@@ -2374,7 +2372,7 @@ Sema::BuildQualifiedDeclarationNameExpr(CXXScopeSpec &SS,
   if (!R.empty() && (*R.begin())->isCXXClassMember() && !IsAddressOfOperand)
     return BuildPossibleImplicitMemberExpr(SS,
                                            /*TemplateKWLoc=*/SourceLocation(),
-                                           R, /*TemplateArgs=*/nullptr);
+                                           R, /*TemplateArgs=*/nullptr, S);
 
   return BuildDeclarationNameExpr(SS, R, /* ADL */ false);
 }
@@ -7531,6 +7529,18 @@ QualType Sema::CheckVectorOperands(ExprResult &LHS, ExprResult &RHS,
     Diag(Loc, diag::err_typecheck_vector_not_convertable_non_scalar)
       << LHSType << RHSType
       << LHS.get()->getSourceRange() << RHS.get()->getSourceRange();
+    return QualType();
+  }
+
+  // OpenCL V1.1 6.2.6.p1:
+  // If the operands are of more than one vector type, then an error shall
+  // occur. Implicit conversions between vector types are not permitted, per
+  // section 6.2.1.
+  if (getLangOpts().OpenCL &&
+      RHSVecType && isa<ExtVectorType>(RHSVecType) &&
+      LHSVecType && isa<ExtVectorType>(LHSVecType)) {
+    Diag(Loc, diag::err_opencl_implicit_vector_conversion) << LHSType
+                                                           << RHSType;
     return QualType();
   }
 

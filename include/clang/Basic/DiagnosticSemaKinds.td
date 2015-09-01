@@ -5674,6 +5674,9 @@ def err_throw_incomplete_ptr : Error<
   "cannot throw pointer to object of incomplete type %0">;
 def err_return_in_constructor_handler : Error<
   "return in the catch of a function try block of a constructor is illegal">;
+def warn_cdtor_function_try_handler_mem_expr : Warning<
+  "cannot refer to a non-static member from the handler of a "
+  "%select{constructor|destructor}0 function try block">, InGroup<Exceptions>;
 
 let CategoryName = "Lambda Issue" in {
   def err_capture_more_than_once : Error<
@@ -7447,6 +7450,8 @@ def err_opencl_return_value_with_address_space : Error<
   "return value cannot be qualified with address space">;
 def err_opencl_constant_no_init : Error<
   "variable in constant address space must be initialized">;
+def err_opencl_implicit_vector_conversion : Error<
+  "implicit conversions between vector types (%0 and %1) are not permitted">;
 } // end of sema category
 
 // Cilk Plus warnings and errors
