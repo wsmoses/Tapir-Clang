@@ -1351,7 +1351,6 @@ bool Generic_GCC::GCCInstallationDetector::getBiarchSibling(Multilib &M) const {
   if (TargetTriple.getOS() == llvm::Triple::Solaris) {
     LibDirs.append(begin(SolarisSPARCLibDirs), end(SolarisSPARCLibDirs));
     TripleAliases.append(begin(SolarisSPARCTriples), end(SolarisSPARCTriples));
-
     return;
   }
 
@@ -1448,6 +1447,7 @@ bool Generic_GCC::GCCInstallationDetector::getBiarchSibling(Multilib &M) const {
     TripleAliases.append(begin(PPC64LETriples), end(PPC64LETriples));
     break;
   case llvm::Triple::sparc:
+  case llvm::Triple::sparcel:
     LibDirs.append(begin(SPARCv8LibDirs), end(SPARCv8LibDirs));
     TripleAliases.append(begin(SPARCv8Triples), end(SPARCv8Triples));
     BiarchLibDirs.append(begin(SPARCv9LibDirs), end(SPARCv9LibDirs));
@@ -3936,4 +3936,33 @@ Tool *SHAVEToolChain::buildAssembler() const {
   // This one you'd think should be reachable since we expose an
   // assembler to the driver, except not the way it expects.
   llvm_unreachable("SHAVEToolChain can't buildAssembler");
+}
+
+bool WebAssembly::IsMathErrnoDefault() const { return false; }
+
+bool WebAssembly::IsObjCNonFragileABIDefault() const { return true; }
+
+bool WebAssembly::UseObjCMixedDispatch() const { return true; }
+
+bool WebAssembly::isPICDefault() const { return false; }
+
+bool WebAssembly::isPIEDefault() const { return false; }
+
+bool WebAssembly::isPICDefaultForced() const { return false; }
+
+bool WebAssembly::IsIntegratedAssemblerDefault() const { return true; }
+
+// TODO: Support Objective C stuff.
+bool WebAssembly::SupportsObjCGC() const { return false; }
+
+bool WebAssembly::hasBlocksRuntime() const { return false; }
+
+// TODO: Support profiling.
+bool WebAssembly::SupportsProfiling() const { return false; }
+
+void WebAssembly::addClangTargetOptions(const ArgList &DriverArgs,
+                                        ArgStringList &CC1Args) const {
+  if (DriverArgs.hasFlag(options::OPT_fuse_init_array,
+                         options::OPT_fno_use_init_array, true))
+    CC1Args.push_back("-fuse-init-array");
 }

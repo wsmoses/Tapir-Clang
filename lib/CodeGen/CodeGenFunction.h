@@ -584,7 +584,15 @@ public:
       if (SavedLocals.count(LocalVD) > 0) return false;
       SavedLocals[LocalVD] = CGF.LocalDeclMap.lookup(LocalVD);
       CGF.LocalDeclMap.erase(LocalVD);
-      SavedPrivates[LocalVD] = PrivateGen();
+      auto *V = PrivateGen();
+      QualType VarTy = LocalVD->getType();
+      if (VarTy->isReferenceType()) {
+        auto *TempAlloca = CGF.CreateMemTemp(VarTy);
+        LValue RefLVal = CGF.MakeNaturalAlignAddrLValue(TempAlloca, VarTy);
+        CGF.EmitStoreOfScalar(V, RefLVal);
+        V = TempAlloca;
+      }
+      SavedPrivates[LocalVD] = V;
       CGF.LocalDeclMap[LocalVD] = SavedLocals[LocalVD];
       return true;
     }
@@ -2631,6 +2639,8 @@ public:
   llvm::Value *EmitAMDGPUBuiltinExpr(unsigned BuiltinID, const CallExpr *E);
   llvm::Value *EmitSystemZBuiltinExpr(unsigned BuiltinID, const CallExpr *E);
   llvm::Value *EmitNVPTXBuiltinExpr(unsigned BuiltinID, const CallExpr *E);
+  llvm::Value *EmitWebAssemblyBuiltinExpr(unsigned BuiltinID,
+                                          const CallExpr *E);
 
   llvm::Value *EmitObjCProtocolExpr(const ObjCProtocolExpr *E);
   llvm::Value *EmitObjCStringLiteral(const ObjCStringLiteral *E);
