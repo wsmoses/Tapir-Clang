@@ -111,6 +111,28 @@ static Value *MakeBinaryAtomicValue(CodeGenFunction &CGF,
   return EmitFromInt(CGF, Result, T, ValueType);
 }
 
+static Value *EmitNontemporalStore(CodeGenFunction &CGF, const CallExpr *E) {
+  Value *Val = CGF.EmitScalarExpr(E->getArg(0));
+  Value *Address = CGF.EmitScalarExpr(E->getArg(1));
+
+  // Convert the type of the pointer to a pointer to the stored type.
+  Val = CGF.EmitToMemory(Val, E->getArg(0)->getType());
+  Value *BC = CGF.Builder.CreateBitCast(
+      Address, llvm::PointerType::getUnqual(Val->getType()), "cast");
+  LValue LV = CGF.MakeNaturalAlignAddrLValue(BC, E->getArg(0)->getType());
+  LV.setNontemporal(true);
+  CGF.EmitStoreOfScalar(Val, LV, false);
+  return nullptr;
+}
+
+static Value *EmitNontemporalLoad(CodeGenFunction &CGF, const CallExpr *E) {
+  Value *Address = CGF.EmitScalarExpr(E->getArg(0));
+
+  LValue LV = CGF.MakeNaturalAlignAddrLValue(Address, E->getType());
+  LV.setNontemporal(true);
+  return CGF.EmitLoadOfScalar(LV, E->getExprLoc());
+}
+
 static RValue EmitBinaryAtomic(CodeGenFunction &CGF,
                                llvm::AtomicRMWInst::BinOp Kind,
                                const CallExpr *E) {
@@ -1143,6 +1165,10 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     return RValue::get(nullptr);
   }
 
+  case Builtin::BI__builtin_nontemporal_load:
+    return RValue::get(EmitNontemporalLoad(*this, E));
+  case Builtin::BI__builtin_nontemporal_store:
+    return RValue::get(EmitNontemporalStore(*this, E));
   case Builtin::BI__c11_atomic_is_lock_free:
   case Builtin::BI__atomic_is_lock_free: {
     // Call "bool __atomic_is_lock_free(size_t size, void *ptr)". For the
@@ -3744,8 +3770,7 @@ Value *CodeGenFunction::EmitARMBuiltinExpr(unsigned BuiltinID,
     // fall through
   case NEON::BI__builtin_neon_vld1_lane_v: {
     Ops[1] = Builder.CreateBitCast(Ops[1], Ty);
-    Ty = llvm::PointerType::getUnqual(VTy->getElementType());
-    Ops[0] = Builder.CreateBitCast(Ops[0], Ty);
+    PtrOp0 = Builder.CreateElementBitCast(PtrOp0, VTy->getElementType());
     Value *Ld = Builder.CreateLoad(PtrOp0);
     return Builder.CreateInsertElement(Ops[1], Ld, Ops[2], "vld1_lane");
   }

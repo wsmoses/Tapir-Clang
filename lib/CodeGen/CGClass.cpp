@@ -1557,7 +1557,7 @@ void CodeGenFunction::EmitDestructorBody(FunctionArgList &Args) {
     // -fapple-kext must inline any call to this dtor into
     // the caller's body.
     if (getLangOpts().AppleKext)
-      CurFn->addFnAttr(llvm::Attribute::AlwaysInline);
+      CGM.AddAlwaysInlineFunction(CurFn);
 
     break;
   }
@@ -2433,12 +2433,9 @@ void CodeGenFunction::EmitVTablePtrCheck(const CXXRecordDecl *RD,
 
   SanitizerScope SanScope(this);
 
-  std::string OutName;
-  llvm::raw_string_ostream Out(OutName);
-  CGM.getCXXABI().getMangleContext().mangleCXXVTableBitSet(RD, Out);
-
   llvm::Value *BitSetName = llvm::MetadataAsValue::get(
-      getLLVMContext(), llvm::MDString::get(getLLVMContext(), Out.str()));
+      getLLVMContext(),
+      CGM.CreateMetadataIdentifierForType(QualType(RD->getTypeForDecl(), 0)));
 
   llvm::Value *CastedVTable = Builder.CreateBitCast(VTable, Int8PtrTy);
   llvm::Value *BitSetTest =

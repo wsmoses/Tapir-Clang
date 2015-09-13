@@ -1494,8 +1494,8 @@ void CodeGenModule::ConstructAttributeList(const CGFunctionInfo &FI,
     FuncAttrs.addAttribute("stack-protector-buffer-size",
                            llvm::utostr(CodeGenOpts.SSPBufferSize));
 
-    if (!CodeGenOpts.StackRealignment)
-      FuncAttrs.addAttribute("no-realign-stack");
+    if (CodeGenOpts.StackRealignment)
+      FuncAttrs.addAttribute("stackrealign");
 
     // Add target-cpu and target-features attributes to functions. If
     // we have a decl for the function and it has a target attribute then
@@ -2439,8 +2439,8 @@ void CodeGenFunction::EmitFunctionEpilog(const CGFunctionInfo &FI,
 
   llvm::Instruction *Ret;
   if (RV) {
-    if (SanOpts.has(SanitizerKind::ReturnsNonnullAttribute)) {
-      if (auto RetNNAttr = CurGD.getDecl()->getAttr<ReturnsNonNullAttr>()) {
+    if (CurCodeDecl && SanOpts.has(SanitizerKind::ReturnsNonnullAttribute)) {
+      if (auto RetNNAttr = CurCodeDecl->getAttr<ReturnsNonNullAttr>()) {
         SanitizerScope SanScope(this);
         llvm::Value *Cond = Builder.CreateICmpNE(
             RV, llvm::Constant::getNullValue(RV->getType()));

@@ -4222,7 +4222,11 @@ isNullPointerValueTemplateArgument(Sema &S, NonTypeTemplateParmDecl *Param,
                                    QualType ParamType, Expr *Arg) {
   if (Arg->isValueDependent() || Arg->isTypeDependent())
     return NPV_NotNullPointer;
-  
+
+  if (S.RequireCompleteType(Arg->getExprLoc(), ParamType, 0))
+    llvm_unreachable(
+        "Incomplete parameter type in isNullPointerValueTemplateArgument!");
+
   if (!S.getLangOpts().CPlusPlus11)
     return NPV_NotNullPointer;
   
@@ -4670,8 +4674,6 @@ static bool CheckTemplateArgumentPointerToMember(Sema &S,
     S.Diag(Arg->getExprLoc(), diag::warn_cxx98_compat_template_arg_null);
     Converted = TemplateArgument(S.Context.getCanonicalType(ParamType),
                                  /*isNullPtr*/true);
-    if (S.Context.getTargetInfo().getCXXABI().isMicrosoft())
-      S.RequireCompleteType(Arg->getExprLoc(), ParamType, 0);
     return false;
   case NPV_NotNullPointer:
     break;
@@ -7386,11 +7388,16 @@ Sema::ActOnExplicitInstantiation(Scope *S,
       }
     }
 
+    // Set the template specialization kind. Make sure it is set before
+    // instantiating the members which will trigger ASTConsumer callbacks.
+    Specialization->setTemplateSpecializationKind(TSK);
     InstantiateClassTemplateSpecializationMembers(TemplateNameLoc, Def, TSK);
+  } else {
+
+    // Set the template specialization kind.
+    Specialization->setTemplateSpecializationKind(TSK);
   }
 
-  // Set the template specialization kind.
-  Specialization->setTemplateSpecializationKind(TSK);
   return Specialization;
 }
 

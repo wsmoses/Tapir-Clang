@@ -4212,10 +4212,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
       // given, decide a default based on the target. Otherwise rely on the
       // options and pass the right information to the frontend.
       if (!Args.hasFlag(options::OPT_fopenmp_use_tls,
-                        options::OPT_fnoopenmp_use_tls,
-                        getToolChain().getArch() == llvm::Triple::ppc ||
-                            getToolChain().getArch() == llvm::Triple::ppc64 ||
-                            getToolChain().getArch() == llvm::Triple::ppc64le))
+                        options::OPT_fnoopenmp_use_tls, /*Default=*/true))
         CmdArgs.push_back("-fnoopenmp-use-tls");
       break;
     default:
@@ -4336,14 +4333,8 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
 
   // Translate -mstackrealign
   if (Args.hasFlag(options::OPT_mstackrealign, options::OPT_mno_stackrealign,
-                   false)) {
-    CmdArgs.push_back("-backend-option");
-    CmdArgs.push_back("-force-align-stack");
-  }
-  if (!Args.hasFlag(options::OPT_mno_stackrealign, options::OPT_mstackrealign,
-                    false)) {
+                   false))
     CmdArgs.push_back(Args.MakeArgString("-mstackrealign"));
-  }
 
   if (Args.hasArg(options::OPT_mstack_alignment)) {
     StringRef alignment = Args.getLastArgValue(options::OPT_mstack_alignment);
@@ -4471,7 +4462,10 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddAllArgs(CmdArgs, options::OPT_fmodule_map_file);
 
   // -fmodule-file can be used to specify files containing precompiled modules.
-  Args.AddAllArgs(CmdArgs, options::OPT_fmodule_file);
+  if (HaveModules)
+    Args.AddAllArgs(CmdArgs, options::OPT_fmodule_file);
+  else
+    Args.ClaimAllArgs(options::OPT_fmodule_file);
 
   // -fmodule-cache-path specifies where our implicitly-built module files
   // should be written.
@@ -8961,6 +8955,13 @@ void visualstudio::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       }
       CmdArgs.push_back(
           Args.MakeArgString(std::string("-libpath:") + LibDir.c_str()));
+
+      if (MSVC.useUniversalCRT(VisualStudioDir)) {
+        std::string UniversalCRTLibPath;
+        if (MSVC.getUniversalCRTLibraryPath(UniversalCRTLibPath))
+          CmdArgs.push_back(Args.MakeArgString(std::string("-libpath:") +
+                                               UniversalCRTLibPath.c_str()));
+      }
     }
 
     std::string WindowsSdkLibPath;
@@ -9725,13 +9726,14 @@ void tools::SHAVE::Assembler::ConstructJob(Compilation &C, const JobAction &JA,
   assert(Output.getType() == types::TY_Object);
 
   CmdArgs.push_back("-no6thSlotCompression");
-  CmdArgs.push_back("-cv:myriad2"); // Chip Version ?
+  CmdArgs.push_back("-cv:myriad2"); // Chip Version
   CmdArgs.push_back("-noSPrefixing");
   CmdArgs.push_back("-a"); // Mystery option.
-  for (auto Arg : Args.filtered(options::OPT_I)) {
-    Arg->claim();
+  Args.AddAllArgValues(CmdArgs, options::OPT_Wa_COMMA, options::OPT_Xassembler);
+  for (const Arg *A : Args.filtered(options::OPT_I, options::OPT_isystem)) {
+    A->claim();
     CmdArgs.push_back(
-        Args.MakeArgString(std::string("-i:") + Arg->getValue(0)));
+        Args.MakeArgString(std::string("-i:") + A->getValue(0)));
   }
   CmdArgs.push_back("-elf"); // Output format.
   CmdArgs.push_back(II.getFilename());
