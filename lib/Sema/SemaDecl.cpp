@@ -7244,7 +7244,8 @@ Sema::ActOnFunctionDeclarator(Scope *S, Declarator &D, DeclContext *DC,
       << DeclSpec::getSpecifierName(TSCS);
 
   if (D.isFirstDeclarationOfMember())
-    adjustMemberFunctionCC(R, D.isStaticMember());
+    adjustMemberFunctionCC(R, D.isStaticMember(), D.isCtorOrDtor(),
+                           D.getIdentifierLoc());
 
   bool isFriend = false;
   FunctionTemplateDecl *FunctionTemplate = nullptr;
@@ -12626,26 +12627,36 @@ ExprResult Sema::VerifyBitField(SourceLocation FieldLoc,
   }
 
   if (!FieldTy->isDependentType()) {
-    uint64_t TypeSize = Context.getTypeSize(FieldTy);
-    if (Value.getZExtValue() > TypeSize) {
-      if (!getLangOpts().CPlusPlus || IsMsStruct ||
-          Context.getTargetInfo().getCXXABI().isMicrosoft()) {
-        if (FieldName) 
-          return Diag(FieldLoc, diag::err_bitfield_width_exceeds_type_size)
-            << FieldName << (unsigned)Value.getZExtValue() 
-            << (unsigned)TypeSize;
-        
-        return Diag(FieldLoc, diag::err_anon_bitfield_width_exceeds_type_size)
-          << (unsigned)Value.getZExtValue() << (unsigned)TypeSize;
-      }
-      
+    uint64_t TypeStorageSize = Context.getTypeSize(FieldTy);
+    uint64_t TypeWidth = Context.getIntWidth(FieldTy);
+    bool BitfieldIsOverwide = Value.ugt(TypeWidth);
+
+    // Over-wide bitfields are an error in C or when using the MSVC bitfield
+    // ABI.
+    bool CStdConstraintViolation =
+        BitfieldIsOverwide && !getLangOpts().CPlusPlus;
+    bool MSBitfieldViolation =
+        Value.ugt(TypeStorageSize) &&
+        (IsMsStruct || Context.getTargetInfo().getCXXABI().isMicrosoft());
+    if (CStdConstraintViolation || MSBitfieldViolation) {
+      unsigned DiagWidth =
+          CStdConstraintViolation ? TypeWidth : TypeStorageSize;
       if (FieldName)
-        Diag(FieldLoc, diag::warn_bitfield_width_exceeds_type_size)
-          << FieldName << (unsigned)Value.getZExtValue() 
-          << (unsigned)TypeSize;
+        return Diag(FieldLoc, diag::err_bitfield_width_exceeds_type_width)
+               << FieldName << (unsigned)Value.getZExtValue() << DiagWidth;
+
+      return Diag(FieldLoc, diag::err_anon_bitfield_width_exceeds_type_width)
+             << (unsigned)Value.getZExtValue() << DiagWidth;
+    }
+
+    if (BitfieldIsOverwide) {
+      if (FieldName)
+        Diag(FieldLoc, diag::warn_bitfield_width_exceeds_type_width)
+            << FieldName << (unsigned)Value.getZExtValue()
+            << (unsigned)TypeWidth;
       else
-        Diag(FieldLoc, diag::warn_anon_bitfield_width_exceeds_type_size)
-          << (unsigned)Value.getZExtValue() << (unsigned)TypeSize;        
+        Diag(FieldLoc, diag::warn_anon_bitfield_width_exceeds_type_width)
+            << (unsigned)Value.getZExtValue() << (unsigned)TypeWidth;
     }
   }
 
@@ -14358,12 +14369,15 @@ static void checkModuleImportContext(Sema &S, Module *M,
   while (isa<LinkageSpecDecl>(DC))
     DC = DC->getParent();
   if (!isa<TranslationUnitDecl>(DC)) {
-    S.Diag(ImportLoc, diag::err_module_import_not_at_top_level)
-      << M->getFullModuleName() << DC;
+    S.Diag(ImportLoc, diag::err_module_import_not_at_top_level_fatal)
+        << M->getFullModuleName() << DC;
     S.Diag(cast<Decl>(DC)->getLocStart(),
-           diag::note_module_import_not_at_top_level)
-      << DC;
+           diag::note_module_import_not_at_top_level) << DC;
   }
+}
+
+void Sema::diagnoseMisplacedModuleImport(Module *M, SourceLocation ImportLoc) {
+  return checkModuleImportContext(*this, M, ImportLoc, CurContext);
 }
 
 DeclResult Sema::ActOnModuleImport(SourceLocation AtLoc, 
@@ -14520,7 +14534,7 @@ void Sema::ActOnPragmaWeakAlias(IdentifierInfo* Name,
                                     LookupOrdinaryName);
   WeakInfo W = WeakInfo(Name, NameLoc);
 
-  if (PrevDecl) {
+  if (PrevDecl && (isa<FunctionDecl>(PrevDecl) || isa<VarDecl>(PrevDecl))) {
     if (!PrevDecl->hasAttr<AliasAttr>())
       if (NamedDecl *ND = dyn_cast<NamedDecl>(PrevDecl))
         DeclApplyPragmaWeak(TUScope, ND, W);

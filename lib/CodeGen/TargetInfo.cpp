@@ -61,6 +61,11 @@ ABIInfo::getNaturalAlignIndirectInReg(QualType Ty, bool Realign) const {
                                       /*ByRef*/ false, Realign);
 }
 
+Address ABIInfo::EmitMSVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                             QualType Ty) const {
+  return Address::invalid();
+}
+
 ABIInfo::~ABIInfo() {}
 
 static CGCXXABI::RecordArgABI getRecordArgABI(const RecordType *RT,
@@ -624,7 +629,6 @@ ABIArgInfo WebAssemblyABIInfo::classifyArgumentType(QualType Ty) const {
     // though watch out for things like bitfields.
     if (const Type *SeltTy = isSingleElementStruct(Ty, getContext()))
       return ABIArgInfo::getDirect(CGT.ConvertType(QualType(SeltTy, 0)));
-    return getNaturalAlignIndirect(Ty);
   }
 
   // Otherwise just do the default thing.
@@ -1735,6 +1739,8 @@ public:
 
   Address EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
                     QualType Ty) const override;
+  Address EmitMSVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                      QualType Ty) const override;
 
   bool has64BitPointers() const {
     return Has64BitPointers;
@@ -3265,6 +3271,14 @@ Address X86_64ABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
   Address ResAddr = emitMergePHI(CGF, RegAddr, InRegBlock, MemAddr, InMemBlock,
                                  "vaarg.addr");
   return ResAddr;
+}
+
+Address X86_64ABIInfo::EmitMSVAArg(CodeGenFunction &CGF, Address VAListAddr,
+                                   QualType Ty) const {
+  return emitVoidPtrVAArg(CGF, VAListAddr, Ty, /*indirect*/ false,
+                          CGF.getContext().getTypeInfoInChars(Ty),
+                          CharUnits::fromQuantity(8),
+                          /*allowHigherAlign*/ false);
 }
 
 ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty, unsigned &FreeSSERegs,

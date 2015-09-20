@@ -216,6 +216,9 @@ class ASTContext : public RefCountedBase<ASTContext> {
   /// __builtin_va_list type.
   mutable TypedefDecl *BuiltinVaListDecl;
 
+  /// The typedef for the predefined \c __builtin_ms_va_list type.
+  mutable TypedefDecl *BuiltinMSVaListDecl;
+
   /// \brief The typedef for the predefined \c id type.
   mutable TypedefDecl *ObjCIdDecl;
   
@@ -839,9 +842,12 @@ public:
   CanQualType ObjCBuiltinIdTy, ObjCBuiltinClassTy, ObjCBuiltinSelTy;
   CanQualType ObjCBuiltinBoolTy;
   CanQualType OCLImage1dTy, OCLImage1dArrayTy, OCLImage1dBufferTy;
-  CanQualType OCLImage2dTy, OCLImage2dArrayTy;
+  CanQualType OCLImage2dTy, OCLImage2dArrayTy, OCLImage2dDepthTy;
+  CanQualType OCLImage2dArrayDepthTy, OCLImage2dMSAATy, OCLImage2dArrayMSAATy;
+  CanQualType OCLImage2dMSAADepthTy, OCLImage2dArrayMSAADepthTy;
   CanQualType OCLImage3dTy;
-  CanQualType OCLSamplerTy, OCLEventTy;
+  CanQualType OCLSamplerTy, OCLEventTy, OCLClkEventTy;
+  CanQualType OCLQueueTy, OCLNDRangeTy, OCLReserveIDTy;
   CanQualType OMPArraySectionTy;
 
   // Types for deductions in C++0x [stmt.ranged]'s desugaring. Built on demand.
@@ -1575,6 +1581,15 @@ public:
   /// \c __va_list_tag type used to help define the \c __builtin_va_list type
   /// for some targets.
   Decl *getVaListTagDecl() const;
+
+  /// Retrieve the C type declaration corresponding to the predefined
+  /// \c __builtin_ms_va_list type.
+  TypedefDecl *getBuiltinMSVaListDecl() const;
+
+  /// Retrieve the type of the \c __builtin_ms_va_list type.
+  QualType getBuiltinMSVaListType() const {
+    return getTypeDeclType(getBuiltinMSVaListDecl());
+  }
 
   /// \brief Return a type with additional \c const, \c volatile, or
   /// \c restrict qualifiers.

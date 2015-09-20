@@ -37,6 +37,7 @@ class MangleContext;
 namespace CodeGen {
 class CodeGenFunction;
 class CodeGenModule;
+struct CatchTypeInfo;
 
 /// \brief Implements C++ ABI-specific code generation functions.
 class CGCXXABI {
@@ -224,8 +225,10 @@ public:
   virtual void emitThrow(CodeGenFunction &CGF, const CXXThrowExpr *E) = 0;
   virtual llvm::GlobalVariable *getThrowInfo(QualType T) { return nullptr; }
 
-  virtual bool canEmitAvailableExternallyVTable(
-      const CXXRecordDecl *RD) const = 0;
+  /// \brief Determine whether it's possible to emit a vtable for \p RD, even
+  /// though we do not know that the vtable has been marked as used by semantic
+  /// analysis.
+  virtual bool canSpeculativelyEmitVTable(const CXXRecordDecl *RD) const = 0;
 
   virtual void emitBeginCatch(CodeGenFunction &CGF, const CXXCatchStmt *C) = 0;
 
@@ -234,8 +237,9 @@ public:
                                       llvm::Value *Exn);
 
   virtual llvm::Constant *getAddrOfRTTIDescriptor(QualType Ty) = 0;
-  virtual llvm::Constant *
+  virtual CatchTypeInfo
   getAddrOfCXXCatchHandlerType(QualType Ty, QualType CatchHandlerType) = 0;
+  virtual CatchTypeInfo getCatchAllTypeInfo();
 
   virtual bool shouldTypeidBeNullChecked(bool IsDeref,
                                          QualType SrcRecordTy) = 0;
@@ -351,13 +355,25 @@ public:
   virtual void emitVTableDefinitions(CodeGenVTables &CGVT,
                                      const CXXRecordDecl *RD) = 0;
 
+  /// Checks if ABI requires extra virtual offset for vtable field.
+  virtual bool
+  isVirtualOffsetNeededForVTableField(CodeGenFunction &CGF,
+                                      CodeGenFunction::VPtr Vptr) = 0;
+
+  /// Checks if ABI requires to initilize vptrs for given dynamic class.
+  virtual bool doStructorsInitializeVPtrs(const CXXRecordDecl *VTableClass) = 0;
+
+  /// Get the address point of the vtable for the given base subobject.
+  virtual llvm::Constant *
+  getVTableAddressPoint(BaseSubobject Base,
+                        const CXXRecordDecl *VTableClass) = 0;
+
   /// Get the address point of the vtable for the given base subobject while
-  /// building a constructor or a destructor. On return, NeedsVirtualOffset
-  /// tells if a virtual base adjustment is needed in order to get the offset
-  /// of the base subobject.
-  virtual llvm::Value *getVTableAddressPointInStructor(
-      CodeGenFunction &CGF, const CXXRecordDecl *RD, BaseSubobject Base,
-      const CXXRecordDecl *NearestVBase, bool &NeedsVirtualOffset) = 0;
+  /// building a constructor or a destructor.
+  virtual llvm::Value *
+  getVTableAddressPointInStructor(CodeGenFunction &CGF, const CXXRecordDecl *RD,
+                                  BaseSubobject Base,
+                                  const CXXRecordDecl *NearestVBase) = 0;
 
   /// Get the address point of the vtable for the given base subobject while
   /// building a constexpr.

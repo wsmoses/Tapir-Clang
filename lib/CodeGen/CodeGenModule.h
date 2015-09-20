@@ -489,8 +489,6 @@ private:
   /// MDNodes.
   llvm::DenseMap<QualType, llvm::Metadata *> MetadataIdMap;
 
-  llvm::SmallVector<llvm::Function*, 8> AlwaysInlineFunctions;
-
 public:
   CodeGenModule(ASTContext &C, const HeaderSearchOptions &headersearchopts,
                 const PreprocessorOptions &ppopts,
@@ -660,9 +658,13 @@ public:
   /// is the same as the type. For struct-path aware TBAA, the tag
   /// is different from the type: base type, access type and offset.
   /// When ConvertTypeToTag is true, we create a tag based on the scalar type.
-  void DecorateInstruction(llvm::Instruction *Inst,
-                           llvm::MDNode *TBAAInfo,
-                           bool ConvertTypeToTag = true);
+  void DecorateInstructionWithTBAA(llvm::Instruction *Inst,
+                                   llvm::MDNode *TBAAInfo,
+                                   bool ConvertTypeToTag = true);
+
+  /// Adds !invariant.barrier !tag to instruction
+  void DecorateInstructionWithInvariantGroup(llvm::Instruction *I,
+                                             const CXXRecordDecl *RD);
 
   /// Emit the given number of characters as a value of type size_t.
   llvm::ConstantInt *getSize(CharUnits numChars);
@@ -720,9 +722,6 @@ public:
 
   /// Get the address of the RTTI descriptor for the given type.
   llvm::Constant *GetAddrOfRTTIDescriptor(QualType Ty, bool ForEH = false);
-
-  llvm::Constant *getAddrOfCXXCatchHandlerType(QualType Ty,
-                                               QualType CatchHandlerType);
 
   /// Get the address of a uuid descriptor .
   ConstantAddress GetAddrOfUuidDescriptor(const CXXUuidofExpr* E);
@@ -1133,8 +1132,6 @@ public:
   /// \breif Get the declaration of std::terminate for the platform.
   llvm::Constant *getTerminateFn();
 
-  void AddAlwaysInlineFunction(llvm::Function *Fn);
-
 private:
   llvm::Constant *
   GetOrCreateLLVMFunction(StringRef MangledName, llvm::Type *Ty, GlobalDecl D,
@@ -1229,12 +1226,6 @@ private:
 
   /// Emits target specific Metadata for global declarations.
   void EmitTargetMetadata();
-
-  /// Replaces alwaysinline functions with a pair of internal xxx.inlinefunction
-  /// for direct calls, and a stub for indirect calls, and rewrites all uses of
-  /// those.
-  void RewriteAlwaysInlineFunctions();
-  void RewriteAlwaysInlineFunction(llvm::Function *Fn);
 
   /// Emit the llvm.gcov metadata used to tell LLVM where to emit the .gcno and
   /// .gcda files in a way that persists in .bc files.

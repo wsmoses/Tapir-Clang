@@ -733,8 +733,9 @@ ASTContext::ASTContext(LangOptions &LOpts, SourceManager &SM,
       SubstTemplateTemplateParmPacks(this_()),
       GlobalNestedNameSpecifier(nullptr), Int128Decl(nullptr),
       UInt128Decl(nullptr), Float128StubDecl(nullptr),
-      BuiltinVaListDecl(nullptr), ObjCIdDecl(nullptr), ObjCSelDecl(nullptr),
-      ObjCClassDecl(nullptr), ObjCProtocolClassDecl(nullptr), BOOLDecl(nullptr),
+      BuiltinVaListDecl(nullptr), BuiltinMSVaListDecl(nullptr),
+      ObjCIdDecl(nullptr), ObjCSelDecl(nullptr), ObjCClassDecl(nullptr),
+      ObjCProtocolClassDecl(nullptr), BOOLDecl(nullptr),
       CFConstantStringTypeDecl(nullptr), ObjCInstanceTypeDecl(nullptr),
       FILEDecl(nullptr), jmp_bufDecl(nullptr), sigjmp_bufDecl(nullptr),
       ucontext_tDecl(nullptr), BlockDescriptorType(nullptr),
@@ -1068,10 +1069,21 @@ void ASTContext::InitBuiltinTypes(const TargetInfo &Target) {
     InitBuiltinType(OCLImage1dBufferTy, BuiltinType::OCLImage1dBuffer);
     InitBuiltinType(OCLImage2dTy, BuiltinType::OCLImage2d);
     InitBuiltinType(OCLImage2dArrayTy, BuiltinType::OCLImage2dArray);
+    InitBuiltinType(OCLImage2dDepthTy, BuiltinType::OCLImage2dDepth);
+    InitBuiltinType(OCLImage2dArrayDepthTy, BuiltinType::OCLImage2dArrayDepth);
+    InitBuiltinType(OCLImage2dMSAATy, BuiltinType::OCLImage2dMSAA);
+    InitBuiltinType(OCLImage2dArrayMSAATy, BuiltinType::OCLImage2dArrayMSAA);
+    InitBuiltinType(OCLImage2dMSAADepthTy, BuiltinType::OCLImage2dMSAADepth);
+    InitBuiltinType(OCLImage2dArrayMSAADepthTy,
+                    BuiltinType::OCLImage2dArrayMSAADepth);
     InitBuiltinType(OCLImage3dTy, BuiltinType::OCLImage3d);
 
     InitBuiltinType(OCLSamplerTy, BuiltinType::OCLSampler);
     InitBuiltinType(OCLEventTy, BuiltinType::OCLEvent);
+    InitBuiltinType(OCLClkEventTy, BuiltinType::OCLClkEvent);
+    InitBuiltinType(OCLQueueTy, BuiltinType::OCLQueue);
+    InitBuiltinType(OCLNDRangeTy, BuiltinType::OCLNDRange);
+    InitBuiltinType(OCLReserveIDTy, BuiltinType::OCLReserveID);
   }
   
   // Builtin type for __objc_yes and __objc_no
@@ -1638,11 +1650,21 @@ TypeInfo ASTContext::getTypeInfoImpl(const Type *T) const {
       Align = Target->getIntAlign();
       break;
     case BuiltinType::OCLEvent:
+    case BuiltinType::OCLClkEvent:
+    case BuiltinType::OCLQueue:
+    case BuiltinType::OCLNDRange:
+    case BuiltinType::OCLReserveID:
     case BuiltinType::OCLImage1d:
     case BuiltinType::OCLImage1dArray:
     case BuiltinType::OCLImage1dBuffer:
     case BuiltinType::OCLImage2d:
     case BuiltinType::OCLImage2dArray:
+    case BuiltinType::OCLImage2dDepth:
+    case BuiltinType::OCLImage2dArrayDepth:
+    case BuiltinType::OCLImage2dMSAA:
+    case BuiltinType::OCLImage2dArrayMSAA:
+    case BuiltinType::OCLImage2dMSAADepth:
+    case BuiltinType::OCLImage2dArrayMSAADepth:
     case BuiltinType::OCLImage3d:
       // Currently these types are pointers to opaque types.
       Width = Target->getPointerWidth(0);
@@ -5374,8 +5396,18 @@ static char getObjCEncodingForPrimitiveKind(const ASTContext *C,
     case BuiltinType::OCLImage1dBuffer:
     case BuiltinType::OCLImage2d:
     case BuiltinType::OCLImage2dArray:
+    case BuiltinType::OCLImage2dDepth:
+    case BuiltinType::OCLImage2dArrayDepth:
+    case BuiltinType::OCLImage2dMSAA:
+    case BuiltinType::OCLImage2dArrayMSAA:
+    case BuiltinType::OCLImage2dMSAADepth:
+    case BuiltinType::OCLImage2dArrayMSAADepth:
     case BuiltinType::OCLImage3d:
     case BuiltinType::OCLEvent:
+    case BuiltinType::OCLClkEvent:
+    case BuiltinType::OCLQueue:
+    case BuiltinType::OCLNDRange:
+    case BuiltinType::OCLReserveID:
     case BuiltinType::OCLSampler:
     case BuiltinType::Dependent:
 #define BUILTIN_TYPE(KIND, ID)
@@ -6008,10 +6040,19 @@ ObjCInterfaceDecl *ASTContext::getObjCProtocolDecl() const {
 // __builtin_va_list Construction Functions
 //===----------------------------------------------------------------------===//
 
-static TypedefDecl *CreateCharPtrBuiltinVaListDecl(const ASTContext *Context) {
-  // typedef char* __builtin_va_list;
+static TypedefDecl *CreateCharPtrNamedVaListDecl(const ASTContext *Context,
+                                                 StringRef Name) {
+  // typedef char* __builtin[_ms]_va_list;
   QualType T = Context->getPointerType(Context->CharTy);
-  return Context->buildImplicitTypedef(T, "__builtin_va_list");
+  return Context->buildImplicitTypedef(T, Name);
+}
+
+static TypedefDecl *CreateMSVaListDecl(const ASTContext *Context) {
+  return CreateCharPtrNamedVaListDecl(Context, "__builtin_ms_va_list");
+}
+
+static TypedefDecl *CreateCharPtrBuiltinVaListDecl(const ASTContext *Context) {
+  return CreateCharPtrNamedVaListDecl(Context, "__builtin_va_list");
 }
 
 static TypedefDecl *CreateVoidPtrBuiltinVaListDecl(const ASTContext *Context) {
@@ -6345,6 +6386,13 @@ Decl *ASTContext::getVaListTagDecl() const {
     (void)getBuiltinVaListDecl();
 
   return VaListTagDecl;
+}
+
+TypedefDecl *ASTContext::getBuiltinMSVaListDecl() const {
+  if (!BuiltinMSVaListDecl)
+    BuiltinMSVaListDecl = CreateMSVaListDecl(this);
+
+  return BuiltinMSVaListDecl;
 }
 
 void ASTContext::setObjCConstantStringInterface(ObjCInterfaceDecl *Decl) {

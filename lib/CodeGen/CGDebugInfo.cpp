@@ -28,6 +28,7 @@
 #include "clang/Basic/Version.h"
 #include "clang/Frontend/CodeGenOptions.h"
 #include "clang/Lex/HeaderSearchOptions.h"
+#include "clang/Lex/ModuleMap.h"
 #include "clang/Lex/PreprocessorOptions.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
@@ -447,6 +448,24 @@ llvm::DIType *CGDebugInfo::CreateType(const BuiltinType *BT) {
   case BuiltinType::OCLImage2dArray:
     return getOrCreateStructPtrType("opencl_image2d_array_t",
                                     OCLImage2dArrayDITy);
+  case BuiltinType::OCLImage2dDepth:
+    return getOrCreateStructPtrType("opencl_image2d_depth_t",
+                                    OCLImage2dDepthDITy);
+  case BuiltinType::OCLImage2dArrayDepth:
+    return getOrCreateStructPtrType("opencl_image2d_array_depth_t",
+                                    OCLImage2dArrayDepthDITy);
+  case BuiltinType::OCLImage2dMSAA:
+    return getOrCreateStructPtrType("opencl_image2d_msaa_t",
+                                    OCLImage2dMSAADITy);
+  case BuiltinType::OCLImage2dArrayMSAA:
+    return getOrCreateStructPtrType("opencl_image2d_array_msaa_t",
+                                    OCLImage2dArrayMSAADITy);
+  case BuiltinType::OCLImage2dMSAADepth:
+    return getOrCreateStructPtrType("opencl_image2d_msaa_depth_t",
+                                    OCLImage2dMSAADepthDITy);
+  case BuiltinType::OCLImage2dArrayMSAADepth:
+    return getOrCreateStructPtrType("opencl_image2d_array_msaa_depth_t",
+                                    OCLImage2dArrayMSAADepthDITy);
   case BuiltinType::OCLImage3d:
     return getOrCreateStructPtrType("opencl_image3d_t", OCLImage3dDITy);
   case BuiltinType::OCLSampler:
@@ -455,6 +474,14 @@ llvm::DIType *CGDebugInfo::CreateType(const BuiltinType *BT) {
         CGM.getContext().getTypeAlign(BT), llvm::dwarf::DW_ATE_unsigned);
   case BuiltinType::OCLEvent:
     return getOrCreateStructPtrType("opencl_event_t", OCLEventDITy);
+  case BuiltinType::OCLClkEvent:
+    return getOrCreateStructPtrType("opencl_clk_event_t", OCLClkEventDITy);
+  case BuiltinType::OCLQueue:
+    return getOrCreateStructPtrType("opencl_queue_t", OCLQueueDITy);
+  case BuiltinType::OCLNDRange:
+    return getOrCreateStructPtrType("opencl_ndrange_t", OCLNDRangeDITy);
+  case BuiltinType::OCLReserveID:
+    return getOrCreateStructPtrType("opencl_reserve_id_t", OCLReserveIDDITy);
 
   case BuiltinType::UChar:
   case BuiltinType::Char_U:
@@ -1647,8 +1674,9 @@ llvm::DIType *CGDebugInfo::CreateType(const ObjCInterfaceType *Ty,
 }
 
 llvm::DIModule *
-CGDebugInfo::getOrCreateModuleRef(ExternalASTSource::ASTSourceDescriptor Mod) {
-  auto &ModRef = ModuleRefCache[Mod.Signature];
+CGDebugInfo::getOrCreateModuleRef(ExternalASTSource::ASTSourceDescriptor Mod,
+                                  bool CreateSkeletonCU) {
+  auto &ModRef = ModuleRefCache[Mod.FullModuleName];
   if (ModRef)
     return cast<llvm::DIModule>(ModRef);
 
@@ -1674,15 +1702,18 @@ CGDebugInfo::getOrCreateModuleRef(ExternalASTSource::ASTSourceDescriptor Mod) {
       OS << '\"';
     }
   }
-  llvm::DIBuilder DIB(CGM.getModule());
-  auto *CU = DIB.createCompileUnit(TheCU->getSourceLanguage(), Mod.ModuleName,
-                                   Mod.Path, TheCU->getProducer(), true,
-                                   StringRef(), 0, Mod.ASTFile,
-                                   llvm::DIBuilder::FullDebug, Mod.Signature);
+
+  if (CreateSkeletonCU) {
+    llvm::DIBuilder DIB(CGM.getModule());
+    DIB.createCompileUnit(TheCU->getSourceLanguage(), Mod.FullModuleName,
+                          Mod.Path, TheCU->getProducer(), true, StringRef(), 0,
+                          Mod.ASTFile, llvm::DIBuilder::FullDebug,
+                          Mod.Signature);
+    DIB.finalize();
+  }
   llvm::DIModule *M =
-      DIB.createModule(CU, Mod.ModuleName, ConfigMacros, Mod.Path,
-                       CGM.getHeaderSearchOpts().Sysroot);
-  DIB.finalize();
+      DBuilder.createModule(TheCU, Mod.FullModuleName, ConfigMacros, Mod.Path,
+                            CGM.getHeaderSearchOpts().Sysroot);
   ModRef.reset(M);
   return M;
 }
@@ -2129,16 +2160,34 @@ ObjCInterfaceDecl *CGDebugInfo::getObjCInterfaceDecl(QualType Ty) {
 }
 
 llvm::DIModule *CGDebugInfo::getParentModuleOrNull(const Decl *D) {
-  if (!DebugTypeExtRefs || !D->isFromASTFile())
-    return nullptr;
+  ExternalASTSource::ASTSourceDescriptor Info;
+  if (ClangModuleMap) {
+    // We are building a clang module or a precompiled header.
+    //
+    // TODO: When D is a CXXRecordDecl or a C++ Enum, the ODR applies
+    // and it wouldn't be necessary to specify the parent scope
+    // because the type is already unique by definition (it would look
+    // like the output of -fno-standalone-debug). On the other hand,
+    // the parent scope helps a consumer to quickly locate the object
+    // file where the type's definition is located, so it might be
+    // best to make this behavior a command line or debugger tuning
+    // option.
+    FullSourceLoc Loc(D->getLocation(), CGM.getContext().getSourceManager());
+    if (Module *M = ClangModuleMap->inferModuleFromLocation(Loc)) {
+      auto Info = ExternalASTSource::ASTSourceDescriptor(*M);
+      return getOrCreateModuleRef(Info, /*SkeletonCU=*/false);
+    }
+  }
 
-  llvm::DIModule *ModuleRef = nullptr;
-  auto *Reader = CGM.getContext().getExternalSource();
-  auto Idx = D->getOwningModuleID();
-  auto Info = Reader->getSourceDescriptor(Idx);
-  if (Info)
-    ModuleRef = getOrCreateModuleRef(*Info);
-  return ModuleRef;
+  if (DebugTypeExtRefs && D->isFromASTFile()) {
+    // Record a reference to an imported clang module or precompiled header.
+    auto *Reader = CGM.getContext().getExternalSource();
+    auto Idx = D->getOwningModuleID();
+    auto Info = Reader->getSourceDescriptor(Idx);
+    if (Info)
+      return getOrCreateModuleRef(*Info, /*SkeletonCU=*/true);
+  }
+  return nullptr;
 }
 
 llvm::DIType *CGDebugInfo::CreateTypeNode(QualType Ty, llvm::DIFile *Unit) {
@@ -3358,12 +3407,11 @@ void CGDebugInfo::EmitUsingDecl(const UsingDecl &UD) {
 }
 
 void CGDebugInfo::EmitImportDecl(const ImportDecl &ID) {
-  auto *Reader = CGM.getContext().getExternalSource();
-  auto Info = Reader->getSourceDescriptor(*ID.getImportedModule());
+  auto Info = ExternalASTSource::ASTSourceDescriptor(*ID.getImportedModule());
   DBuilder.createImportedDeclaration(
-    getCurrentContextDescriptor(cast<Decl>(ID.getDeclContext())),
-                                getOrCreateModuleRef(Info),
-                                getLineNumber(ID.getLocation()));
+      getCurrentContextDescriptor(cast<Decl>(ID.getDeclContext())),
+      getOrCreateModuleRef(Info, DebugTypeExtRefs),
+      getLineNumber(ID.getLocation()));
 }
 
 llvm::DIImportedEntity *

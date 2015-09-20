@@ -413,6 +413,7 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
     // clang-cl targets MSVC-style Win32.
     llvm::Triple T(DefaultTargetTriple);
     T.setOS(llvm::Triple::Win32);
+    T.setVendor(llvm::Triple::PC);
     T.setEnvironment(llvm::Triple::MSVC);
     DefaultTargetTriple = T.str();
   }
@@ -950,8 +951,8 @@ static bool ContainsCompileOrAssembleAction(const Action *A) {
       isa<AssembleJobAction>(A))
     return true;
 
-  for (Action::const_iterator it = A->begin(), ie = A->end(); it != ie; ++it)
-    if (ContainsCompileOrAssembleAction(*it))
+  for (const Action *Input : *A)
+    if (ContainsCompileOrAssembleAction(Input))
       return true;
 
   return false;
@@ -992,9 +993,7 @@ void Driver::BuildUniversalActions(const ToolChain &TC, DerivedArgList &Args,
 
   // Add in arch bindings for every top level action, as well as lipo and
   // dsymutil steps if needed.
-  for (unsigned i = 0, e = SingleActions.size(); i != e; ++i) {
-    Action *Act = SingleActions[i];
-
+  for (Action* Act : SingleActions) {
     // Make sure we can lipo this kind of output. If not (and it is an actual
     // output) then we disallow, since we can't create an output file with the
     // right name without overwriting it. We could remove this oddity by just
@@ -2262,15 +2261,14 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
       case llvm::Triple::xcore:
         TC = new toolchains::XCoreToolChain(*this, Target, Args);
         break;
-      case llvm::Triple::shave:
-        TC = new toolchains::SHAVEToolChain(*this, Target, Args);
-        break;
       case llvm::Triple::wasm32:
       case llvm::Triple::wasm64:
         TC = new toolchains::WebAssembly(*this, Target, Args);
         break;
       default:
-        if (Target.isOSBinFormatELF())
+        if (Target.getVendor() == llvm::Triple::Myriad)
+          TC = new toolchains::MyriadToolChain(*this, Target, Args);
+        else if (Target.isOSBinFormatELF())
           TC = new toolchains::Generic_ELF(*this, Target, Args);
         else if (Target.isOSBinFormatMachO())
           TC = new toolchains::MachO(*this, Target, Args);

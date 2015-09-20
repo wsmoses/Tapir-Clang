@@ -1417,7 +1417,8 @@ void CodeGenModule::ConstructAttributeList(const CGFunctionInfo &FI,
 
     if (const FunctionDecl *Fn = dyn_cast<FunctionDecl>(TargetDecl)) {
       const FunctionProtoType *FPT = Fn->getType()->getAs<FunctionProtoType>();
-      if (FPT && FPT->isNothrow(getContext()))
+      if (FPT && !isUnresolvedExceptionSpec(FPT->getExceptionSpecType()) &&
+          FPT->isNothrow(getContext()))
         FuncAttrs.addAttribute(llvm::Attribute::NoUnwind);
       // Don't use [[noreturn]] or _Noreturn for a call to a virtual function.
       // These attributes are not inherited by overloads.
@@ -3593,6 +3594,12 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
 
 /* VarArg handling */
 
-Address CodeGenFunction::EmitVAArg(Address VAListAddr, QualType Ty) {
+Address CodeGenFunction::EmitVAArg(VAArgExpr *VE, Address &VAListAddr) {
+  VAListAddr = VE->isMicrosoftABI()
+                 ? EmitMSVAListRef(VE->getSubExpr())
+                 : EmitVAListRef(VE->getSubExpr());
+  QualType Ty = VE->getType();
+  if (VE->isMicrosoftABI())
+    return CGM.getTypes().getABIInfo().EmitMSVAArg(*this, VAListAddr, Ty);
   return CGM.getTypes().getABIInfo().EmitVAArg(*this, VAListAddr, Ty);
 }

@@ -997,7 +997,7 @@ void StmtPrinter::VisitOMPCancellationPointDirective(
 
 void StmtPrinter::VisitOMPCancelDirective(OMPCancelDirective *Node) {
   Indent() << "#pragma omp cancel "
-           << getOpenMPDirectiveName(Node->getCancelRegion());
+           << getOpenMPDirectiveName(Node->getCancelRegion()) << " ";
   PrintOMPExecutableDirective(Node);
 }
 //===----------------------------------------------------------------------===//

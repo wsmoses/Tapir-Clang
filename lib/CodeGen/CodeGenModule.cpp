@@ -398,6 +398,22 @@ void CodeGenModule::Release() {
     // Indicate that we want CodeView in the metadata.
     getModule().addModuleFlag(llvm::Module::Warning, "CodeView", 1);
   }
+  if (CodeGenOpts.OptimizationLevel > 0 && CodeGenOpts.StrictVTablePointers) {
+    // We don't support LTO with 2 with different StrictVTablePointers
+    // FIXME: we could support it by stripping all the information introduced
+    // by StrictVTablePointers.
+
+    getModule().addModuleFlag(llvm::Module::Error, "StrictVTablePointers",1);
+
+    llvm::Metadata *Ops[2] = {
+              llvm::MDString::get(VMContext, "StrictVTablePointers"),
+              llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+                  llvm::Type::getInt32Ty(VMContext), 1))};
+
+    getModule().addModuleFlag(llvm::Module::Require,
+                              "StrictVTablePointersRequirement",
+                              llvm::MDNode::get(VMContext, Ops));
+  }
   if (DebugInfo)
     // We support a single version in the linked module. The LLVM
     // parser will drop debug info with a different version number
@@ -448,113 +464,6 @@ void CodeGenModule::Release() {
   EmitVersionIdentMetadata();
 
   EmitTargetMetadata();
-
-  RewriteAlwaysInlineFunctions();
-}
-
-void CodeGenModule::AddAlwaysInlineFunction(llvm::Function *Fn) {
-  AlwaysInlineFunctions.push_back(Fn);
-}
-
-/// Find all uses of GV that are not direct calls or invokes.
-static void FindNonDirectCallUses(llvm::GlobalValue *GV,
-                                  llvm::SmallVectorImpl<llvm::Use *> *Uses) {
-  llvm::GlobalValue::use_iterator UI = GV->use_begin(), E = GV->use_end();
-  for (; UI != E;) {
-    llvm::Use &U = *UI;
-    ++UI;
-
-    llvm::CallSite CS(U.getUser());
-    bool isDirectCall = (CS.isCall() || CS.isInvoke()) && CS.isCallee(&U);
-    if (!isDirectCall)
-      Uses->push_back(&U);
-  }
-}
-
-/// Replace a list of uses.
-static void ReplaceUsesWith(const llvm::SmallVectorImpl<llvm::Use *> &Uses,
-                            llvm::GlobalValue *V,
-                            llvm::GlobalValue *Replacement) {
-  for (llvm::Use *U : Uses) {
-    auto *C = dyn_cast<llvm::Constant>(U->getUser());
-    if (C && !isa<llvm::GlobalValue>(C))
-      C->handleOperandChange(V, Replacement, U);
-    else
-      U->set(Replacement);
-  }
-}
-
-void CodeGenModule::RewriteAlwaysInlineFunction(llvm::Function *Fn) {
-  std::string Name = Fn->getName();
-  std::string InlineName = Name + ".alwaysinline";
-  Fn->setName(InlineName);
-
-  llvm::SmallVector<llvm::Use *, 8> NonDirectCallUses;
-  Fn->removeDeadConstantUsers();
-  FindNonDirectCallUses(Fn, &NonDirectCallUses);
-  // Do not create the wrapper if there are no non-direct call uses, and we are
-  // not required to emit an external definition.
-  if (NonDirectCallUses.empty() && Fn->isDiscardableIfUnused()) {
-    // An always inline function with no wrapper cannot legitimately use the
-    // function's COMDAT symbol.
-    Fn->setComdat(nullptr);
-    return;
-  }
-
-  llvm::FunctionType *FT = Fn->getFunctionType();
-  llvm::LLVMContext &Ctx = getModule().getContext();
-  llvm::Function *StubFn =
-      llvm::Function::Create(FT, Fn->getLinkage(), Name, &getModule());
-  assert(StubFn->getName() == Name && "name was uniqued!");
-
-  // Insert the stub immediately after the original function. Helps with the
-  // fragile tests, among other things.
-  StubFn->removeFromParent();
-  TheModule.getFunctionList().insertAfter(Fn, StubFn);
-
-  StubFn->copyAttributesFrom(Fn);
-  StubFn->setPersonalityFn(nullptr);
-
-  // AvailableExternally functions are replaced with a declaration.
-  // Everyone else gets a wrapper that musttail-calls the original function.
-  if (Fn->hasAvailableExternallyLinkage()) {
-    StubFn->setLinkage(llvm::GlobalValue::ExternalLinkage);
-  } else {
-    llvm::BasicBlock *BB = llvm::BasicBlock::Create(Ctx, "entry", StubFn);
-    std::vector<llvm::Value *> Args;
-    for (llvm::Function::arg_iterator ai = StubFn->arg_begin();
-         ai != StubFn->arg_end(); ++ai)
-      Args.push_back(&*ai);
-    llvm::CallInst *CI = llvm::CallInst::Create(Fn, Args, "", BB);
-    CI->setCallingConv(Fn->getCallingConv());
-    CI->setTailCallKind(llvm::CallInst::TCK_MustTail);
-    CI->setAttributes(Fn->getAttributes());
-    if (FT->getReturnType()->isVoidTy())
-      llvm::ReturnInst::Create(Ctx, BB);
-    else
-      llvm::ReturnInst::Create(Ctx, CI, BB);
-  }
-
-  if (Fn->hasComdat())
-    StubFn->setComdat(Fn->getComdat());
-
-  ReplaceUsesWith(NonDirectCallUses, Fn, StubFn);
-
-  // Replace all metadata uses with the stub. This is primarily to reattach
-  // DISubprogram metadata to the stub, because that's what will be emitted in
-  // the object file.
-  if (Fn->isUsedByMetadata())
-    llvm::ValueAsMetadata::handleRAUW(Fn, StubFn);
-}
-
-void CodeGenModule::RewriteAlwaysInlineFunctions() {
-  for (llvm::Function *Fn : AlwaysInlineFunctions) {
-    RewriteAlwaysInlineFunction(Fn);
-    Fn->setLinkage(llvm::GlobalValue::InternalLinkage);
-    Fn->addFnAttr(llvm::Attribute::AlwaysInline);
-    Fn->setDLLStorageClass(llvm::GlobalVariable::DefaultStorageClass);
-    Fn->setVisibility(llvm::GlobalValue::DefaultVisibility);
-  }
 }
 
 void CodeGenModule::UpdateCompletedType(const TagDecl *TD) {
@@ -598,14 +507,24 @@ llvm::MDNode *CodeGenModule::getTBAAStructTagInfo(QualType BaseTy,
 /// and struct-path aware TBAA, the tag has the same format:
 /// base type, access type and offset.
 /// When ConvertTypeToTag is true, we create a tag based on the scalar type.
-void CodeGenModule::DecorateInstruction(llvm::Instruction *Inst,
-                                        llvm::MDNode *TBAAInfo,
-                                        bool ConvertTypeToTag) {
+void CodeGenModule::DecorateInstructionWithTBAA(llvm::Instruction *Inst,
+                                                llvm::MDNode *TBAAInfo,
+                                                bool ConvertTypeToTag) {
   if (ConvertTypeToTag && TBAA)
     Inst->setMetadata(llvm::LLVMContext::MD_tbaa,
                       TBAA->getTBAAScalarTagInfo(TBAAInfo));
   else
     Inst->setMetadata(llvm::LLVMContext::MD_tbaa, TBAAInfo);
+}
+
+void CodeGenModule::DecorateInstructionWithInvariantGroup(
+    llvm::Instruction *I, const CXXRecordDecl *RD) {
+  llvm::Metadata *MD = CreateMetadataIdentifierForType(QualType(RD->getTypeForDecl(), 0));
+  auto *MetaDataNode = dyn_cast<llvm::MDNode>(MD);
+  // Check if we have to wrap MDString in MDNode.
+  if (!MetaDataNode)
+    MetaDataNode = llvm::MDNode::get(getLLVMContext(), MD);
+  I->setMetadata(llvm::LLVMContext::MD_invariant_group, MetaDataNode);
 }
 
 void CodeGenModule::Error(SourceLocation loc, StringRef message) {
@@ -879,7 +798,7 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
              !F->getAttributes().hasAttribute(llvm::AttributeSet::FunctionIndex,
                                               llvm::Attribute::NoInline)) {
     // (noinline wins over always_inline, and we can't specify both in IR)
-    AddAlwaysInlineFunction(F);
+    B.addAttribute(llvm::Attribute::AlwaysInline);
   }
 
   if (D->hasAttr<ColdAttr>()) {
@@ -2772,8 +2691,7 @@ void CodeGenModule::EmitAliasDefinition(GlobalDecl GD) {
 
   // Create the new alias itself, but don't set a name yet.
   auto *GA = llvm::GlobalAlias::create(
-      cast<llvm::PointerType>(Aliasee->getType()),
-      llvm::Function::ExternalLinkage, "", Aliasee, &getModule());
+      DeclTy, 0, llvm::Function::ExternalLinkage, "", Aliasee, &getModule());
 
   if (Entry) {
     if (GA->getAliasee() == Entry) {
@@ -3888,12 +3806,6 @@ llvm::Constant *CodeGenModule::EmitUuidofInitializer(StringRef Uuid) {
   };
 
   return llvm::ConstantStruct::getAnon(Fields);
-}
-
-llvm::Constant *
-CodeGenModule::getAddrOfCXXCatchHandlerType(QualType Ty,
-                                            QualType CatchHandlerType) {
-  return getCXXABI().getAddrOfCXXCatchHandlerType(Ty, CatchHandlerType);
 }
 
 llvm::Constant *CodeGenModule::GetAddrOfRTTIDescriptor(QualType Ty,

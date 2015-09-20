@@ -15,6 +15,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CGCXXABI.h"
+#include "CGCleanup.h"
 #include "CGVTables.h"
 #include "CodeGenModule.h"
 #include "CodeGenTypes.h"
@@ -105,8 +106,13 @@ public:
                                                    const VPtrInfo *Info);
 
   llvm::Constant *getAddrOfRTTIDescriptor(QualType Ty) override;
-  llvm::Constant *
+  CatchTypeInfo
   getAddrOfCXXCatchHandlerType(QualType Ty, QualType CatchHandlerType) override;
+
+  /// MSVC needs an extra flag to indicate a catchall.
+  CatchTypeInfo getCatchAllTypeInfo() override {
+    return CatchTypeInfo{nullptr, 0x40};
+  }
 
   bool shouldTypeidBeNullChecked(bool IsDeref, QualType SrcRecordTy) override;
   void EmitBadTypeidCall(CodeGenFunction &CGF) override;
@@ -127,8 +133,7 @@ public:
                                      QualType DestTy) override;
 
   bool EmitBadCastCall(CodeGenFunction &CGF) override;
-  bool canEmitAvailableExternallyVTable(
-      const CXXRecordDecl *RD) const override {
+  bool canSpeculativelyEmitVTable(const CXXRecordDecl *RD) const override {
     return false;
   }
 
@@ -236,10 +241,22 @@ public:
   void emitVTableDefinitions(CodeGenVTables &CGVT,
                              const CXXRecordDecl *RD) override;
 
+  bool isVirtualOffsetNeededForVTableField(CodeGenFunction &CGF,
+                                           CodeGenFunction::VPtr Vptr) override;
+
+  /// Don't initialize vptrs if dynamic class
+  /// is marked with with the 'novtable' attribute.
+  bool doStructorsInitializeVPtrs(const CXXRecordDecl *VTableClass) override {
+    return !VTableClass->hasAttr<MSNoVTableAttr>();
+  }
+
+  llvm::Constant *
+  getVTableAddressPoint(BaseSubobject Base,
+                        const CXXRecordDecl *VTableClass) override;
+
   llvm::Value *getVTableAddressPointInStructor(
       CodeGenFunction &CGF, const CXXRecordDecl *VTableClass,
-      BaseSubobject Base, const CXXRecordDecl *NearestVBase,
-      bool &NeedsVirtualOffset) override;
+      BaseSubobject Base, const CXXRecordDecl *NearestVBase) override;
 
   llvm::Constant *
   getVTableAddressPointForConstExpr(BaseSubobject Base,
@@ -915,7 +932,7 @@ void MicrosoftCXXABI::emitBeginCatch(CodeGenFunction &CGF,
     llvm::Value *Args[2] = {Exn, ParamAddr.getPointer()};
     CGF.EmitNounwindRuntimeCall(BeginCatch, Args);
   } else {
-    CPI->setArgOperand(1, var.getObjectAddress(CGF).getPointer());
+    CPI->setArgOperand(2, var.getObjectAddress(CGF).getPointer());
   }
   CGF.EHStack.pushCleanup<CallEndCatchMSVC>(NormalCleanup, CPI);
   CGF.EmitAutoVarCleanups(var);
@@ -1597,14 +1614,15 @@ void MicrosoftCXXABI::emitVTableDefinitions(CodeGenVTables &CGVT,
   }
 }
 
+bool MicrosoftCXXABI::isVirtualOffsetNeededForVTableField(
+    CodeGenFunction &CGF, CodeGenFunction::VPtr Vptr) {
+  return Vptr.NearestVBase != nullptr;
+}
+
 llvm::Value *MicrosoftCXXABI::getVTableAddressPointInStructor(
     CodeGenFunction &CGF, const CXXRecordDecl *VTableClass, BaseSubobject Base,
-    const CXXRecordDecl *NearestVBase, bool &NeedsVirtualOffset) {
-  NeedsVirtualOffset = (NearestVBase != nullptr);
-
-  (void)getAddrOfVTable(VTableClass, Base.getBaseOffset());
-  VFTableIdTy ID(VTableClass, Base.getBaseOffset());
-  llvm::GlobalValue *VTableAddressPoint = VFTablesMap[ID];
+    const CXXRecordDecl *NearestVBase) {
+  llvm::Constant *VTableAddressPoint = getVTableAddressPoint(Base, VTableClass);
   if (!VTableAddressPoint) {
     assert(Base.getBase()->getNumVBases() &&
            !getContext().getASTRecordLayout(Base.getBase()).hasOwnVFPtr());
@@ -1619,11 +1637,17 @@ static void mangleVFTableName(MicrosoftMangleContext &MangleContext,
   MangleContext.mangleCXXVFTable(RD, VFPtr->MangledPath, Out);
 }
 
-llvm::Constant *MicrosoftCXXABI::getVTableAddressPointForConstExpr(
-    BaseSubobject Base, const CXXRecordDecl *VTableClass) {
+llvm::Constant *
+MicrosoftCXXABI::getVTableAddressPoint(BaseSubobject Base,
+                                       const CXXRecordDecl *VTableClass) {
   (void)getAddrOfVTable(VTableClass, Base.getBaseOffset());
   VFTableIdTy ID(VTableClass, Base.getBaseOffset());
-  llvm::GlobalValue *VFTable = VFTablesMap[ID];
+  return VFTablesMap[ID];
+}
+
+llvm::Constant *MicrosoftCXXABI::getVTableAddressPointForConstExpr(
+    BaseSubobject Base, const CXXRecordDecl *VTableClass) {
+  llvm::Constant *VFTable = getVTableAddressPoint(Base, VTableClass);
   assert(VFTable && "Couldn't find a vftable for the given base?");
   return VFTable;
 }
@@ -1633,6 +1657,7 @@ llvm::GlobalVariable *MicrosoftCXXABI::getAddrOfVTable(const CXXRecordDecl *RD,
   // getAddrOfVTable may return 0 if asked to get an address of a vtable which
   // shouldn't be used in the given record type. We want to cache this result in
   // VFTablesMap, thus a simple zero check is not sufficient.
+
   VFTableIdTy ID(RD, VPtrOffset);
   VTablesMapTy::iterator I;
   bool Inserted;
@@ -1686,10 +1711,11 @@ llvm::GlobalVariable *MicrosoftCXXABI::getAddrOfVTable(const CXXRecordDecl *RD,
   if (llvm::GlobalValue *VFTable =
           CGM.getModule().getNamedGlobal(VFTableName)) {
     VFTablesMap[ID] = VFTable;
-    return VTableAliasIsRequred
-               ? cast<llvm::GlobalVariable>(
-                     cast<llvm::GlobalAlias>(VFTable)->getBaseObject())
-               : cast<llvm::GlobalVariable>(VFTable);
+    VTable = VTableAliasIsRequred
+                 ? cast<llvm::GlobalVariable>(
+                       cast<llvm::GlobalAlias>(VFTable)->getBaseObject())
+                 : cast<llvm::GlobalVariable>(VFTable);
+    return VTable;
   }
 
   uint64_t NumVTableSlots =
@@ -1733,9 +1759,10 @@ llvm::GlobalVariable *MicrosoftCXXABI::getAddrOfVTable(const CXXRecordDecl *RD,
       if (C)
         C->setSelectionKind(llvm::Comdat::Largest);
     }
-    VFTable = llvm::GlobalAlias::create(
-        cast<llvm::PointerType>(VTableGEP->getType()), VFTableLinkage,
-        VFTableName.str(), VTableGEP, &CGM.getModule());
+    VFTable = llvm::GlobalAlias::create(CGM.Int8PtrTy,
+                                        /*AddressSpace=*/0, VFTableLinkage,
+                                        VFTableName.str(), VTableGEP,
+                                        &CGM.getModule());
     VFTable->setUnnamedAddr(true);
   } else {
     // We don't need a GlobalAlias to be a symbol for the VTable if we won't
@@ -1810,7 +1837,9 @@ llvm::Value *MicrosoftCXXABI::getVirtualFunctionPointer(CodeGenFunction &CGF,
   Ty = Ty->getPointerTo()->getPointerTo();
   Address VPtr =
       adjustThisArgumentForVirtualFunctionCall(CGF, GD, This, true);
-  llvm::Value *VTable = CGF.GetVTablePtr(VPtr, Ty);
+
+  auto *MethodDecl = cast<CXXMethodDecl>(GD.getDecl());
+  llvm::Value *VTable = CGF.GetVTablePtr(VPtr, Ty, MethodDecl->getParent());
 
   MicrosoftVTableContext::MethodVFTableLocation ML =
       CGM.getMicrosoftVTableContext().getMethodVFTableLocation(GD);
@@ -1937,7 +1966,8 @@ llvm::Function *MicrosoftCXXABI::EmitVirtualMemPtrThunk(
   // Load the vfptr and then callee from the vftable.  The callee should have
   // adjusted 'this' so that the vfptr is at offset zero.
   llvm::Value *VTable = CGF.GetVTablePtr(
-      getThisAddress(CGF), ThunkTy->getPointerTo()->getPointerTo());
+      getThisAddress(CGF), ThunkTy->getPointerTo()->getPointerTo(), MD->getParent());
+
   llvm::Value *VFuncPtr =
       CGF.Builder.CreateConstInBoundsGEP1_64(VTable, ML.Index, "vfn");
   llvm::Value *Callee =
@@ -3663,7 +3693,7 @@ static QualType decomposeTypeForEH(ASTContext &Context, QualType T,
   return T;
 }
 
-llvm::Constant *
+CatchTypeInfo
 MicrosoftCXXABI::getAddrOfCXXCatchHandlerType(QualType Type,
                                               QualType CatchHandlerType) {
   // TypeDescriptors for exceptions never have qualified pointer types,
@@ -3682,28 +3712,8 @@ MicrosoftCXXABI::getAddrOfCXXCatchHandlerType(QualType Type,
   if (IsReference)
     Flags |= 8;
 
-  SmallString<256> MangledName;
-  {
-    llvm::raw_svector_ostream Out(MangledName);
-    getMangleContext().mangleCXXCatchHandlerType(Type, Flags, Out);
-  }
-
-  if (llvm::GlobalVariable *GV = CGM.getModule().getNamedGlobal(MangledName))
-    return llvm::ConstantExpr::getBitCast(GV, CGM.Int8PtrTy);
-
-  llvm::Constant *Fields[] = {
-      llvm::ConstantInt::get(CGM.IntTy, Flags), // Flags
-      getAddrOfRTTIDescriptor(Type),            // TypeDescriptor
-  };
-  llvm::StructType *CatchHandlerTypeType = getCatchHandlerTypeType();
-  auto *Var = new llvm::GlobalVariable(
-      CGM.getModule(), CatchHandlerTypeType, /*Constant=*/true,
-      llvm::GlobalValue::PrivateLinkage,
-      llvm::ConstantStruct::get(CatchHandlerTypeType, Fields),
-      StringRef(MangledName));
-  Var->setUnnamedAddr(true);
-  Var->setSection("llvm.metadata");
-  return Var;
+  return CatchTypeInfo{getAddrOfRTTIDescriptor(Type)->stripPointerCasts(),
+                       Flags};
 }
 
 /// \brief Gets a TypeDescriptor.  Returns a llvm::Constant * rather than a

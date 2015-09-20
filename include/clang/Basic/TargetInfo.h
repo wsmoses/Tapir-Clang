@@ -90,6 +90,8 @@ protected:
   unsigned RealTypeUsesObjCFPRet : 3;
   unsigned ComplexLongDoubleUsesFP2Ret : 1;
 
+  unsigned HasBuiltinMSVaList : 1;
+
   // TargetInfo Constructor.  Default initializes all fields.
   TargetInfo(const llvm::Triple &T);
 
@@ -255,10 +257,11 @@ public:
   unsigned getTypeWidth(IntType T) const;
 
   /// \brief Return integer type with specified width.
-  IntType getIntTypeByWidth(unsigned BitWidth, bool IsSigned) const;
+  virtual IntType getIntTypeByWidth(unsigned BitWidth, bool IsSigned) const;
 
   /// \brief Return the smallest integer type with at least the specified width.
-  IntType getLeastIntTypeByWidth(unsigned BitWidth, bool IsSigned) const;
+  virtual IntType getLeastIntTypeByWidth(unsigned BitWidth,
+                                         bool IsSigned) const;
 
   /// \brief Return floating point type with specified width.
   RealType getRealTypeByWidth(unsigned BitWidth) const;
@@ -524,6 +527,10 @@ public:
   /// \brief Returns the kind of __builtin_va_list type that should be used
   /// with this target.
   virtual BuiltinVaListKind getBuiltinVaListKind() const = 0;
+
+  /// Returns whether or not type \c __builtin_ms_va_list type is
+  /// available on this target.
+  bool hasBuiltinMSVaList() const { return HasBuiltinMSVaList; }
 
   /// \brief Returns whether the passed in string is a valid clobber in an
   /// inline asm statement.
