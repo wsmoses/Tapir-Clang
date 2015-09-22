@@ -1670,7 +1670,7 @@ static void AddGoldPlugin(const ToolChain &ToolChain, const ArgList &Args,
 /// parameter in reciprocal argument strings. Return false if there is an error
 /// parsing the refinement step. Otherwise, return true and set the Position
 /// of the refinement step in the input string.
-static bool getRefinementStep(const StringRef &In, const Driver &D,
+static bool getRefinementStep(StringRef In, const Driver &D,
                               const Arg &A, size_t &Position) {
   const char RefinementStepToken = ':';
   Position = In.find(RefinementStepToken);
@@ -2383,6 +2383,12 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
       } else if (Value == "--break") {
         CmdArgs.push_back("-target-feature");
         CmdArgs.push_back("-use-tcc-in-div");
+      } else if (Value.startswith("-msoft-float")) {
+        CmdArgs.push_back("-target-feature");
+        CmdArgs.push_back("+soft-float");
+      } else if (Value.startswith("-mhard-float")) {
+        CmdArgs.push_back("-target-feature");
+        CmdArgs.push_back("-soft-float");
       } else {
         D.Diag(diag::err_drv_unsupported_option_argument)
             << A->getOption().getName() << Value;
