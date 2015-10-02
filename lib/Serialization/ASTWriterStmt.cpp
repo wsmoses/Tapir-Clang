@@ -1558,11 +1558,18 @@ void ASTStmtWriter::VisitPackExpansionExpr(PackExpansionExpr *E) {
 
 void ASTStmtWriter::VisitSizeOfPackExpr(SizeOfPackExpr *E) {
   VisitExpr(E);
+  Record.push_back(E->isPartiallySubstituted() ? E->getPartialArguments().size()
+                                               : 0);
   Writer.AddSourceLocation(E->OperatorLoc, Record);
   Writer.AddSourceLocation(E->PackLoc, Record);
   Writer.AddSourceLocation(E->RParenLoc, Record);
-  Record.push_back(E->Length);
   Writer.AddDeclRef(E->Pack, Record);
+  if (E->isPartiallySubstituted()) {
+    for (const auto &TA : E->getPartialArguments())
+      Writer.AddTemplateArgument(TA, Record);
+  } else if (!E->isValueDependent()) {
+    Record.push_back(E->getPackLength());
+  }
   Code = serialization::EXPR_SIZEOF_PACK;
 }
 
@@ -1831,6 +1838,10 @@ void OMPClauseWriter::VisitOMPUpdateClause(OMPUpdateClause *) {}
 void OMPClauseWriter::VisitOMPCaptureClause(OMPCaptureClause *) {}
 
 void OMPClauseWriter::VisitOMPSeqCstClause(OMPSeqCstClause *) {}
+
+void OMPClauseWriter::VisitOMPThreadsClause(OMPThreadsClause *) {}
+
+void OMPClauseWriter::VisitOMPSIMDClause(OMPSIMDClause *) {}
 
 void OMPClauseWriter::VisitOMPPrivateClause(OMPPrivateClause *C) {
   Record.push_back(C->varlist_size());
@@ -2177,6 +2188,7 @@ void ASTStmtWriter::VisitOMPFlushDirective(OMPFlushDirective *D) {
 
 void ASTStmtWriter::VisitOMPOrderedDirective(OMPOrderedDirective *D) {
   VisitStmt(D);
+  Record.push_back(D->getNumClauses());
   VisitOMPExecutableDirective(D);
   Code = serialization::STMT_OMP_ORDERED_DIRECTIVE;
 }

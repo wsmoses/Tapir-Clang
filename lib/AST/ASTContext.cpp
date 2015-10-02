@@ -2990,6 +2990,21 @@ static bool isCanonicalResultType(QualType T) {
           T.getObjCLifetime() == Qualifiers::OCL_ExplicitNone);
 }
 
+CanQualType
+ASTContext::getCanonicalFunctionResultType(QualType ResultType) const {
+  CanQualType CanResultType = getCanonicalType(ResultType);
+
+  // Canonical result types do not have ARC lifetime qualifiers.
+  if (CanResultType.getQualifiers().hasObjCLifetime()) {
+    Qualifiers Qs = CanResultType.getQualifiers();
+    Qs.removeObjCLifetime();
+    return CanQualType::CreateUnsafe(
+             getQualifiedType(CanResultType.getUnqualifiedType(), Qs));
+  }
+
+  return CanResultType;
+}
+
 QualType
 ASTContext::getFunctionType(QualType ResultTy, ArrayRef<QualType> ArgArray,
                             const FunctionProtoType::ExtProtoInfo &EPI) const {
@@ -3027,14 +3042,8 @@ ASTContext::getFunctionType(QualType ResultTy, ArrayRef<QualType> ArgArray,
     CanonicalEPI.HasTrailingReturn = false;
     CanonicalEPI.ExceptionSpec = FunctionProtoType::ExceptionSpecInfo();
 
-    // Result types do not have ARC lifetime qualifiers.
-    QualType CanResultTy = getCanonicalType(ResultTy);
-    if (ResultTy.getQualifiers().hasObjCLifetime()) {
-      Qualifiers Qs = CanResultTy.getQualifiers();
-      Qs.removeObjCLifetime();
-      CanResultTy = getQualifiedType(CanResultTy.getUnqualifiedType(), Qs);
-    }
-
+    // Adjust the canonical function result type.
+    CanQualType CanResultTy = getCanonicalFunctionResultType(ResultTy);
     Canonical = getFunctionType(CanResultTy, CanonicalArgs, CanonicalEPI);
 
     // Get the new insert position for the node we care about.
@@ -8284,13 +8293,13 @@ static GVALinkage basicGVALinkageForFunction(const ASTContext &Context,
   return GVA_DiscardableODR;
 }
 
-static GVALinkage adjustGVALinkageForDLLAttribute(GVALinkage L, const Decl *D) {
+static GVALinkage adjustGVALinkageForAttributes(GVALinkage L, const Decl *D) {
   // See http://msdn.microsoft.com/en-us/library/xa0d9ste.aspx
   // dllexport/dllimport on inline functions.
   if (D->hasAttr<DLLImportAttr>()) {
     if (L == GVA_DiscardableODR || L == GVA_StrongODR)
       return GVA_AvailableExternally;
-  } else if (D->hasAttr<DLLExportAttr>()) {
+  } else if (D->hasAttr<DLLExportAttr>() || D->hasAttr<CUDAGlobalAttr>()) {
     if (L == GVA_DiscardableODR)
       return GVA_StrongODR;
   }
@@ -8298,8 +8307,8 @@ static GVALinkage adjustGVALinkageForDLLAttribute(GVALinkage L, const Decl *D) {
 }
 
 GVALinkage ASTContext::GetGVALinkageForFunction(const FunctionDecl *FD) const {
-  return adjustGVALinkageForDLLAttribute(basicGVALinkageForFunction(*this, FD),
-                                         FD);
+  return adjustGVALinkageForAttributes(basicGVALinkageForFunction(*this, FD),
+                                       FD);
 }
 
 static GVALinkage basicGVALinkageForVariable(const ASTContext &Context,
@@ -8355,8 +8364,8 @@ static GVALinkage basicGVALinkageForVariable(const ASTContext &Context,
 }
 
 GVALinkage ASTContext::GetGVALinkageForVariable(const VarDecl *VD) {
-  return adjustGVALinkageForDLLAttribute(basicGVALinkageForVariable(*this, VD),
-                                         VD);
+  return adjustGVALinkageForAttributes(basicGVALinkageForVariable(*this, VD),
+                                       VD);
 }
 
 bool ASTContext::DeclMustBeEmitted(const Decl *D) {

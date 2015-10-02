@@ -402,7 +402,7 @@ void Clang::AddPreprocessingOptions(Compilation &C, const JobAction &JA,
                   {options::OPT_D, options::OPT_U, options::OPT_I_Group,
                    options::OPT_F, options::OPT_index_header_map});
 
-  // Add -Wp, and -Xassembler if using the preprocessor.
+  // Add -Wp, and -Xpreprocessor if using the preprocessor.
 
   // FIXME: There is a very unfortunate problem here, some troubled
   // souls abuse -Wp, to pass preprocessor options in gcc syntax. To
@@ -560,8 +560,7 @@ static void checkARMCPUName(const Driver &D, const Arg *A, const ArgList &Args,
                             llvm::StringRef CPUName, llvm::StringRef ArchName,
                             const llvm::Triple &Triple) {
   std::string CPU = arm::getARMTargetCPU(CPUName, ArchName, Triple);
-  std::string Arch = arm::getARMArch(ArchName, Triple);
-  if (arm::getLLVMArchSuffixForARM(CPU, Arch).empty())
+  if (arm::getLLVMArchSuffixForARM(CPU, ArchName, Triple).empty())
     D.Diag(diag::err_drv_clang_unsupported) << A->getAsString(Args);
 }
 
@@ -1936,7 +1935,7 @@ static bool DecodeAArch64Features(const Driver &D, StringRef text,
   SmallVector<StringRef, 8> Split;
   text.split(Split, StringRef("+"), -1, false);
 
-  for (const StringRef Feature : Split) {
+  for (StringRef Feature : Split) {
     const char *result = llvm::StringSwitch<const char *>(Feature)
                              .Case("fp", "+fp-armv8")
                              .Case("simd", "+neon")
@@ -2345,7 +2344,7 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
        Args.filtered(options::OPT_Wa_COMMA, options::OPT_Xassembler)) {
     A->claim();
 
-    for (const StringRef Value : A->getValues()) {
+    for (StringRef Value : A->getValues()) {
       if (TakeNextArg) {
         CmdArgs.push_back(Value.data());
         TakeNextArg = false;
@@ -2403,46 +2402,11 @@ static void CollectArgsForIntegratedAssembler(Compilation &C,
   }
 }
 
-// Until ARM libraries are build separately, we have them all in one library
-static StringRef getArchNameForCompilerRTLib(const ToolChain &TC) {
-  if (TC.getTriple().isWindowsMSVCEnvironment() &&
-      TC.getArch() == llvm::Triple::x86)
-    return "i386";
-  if (TC.getArch() == llvm::Triple::arm || TC.getArch() == llvm::Triple::armeb)
-    return "arm";
-  return TC.getArchName();
-}
-
-static SmallString<128> getCompilerRTLibDir(const ToolChain &TC) {
-  // The runtimes are located in the OS-specific resource directory.
-  SmallString<128> Res(TC.getDriver().ResourceDir);
-  const llvm::Triple &Triple = TC.getTriple();
-  // TC.getOS() yield "freebsd10.0" whereas "freebsd" is expected.
-  StringRef OSLibName =
-      (Triple.getOS() == llvm::Triple::FreeBSD) ? "freebsd" : TC.getOS();
-  llvm::sys::path::append(Res, "lib", OSLibName);
-  return Res;
-}
-
-SmallString<128> tools::getCompilerRT(const ToolChain &TC, StringRef Component,
-                                      bool Shared) {
-  const char *Env = TC.getTriple().getEnvironment() == llvm::Triple::Android
-                        ? "-android"
-                        : "";
-
-  bool IsOSWindows = TC.getTriple().isOSWindows();
-  bool IsITANMSVCWindows = TC.getTriple().isWindowsMSVCEnvironment() ||
-                           TC.getTriple().isWindowsItaniumEnvironment();
-  StringRef Arch = getArchNameForCompilerRTLib(TC);
-  const char *Prefix = IsITANMSVCWindows ? "" : "lib";
-  const char *Suffix =
-      Shared ? (IsOSWindows ? ".dll" : ".so") : (IsITANMSVCWindows ? ".lib" : ".a");
-
-  SmallString<128> Path = getCompilerRTLibDir(TC);
-  llvm::sys::path::append(Path, Prefix + Twine("clang_rt.") + Component + "-" +
-                                    Arch + Env + Suffix);
-
-  return Path;
+static const char *getCompilerRTArgString(const ToolChain &TC,
+                                          const llvm::opt::ArgList &Args,
+                                          StringRef Component,
+                                          bool Shared = false) {
+  return Args.MakeArgString(TC.getCompilerRT(Args, Component, Shared));
 }
 
 // This adds the static libclang_rt.builtins-arch.a directly to the command line
@@ -2450,7 +2414,7 @@ SmallString<128> tools::getCompilerRT(const ToolChain &TC, StringRef Component,
 // and available, check for possible errors, etc.
 static void addClangRT(const ToolChain &TC, const ArgList &Args,
                        ArgStringList &CmdArgs) {
-  CmdArgs.push_back(Args.MakeArgString(getCompilerRT(TC, "builtins")));
+  CmdArgs.push_back(getCompilerRTArgString(TC, Args, "builtins"));
 }
 
 static void addProfileRT(const ToolChain &TC, const ArgList &Args,
@@ -2465,7 +2429,7 @@ static void addProfileRT(const ToolChain &TC, const ArgList &Args,
         Args.hasArg(options::OPT_coverage)))
     return;
 
-  CmdArgs.push_back(Args.MakeArgString(getCompilerRT(TC, "profile")));
+  CmdArgs.push_back(getCompilerRTArgString(TC, Args, "profile"));
 }
 
 namespace {
@@ -2517,6 +2481,28 @@ static OpenMPRuntimeKind getOpenMPRuntime(const ToolChain &TC,
   return RT;
 }
 
+static void addOpenMPRuntime(ArgStringList &CmdArgs, const ToolChain &TC,
+                              const ArgList &Args) {
+  if (!Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
+                    options::OPT_fno_openmp, false))
+    return;
+
+  switch (getOpenMPRuntime(TC, Args)) {
+  case OMPRT_OMP:
+    CmdArgs.push_back("-lomp");
+    break;
+  case OMPRT_GOMP:
+    CmdArgs.push_back("-lgomp");
+    break;
+  case OMPRT_IOMP5:
+    CmdArgs.push_back("-liomp5");
+    break;
+  case OMPRT_Unknown:
+    // Already diagnosed.
+    break;
+  }
+}
+
 static void addSanitizerRuntime(const ToolChain &TC, const ArgList &Args,
                                 ArgStringList &CmdArgs, StringRef Sanitizer,
                                 bool IsShared) {
@@ -2524,7 +2510,7 @@ static void addSanitizerRuntime(const ToolChain &TC, const ArgList &Args,
   // whole-archive.
   if (!IsShared)
     CmdArgs.push_back("-whole-archive");
-  CmdArgs.push_back(Args.MakeArgString(getCompilerRT(TC, Sanitizer, IsShared)));
+  CmdArgs.push_back(getCompilerRTArgString(TC, Args, Sanitizer, IsShared));
   if (!IsShared)
     CmdArgs.push_back("-no-whole-archive");
 }
@@ -2534,7 +2520,7 @@ static void addSanitizerRuntime(const ToolChain &TC, const ArgList &Args,
 static bool addSanitizerDynamicList(const ToolChain &TC, const ArgList &Args,
                                     ArgStringList &CmdArgs,
                                     StringRef Sanitizer) {
-  SmallString<128> SanRT = getCompilerRT(TC, Sanitizer);
+  SmallString<128> SanRT(TC.getCompilerRT(Args, Sanitizer));
   if (llvm::sys::fs::exists(SanRT + ".syms")) {
     CmdArgs.push_back(Args.MakeArgString("--dynamic-list=" + SanRT + ".syms"));
     return true;
@@ -3767,8 +3753,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.ClaimAllArgs(options::OPT_g_Group);
   Arg *SplitDwarfArg = Args.getLastArg(options::OPT_gsplit_dwarf);
   if (Arg *A = Args.getLastArg(options::OPT_g_Group)) {
-    if ((A->getOption().matches(options::OPT_gline_tables_only) ||
-         A->getOption().matches(options::OPT_g1)) &&
+    if (A->getOption().matches(options::OPT_gline_tables_only) &&
         (!SplitDwarfArg || A->getIndex() > SplitDwarfArg->getIndex())) {
       // FIXME: we should support specifying dwarf version with
       // -gline-tables-only.
@@ -3784,8 +3769,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
                A->getOption().matches(options::OPT_gdwarf_3) ||
                A->getOption().matches(options::OPT_gdwarf_4)) {
       A->render(Args, CmdArgs);
-    } else if (!A->getOption().matches(options::OPT_g0) &&
-               !A->getOption().matches(options::OPT_ggdb0)) {
+    } else if (!A->getOption().matches(options::OPT_g0)) {
       // Default is dwarf-2 for Darwin, OpenBSD, FreeBSD and Solaris.
       const llvm::Triple &Triple = getToolChain().getTriple();
       if (Triple.isOSDarwin() || Triple.getOS() == llvm::Triple::OpenBSD ||
@@ -5045,6 +5029,13 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   // Forward -fparse-all-comments to -cc1.
   Args.AddAllArgs(CmdArgs, options::OPT_fparse_all_comments);
 
+  // Turn -fplugin=name.so into -load name.so
+  for (const Arg *A : Args.filtered(options::OPT_fplugin_EQ)) {
+    CmdArgs.push_back("-load");
+    CmdArgs.push_back(A->getValue());
+    A->claim();
+  }
+
   // Forward -Xclang arguments to -cc1, and -mllvm arguments to the LLVM option
   // parser.
   Args.AddAllArgValues(CmdArgs, options::OPT_Xclang);
@@ -6094,7 +6085,7 @@ const std::string arm::getARMArch(StringRef Arch, const llvm::Triple &Triple) {
     std::string CPU = llvm::sys::getHostCPUName();
     if (CPU != "generic") {
       // Translate the native cpu into the architecture suffix for that CPU.
-      StringRef Suffix = arm::getLLVMArchSuffixForARM(CPU, MArch);
+      StringRef Suffix = arm::getLLVMArchSuffixForARM(CPU, MArch, Triple);
       // If there is no valid architecture suffix for this CPU we don't know how
       // to handle it, so return no architecture.
       if (Suffix.empty())
@@ -6140,12 +6131,19 @@ std::string arm::getARMTargetCPU(StringRef CPU, StringRef Arch,
 /// getLLVMArchSuffixForARM - Get the LLVM arch name to use for a particular
 /// CPU  (or Arch, if CPU is generic).
 // FIXME: This is redundant with -mcpu, why does LLVM use this.
-StringRef arm::getLLVMArchSuffixForARM(StringRef CPU, StringRef Arch) {
-  if (CPU == "generic")
-    return llvm::ARM::getSubArch(
-        llvm::ARM::parseArch(Arch));
-
-  unsigned ArchKind = llvm::ARM::parseCPUArch(CPU);
+StringRef arm::getLLVMArchSuffixForARM(StringRef CPU, StringRef Arch,
+                                       const llvm::Triple &Triple) {
+  unsigned ArchKind;
+  if (CPU == "generic") {
+    std::string ARMArch = tools::arm::getARMArch(Arch, Triple);
+    ArchKind = llvm::ARM::parseArch(ARMArch);
+    if (ArchKind == llvm::ARM::AK_INVALID)
+      // In case of generic Arch, i.e. "arm",
+      // extract arch from default cpu of the Triple
+      ArchKind = llvm::ARM::parseCPUArch(Triple.getARMCPUForArch(ARMArch));
+  } else {
+    ArchKind = llvm::ARM::parseCPUArch(CPU);
+  }
   if (ArchKind == llvm::ARM::AK_INVALID)
     return "";
   return llvm::ARM::getSubArch(ArchKind);
@@ -6163,6 +6161,9 @@ void arm::appendEBLinkFlags(const ArgList &Args, ArgStringList &CmdArgs,
 }
 
 mips::NanEncoding mips::getSupportedNanEncoding(StringRef &CPU) {
+  // Strictly speaking, mips32r2 and mips64r2 are NanLegacy-only since Nan2008
+  // was first introduced in Release 3. However, other compilers have
+  // traditionally allowed it for Release 2 so we should do the same.
   return (NanEncoding)llvm::StringSwitch<int>(CPU)
       .Case("mips1", NanLegacy)
       .Case("mips2", NanLegacy)
@@ -6170,12 +6171,12 @@ mips::NanEncoding mips::getSupportedNanEncoding(StringRef &CPU) {
       .Case("mips4", NanLegacy)
       .Case("mips5", NanLegacy)
       .Case("mips32", NanLegacy)
-      .Case("mips32r2", NanLegacy)
+      .Case("mips32r2", NanLegacy | Nan2008)
       .Case("mips32r3", NanLegacy | Nan2008)
       .Case("mips32r5", NanLegacy | Nan2008)
       .Case("mips32r6", Nan2008)
       .Case("mips64", NanLegacy)
-      .Case("mips64r2", NanLegacy)
+      .Case("mips64r2", NanLegacy | Nan2008)
       .Case("mips64r3", NanLegacy | Nan2008)
       .Case("mips64r5", NanLegacy | Nan2008)
       .Case("mips64r6", Nan2008)
@@ -6508,15 +6509,34 @@ void darwin::Linker::AddLinkArgs(Compilation &C, const ArgList &Args,
                    options::OPT_fno_application_extension, false))
     CmdArgs.push_back("-application_extension");
 
-  // If we are using LTO, then automatically create a temporary file path for
-  // the linker to use, so that it's lifetime will extend past a possible
-  // dsymutil step.
-  if (Version[0] >= 116 && D.IsUsingLTO(Args) && NeedsTempPath(Inputs)) {
-    const char *TmpPath = C.getArgs().MakeArgString(
-        D.GetTemporaryPath("cc", types::getTypeTempSuffix(types::TY_Object)));
-    C.addTempFile(TmpPath);
-    CmdArgs.push_back("-object_path_lto");
-    CmdArgs.push_back(TmpPath);
+  if (D.IsUsingLTO(Args)) {
+    // If we are using LTO, then automatically create a temporary file path for
+    // the linker to use, so that it's lifetime will extend past a possible
+    // dsymutil step.
+    if (Version[0] >= 116 && NeedsTempPath(Inputs)) {
+      const char *TmpPath = C.getArgs().MakeArgString(
+          D.GetTemporaryPath("cc", types::getTypeTempSuffix(types::TY_Object)));
+      C.addTempFile(TmpPath);
+      CmdArgs.push_back("-object_path_lto");
+      CmdArgs.push_back(TmpPath);
+    }
+
+    // Use -lto_library option to specify the libLTO.dylib path. Try to find
+    // it in clang installed libraries. If not found, the option is not used
+    // and 'ld' will use its default mechanism to search for libLTO.dylib.
+    if (Version[0] >= 133) {
+      // Search for libLTO in <InstalledDir>/../lib/libLTO.dylib
+      StringRef P = llvm::sys::path::parent_path(D.getInstalledDir());
+      SmallString<128> LibLTOPath(P);
+      llvm::sys::path::append(LibLTOPath, "lib");
+      llvm::sys::path::append(LibLTOPath, "libLTO.dylib");
+      if (llvm::sys::fs::exists(LibLTOPath)) {
+        CmdArgs.push_back("-lto_library");
+        CmdArgs.push_back(C.getArgs().MakeArgString(LibLTOPath));
+      } else {
+        D.Diag(diag::warn_drv_lto_libpath);
+      }
+    }
   }
 
   // Derived from the "link" spec.
@@ -6721,24 +6741,6 @@ void darwin::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
 
-  if (Args.hasFlag(options::OPT_fopenmp, options::OPT_fopenmp_EQ,
-                   options::OPT_fno_openmp, false)) {
-    switch (getOpenMPRuntime(getToolChain(), Args)) {
-    case OMPRT_OMP:
-      CmdArgs.push_back("-lomp");
-      break;
-    case OMPRT_GOMP:
-      CmdArgs.push_back("-lgomp");
-      break;
-    case OMPRT_IOMP5:
-      CmdArgs.push_back("-liomp5");
-      break;
-    case OMPRT_Unknown:
-      // Already diagnosed.
-      break;
-    }
-  }
-
   if (Args.hasArg(options::OPT_fcilkplus))
     CmdArgs.push_back("-lcilkrts");
 
@@ -6759,6 +6761,10 @@ void darwin::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
     InputFileList.push_back(II.getFilename());
   }
+
+  if (!Args.hasArg(options::OPT_nostdlib) &&
+      !Args.hasArg(options::OPT_nodefaultlibs))
+    addOpenMPRuntime(CmdArgs, getToolChain(), Args);
 
   if (isObjCRuntimeLinked(Args) && !Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
@@ -7831,6 +7837,7 @@ void netbsd::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   if (!Args.hasArg(options::OPT_nostdlib) &&
       !Args.hasArg(options::OPT_nodefaultlibs)) {
+    addOpenMPRuntime(CmdArgs, getToolChain(), Args);
     if (D.CCCIsCXX()) {
       getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);
       CmdArgs.push_back("-lm");
@@ -9001,19 +9008,18 @@ void visualstudio::Linker::ConstructJob(Compilation &C, const JobAction &JA,
           "asan_dynamic", "asan_dynamic_runtime_thunk",
       };
       for (const auto &Component : CompilerRTComponents)
-        CmdArgs.push_back(Args.MakeArgString(getCompilerRT(TC, Component)));
+        CmdArgs.push_back(getCompilerRTArgString(TC, Args, Component));
       // Make sure the dynamic runtime thunk is not optimized out at link time
       // to ensure proper SEH handling.
       CmdArgs.push_back(Args.MakeArgString("-include:___asan_seh_interceptor"));
     } else if (DLL) {
-      CmdArgs.push_back(
-          Args.MakeArgString(getCompilerRT(TC, "asan_dll_thunk")));
+      CmdArgs.push_back(getCompilerRTArgString(TC, Args, "asan_dll_thunk"));
     } else {
       static const char *CompilerRTComponents[] = {
           "asan", "asan_cxx",
       };
       for (const auto &Component : CompilerRTComponents)
-        CmdArgs.push_back(Args.MakeArgString(getCompilerRT(TC, Component)));
+        CmdArgs.push_back(getCompilerRTArgString(TC, Args, Component));
     }
   }
 
@@ -9764,6 +9770,8 @@ void tools::Myriad::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   const llvm::Triple &T = TC.getTriple();
   ArgStringList CmdArgs;
   bool UseStartfiles = !Args.hasArg(options::OPT_nostartfiles);
+  bool UseDefaultLibs = !Args.hasArg(options::OPT_nostdlib) &&
+                        !Args.hasArg(options::OPT_nodefaultlibs);
 
   std::string StartFilesDir, BuiltinLibDir;
   TC.getCompilerSupportDir(StartFilesDir);
@@ -9800,27 +9808,31 @@ void tools::Myriad::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                             options::OPT_e, options::OPT_s, options::OPT_t,
                             options::OPT_Z_Flag, options::OPT_r});
 
-  // The linker doesn't use these builtin paths unless directed to,
-  // because it was not compiled for support with sysroots, nor does
-  // it have a default of little-endian with FPU.
-  CmdArgs.push_back(Args.MakeArgString("-L" + BuiltinLibDir));
-  CmdArgs.push_back(Args.MakeArgString("-L" + StartFilesDir));
+  if (UseDefaultLibs) {
+    // The linker doesn't use these builtin paths unless directed to,
+    // because it was not compiled for support with sysroots, nor does
+    // it have a default of little-endian with FPU.
+    CmdArgs.push_back(Args.MakeArgString("-L" + BuiltinLibDir));
+    CmdArgs.push_back(Args.MakeArgString("-L" + StartFilesDir));
+  }
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
-  if (T.getOS() == llvm::Triple::RTEMS) {
-    CmdArgs.push_back("--start-group");
-    CmdArgs.push_back("-lc");
-    // You must provide your own "-L" option to enable finding these.
-    CmdArgs.push_back("-lrtemscpu");
-    CmdArgs.push_back("-lrtemsbsp");
-    CmdArgs.push_back("--end-group");
-  } else {
-    CmdArgs.push_back("-lc");
+  if (UseDefaultLibs) {
+    if (T.getOS() == llvm::Triple::RTEMS) {
+      CmdArgs.push_back("--start-group");
+      CmdArgs.push_back("-lc");
+      // You must provide your own "-L" option to enable finding these.
+      CmdArgs.push_back("-lrtemscpu");
+      CmdArgs.push_back("-lrtemsbsp");
+      CmdArgs.push_back("--end-group");
+    } else {
+      CmdArgs.push_back("-lc");
+    }
+    if (C.getDriver().CCCIsCXX())
+      CmdArgs.push_back("-lstdc++");
+    CmdArgs.push_back("-lgcc");
   }
-  if (C.getDriver().CCCIsCXX())
-    CmdArgs.push_back("-lstdc++");
-  CmdArgs.push_back("-lgcc");
   if (UseStartfiles) {
     CmdArgs.push_back(Args.MakeArgString(StartFilesDir + "/crtend.o"));
     CmdArgs.push_back(Args.MakeArgString(StartFilesDir + "/crtn.o"));

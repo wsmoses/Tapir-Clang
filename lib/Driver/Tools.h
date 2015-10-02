@@ -37,8 +37,9 @@ class Compiler;
 
 using llvm::opt::ArgStringList;
 
-SmallString<128> getCompilerRT(const ToolChain &TC, StringRef Component,
-                               bool Shared = false);
+SmallString<128> getCompilerRT(const ToolChain &TC,
+                               const llvm::opt::ArgList &Args,
+                               StringRef Component, bool Shared = false);
 
 /// \brief Clang compiler tool.
 class LLVM_LIBRARY_VISIBILITY Clang : public Tool {
@@ -246,7 +247,8 @@ std::string getARMTargetCPU(StringRef CPU, StringRef Arch,
 const std::string getARMArch(StringRef Arch,
                              const llvm::Triple &Triple);
 StringRef getARMCPUForMArch(StringRef Arch, const llvm::Triple &Triple);
-StringRef getLLVMArchSuffixForARM(StringRef CPU, StringRef Arch);
+StringRef getLLVMArchSuffixForARM(StringRef CPU, StringRef Arch,
+                                  const llvm::Triple &Triple);
 
 void appendEBLinkFlags(const llvm::opt::ArgList &Args, ArgStringList &CmdArgs,
                        const llvm::Triple &Triple);

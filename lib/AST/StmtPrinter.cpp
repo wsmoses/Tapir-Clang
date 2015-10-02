@@ -703,6 +703,12 @@ void OMPClausePrinter::VisitOMPSeqCstClause(OMPSeqCstClause *) {
   OS << "seq_cst";
 }
 
+void OMPClausePrinter::VisitOMPThreadsClause(OMPThreadsClause *) {
+  OS << "threads";
+}
+
+void OMPClausePrinter::VisitOMPSIMDClause(OMPSIMDClause *) { OS << "simd"; }
+
 void OMPClausePrinter::VisitOMPDeviceClause(OMPDeviceClause *Node) {
   OS << "device(";
   Node->getDevice()->printPretty(OS, nullptr, Policy, 0);
@@ -964,7 +970,7 @@ void StmtPrinter::VisitOMPFlushDirective(OMPFlushDirective *Node) {
 }
 
 void StmtPrinter::VisitOMPOrderedDirective(OMPOrderedDirective *Node) {
-  Indent() << "#pragma omp ordered";
+  Indent() << "#pragma omp ordered ";
   PrintOMPExecutableDirective(Node);
 }
 

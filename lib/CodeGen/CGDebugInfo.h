@@ -96,7 +96,7 @@ class CGDebugInfo {
   llvm::SmallVector<ObjCInterfaceCacheEntry, 32> ObjCInterfaceCache;
 
   /// Cache of references to clang modules and precompiled headers.
-  llvm::StringMap<llvm::TrackingMDRef> ModuleRefCache;
+  llvm::DenseMap<const Module *, llvm::TrackingMDRef> ModuleCache;
 
   /// List of interfaces we want to keep even if orphaned.
   std::vector<void *> RetainedTypes;
@@ -276,6 +276,9 @@ public:
 
   void finalize();
 
+  /// Set the main CU's DwoId field to \p Signature.
+  void setDwoId(uint64_t Signature);
+
   /// When generating debug information for a clang module or
   /// precompiled header, this module map will be used to determine
   /// the module of origin of each Decl.
@@ -323,7 +326,7 @@ public:
                                          llvm::Value *storage,
                                          CGBuilderTy &Builder,
                                          const CGBlockInfo &blockInfo,
-                                         llvm::Instruction *InsertPoint = 0);
+                                         llvm::Instruction *InsertPoint = nullptr);
 
   /// Emit call to \c llvm.dbg.declare for an argument variable
   /// declaration.
@@ -590,4 +593,4 @@ public:
 } // namespace CodeGen
 } // namespace clang
 
-#endif
+#endif // LLVM_CLANG_LIB_CODEGEN_CGDEBUGINFO_H
