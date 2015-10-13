@@ -163,7 +163,7 @@ public:
 
       unsigned Depth = 0;
       for (SourceLocation Parent = getIncludeOrExpansionLoc(Loc);
-           !Parent.isInvalid(); Parent = getIncludeOrExpansionLoc(Parent))
+           Parent.isValid(); Parent = getIncludeOrExpansionLoc(Parent))
         ++Depth;
       FileLocs.push_back(std::make_pair(Loc, Depth));
     }
@@ -244,7 +244,7 @@ public:
       assert(Region.hasEndLoc() && "incomplete region");
 
       SourceLocation LocStart = Region.getStartLoc();
-      assert(!SM.getFileID(LocStart).isInvalid() && "region in invalid file");
+      assert(SM.getFileID(LocStart).isValid() && "region in invalid file");
 
       auto CovFileID = getCoverageFileID(LocStart);
       // Ignore regions that don't have a file, such as builtin macros.
@@ -569,7 +569,7 @@ struct CounterCoverageMappingBuilder
   }
 
   void VisitStmt(const Stmt *S) {
-    if (!S->getLocStart().isInvalid())
+    if (S->getLocStart().isValid())
       extendRegion(S);
     for (const Stmt *Child : S->children())
       if (Child)

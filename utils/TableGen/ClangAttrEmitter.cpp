@@ -54,7 +54,7 @@ public:
   const std::string &nameSpace() const { return NS; }
   bool knownToGCC() const { return K; }
 };
-} // namespace
+} // end anonymous namespace
 
 static std::vector<FlattenedSpelling>
 GetFlattenedSpellings(const Record &Attr) {
@@ -176,7 +176,7 @@ namespace {
         upperName[0] = std::toupper(upperName[0]);
       }
     }
-    virtual ~Argument() {}
+    virtual ~Argument() = default;
 
     StringRef getLowerName() const { return lowerName; }
     StringRef getUpperName() const { return upperName; }
@@ -1018,7 +1018,7 @@ namespace {
           getType(), "SA->get" + std::string(getUpperName()) + "Loc()");
     }
   };
-}
+} // end anonymous namespace
 
 static std::unique_ptr<Argument>
 createArgument(const Record &Arg, StringRef Attr,
@@ -1180,6 +1180,7 @@ writePrettyPrintFunction(Record &R,
     if (Variety == "Pragma") {
       OS << " \";\n";
       OS << "    printPrettyPragma(OS, Policy);\n";
+      OS << "    OS << \"\\n\";";
       OS << "    break;\n";
       OS << "  }\n";
       continue;
@@ -1950,7 +1951,7 @@ static void GenerateHasAttrSpellingStringSwitch(
     if (Attr->isSubClassOf("TargetSpecificAttr")) {
       const Record *R = Attr->getValueAsDef("Target");
       std::vector<std::string> Arches = R->getValueAsListOfStrings("Arches");
-      GenerateTargetSpecificAttrChecks(R, Arches, Test, 0);
+      GenerateTargetSpecificAttrChecks(R, Arches, Test, nullptr);
 
       // If this is the C++11 variety, also add in the LangOpts test.
       if (Variety == "CXX11")
@@ -2363,6 +2364,7 @@ static std::string GetSubjectWithSuffix(const Record *R) {
     return "Decl";
   return B + "Decl";
 }
+
 static std::string GenerateCustomAppertainsTo(const Record &Subject,
                                               raw_ostream &OS) {
   std::string FnName = "is" + Subject.getName();

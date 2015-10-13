@@ -3983,6 +3983,10 @@ QualType OMPArraySectionExpr::getBaseOriginalType(Expr *Base) {
     Base = OASE->getBase();
     ++ArraySectionCount;
   }
+  while (auto *ASE = dyn_cast<ArraySubscriptExpr>(Base->IgnoreParens())) {
+    Base = ASE->getBase();
+    ++ArraySectionCount;
+  }
   auto OriginalTy = Base->getType();
   if (auto *DRE = dyn_cast<DeclRefExpr>(Base))
     if (auto *PVD = dyn_cast<ParmVarDecl>(DRE->getDecl()))

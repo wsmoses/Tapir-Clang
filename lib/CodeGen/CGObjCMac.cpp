@@ -970,7 +970,6 @@ protected:
   
   llvm::Constant *getBitmapBlockLayout(bool ComputeByrefLayout);
   
-
   /// GetIvarLayoutName - Returns a unique constant for the given
   /// ivar layout bitmap.
   llvm::Constant *GetIvarLayoutName(IdentifierInfo *Ident,
@@ -1931,7 +1930,7 @@ CGObjCCommonMac::EmitMessageSend(CodeGen::CodeGenFunction &CGF,
   } else {
     // arm64 uses objc_msgSend for stret methods and yet null receiver check
     // must be made for it.
-    if (!IsSuper && CGM.ReturnTypeUsesSRet(MSI.CallInfo))
+    if (ReceiverCanBeNull && CGM.ReturnTypeUsesSRet(MSI.CallInfo))
       nullReturn.init(CGF, Arg0);
     Fn = (ObjCABI == 2) ? ObjCTypes.getSendFn2(IsSuper)
       : ObjCTypes.getSendFn(IsSuper);
@@ -6718,7 +6717,7 @@ llvm::Value *CGObjCNonFragileABIMac::EmitClassRef(CodeGenFunction &CGF,
 llvm::Value *CGObjCNonFragileABIMac::EmitNSAutoreleasePoolClassRef(
                                                     CodeGenFunction &CGF) {
   IdentifierInfo *II = &CGM.getContext().Idents.get("NSAutoreleasePool");
-  return EmitClassRefFromId(CGF, II, false, 0);
+  return EmitClassRefFromId(CGF, II, false, nullptr);
 }
 
 llvm::Value *

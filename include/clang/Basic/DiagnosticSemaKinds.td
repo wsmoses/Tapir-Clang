@@ -1496,7 +1496,8 @@ def err_init_conversion_failed : Error<
   "%select{none|const|restrict|const and restrict|volatile|const and volatile|"
   "volatile and restrict|const, volatile, and restrict}5 vs "
   "%select{none|const|restrict|const and restrict|volatile|const and volatile|"
-  "volatile and restrict|const, volatile, and restrict}6)}4">;
+  "volatile and restrict|const, volatile, and restrict}6)"
+  "|: cannot take the address of a potentially disabled function}4">;
 
 def err_lvalue_to_rvalue_ref : Error<"rvalue reference %diff{to type $ cannot "
   "bind to lvalue of type $|cannot bind to incompatible lvalue}0,1">;
@@ -2967,7 +2968,8 @@ def note_ovl_candidate : Note<"candidate "
     "%select{none|const|restrict|const and restrict|volatile|const and volatile"
     "|volatile and restrict|const, volatile, and restrict}3 but found "
     "%select{none|const|restrict|const and restrict|volatile|const and volatile"
-    "|volatile and restrict|const, volatile, and restrict}4)}2">;
+    "|volatile and restrict|const, volatile, and restrict}4)"
+    "| made ineligible by enable_if}2">;
 
 def note_ovl_candidate_inherited_constructor : Note<"inherited from here">;
 def note_ovl_candidate_illegal_constructor : Note<
@@ -5662,7 +5664,8 @@ def note_hidden_overloaded_virtual_declared_here : Note<
   "%select{none|const|restrict|const and restrict|volatile|const and volatile|"
   "volatile and restrict|const, volatile, and restrict}2 vs "
   "%select{none|const|restrict|const and restrict|volatile|const and volatile|"
-  "volatile and restrict|const, volatile, and restrict}3)}1">;
+  "volatile and restrict|const, volatile, and restrict}3)"
+  "|: mismatch in enable_if attributes}1">;
 def warn_using_directive_in_header : Warning<
   "using namespace directive in global context in header">,
   InGroup<HeaderHygiene>, DefaultIgnore;
@@ -5899,7 +5902,8 @@ def err_typecheck_convert_incompatible : Error<
   "%select{none|const|restrict|const and restrict|volatile|const and volatile|"
   "volatile and restrict|const, volatile, and restrict}5 vs "
   "%select{none|const|restrict|const and restrict|volatile|const and volatile|"
-  "volatile and restrict|const, volatile, and restrict}6)}4">;
+  "volatile and restrict|const, volatile, and restrict}6)"
+  "|: cannot take the address of a potentially disabled function}4">;
 def err_typecheck_missing_return_type_incompatible : Error<
   "%diff{return type $ must match previous return type $|"
   "return type must match previous return type}0,1 when %select{block "
@@ -6201,6 +6205,9 @@ def err_atomic_op_needs_atomic : Error<
   "type (%0 invalid)">;
 def err_atomic_op_needs_non_const_atomic : Error<
   "address argument to atomic operation must be a pointer to non-const _Atomic "
+  "type (%0 invalid)">;
+def err_atomic_op_needs_non_const_pointer : Error<
+  "address argument to atomic operation must be a pointer to non-const "
   "type (%0 invalid)">;
 def err_atomic_op_needs_trivial_copy : Error<
   "address argument to atomic operation must be a pointer to a "
@@ -7861,8 +7868,8 @@ def err_omp_ordered_directive_with_param : Error<
   "'ordered' directive %select{without any clauses|with 'threads' clause}0 cannot be closely nested inside ordered region with specified parameter">;
 def note_omp_ordered_param : Note<
   "'ordered' clause with specified parameter">;
-def err_omp_expected_array_sect_reduction_lb_not_zero : Error<
-  "lower bound expected to be evaluated to zero">;
+def err_omp_expected_base_var_name : Error<
+  "expected variable name as a base of the array %select{subscript|section}0">;
 } // end of OpenMP category
 
 let CategoryName = "Related Result Type Issue" in {
@@ -7906,9 +7913,10 @@ def err_module_unimported_use : Error<
 def err_module_unimported_use_multiple : Error<
   "%select{declaration|definition|default argument}0 of %1 must be imported "
   "from one of the following modules before it is required:%2">;
-def err_module_import_in_extern_c : Error<
+def ext_module_import_in_extern_c : ExtWarn<
   "import of C++ module '%0' appears within extern \"C\" language linkage "
-  "specification">;
+  "specification">, DefaultError,
+  InGroup<DiagGroup<"module-import-in-extern-c">>;
 def note_module_import_in_extern_c : Note<
   "extern \"C\" language linkage specification begins here">;
 def err_module_import_not_at_top_level_fatal : Error<

@@ -2480,7 +2480,7 @@ void Sema::diagnoseIgnoredQualifiers(unsigned DiagID, unsigned Quals,
 
       // If we have a location for the qualifier, offer a fixit.
       SourceLocation QualLoc = QualKinds[I].Loc;
-      if (!QualLoc.isInvalid()) {
+      if (QualLoc.isValid()) {
         FixIts[NumQuals] = FixItHint::CreateRemoval(QualLoc);
         if (Loc.isInvalid() ||
             getSourceManager().isBeforeInTranslationUnit(QualLoc, Loc))
@@ -3311,14 +3311,12 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
 
   // Are we in an assume-nonnull region?
   bool inAssumeNonNullRegion = false;
-  if (S.PP.getPragmaAssumeNonNullLoc().isValid() &&
-      !state.getDeclarator().isObjCWeakProperty() &&
-      !S.deduceWeakPropertyFromType(T)) {
+  if (S.PP.getPragmaAssumeNonNullLoc().isValid()) {
     inAssumeNonNullRegion = true;
     // Determine which file we saw the assume-nonnull region in.
     FileID file = getNullabilityCompletenessCheckFileID(
                     S, S.PP.getPragmaAssumeNonNullLoc());
-    if (!file.isInvalid()) {
+    if (file.isValid()) {
       FileNullability &fileNullability = S.NullabilityMap[file];
 
       // If we haven't seen any type nullability before, now we have.
@@ -3392,6 +3390,13 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
         complainAboutMissingNullability = CAMN_No;
         break;
       }
+
+      // Weak properties are inferred to be nullable.
+      if (state.getDeclarator().isObjCWeakProperty() && inAssumeNonNullRegion) {
+        inferNullability = NullabilityKind::Nullable;
+        break;
+      }
+
       // fallthrough
 
     case Declarator::FileContext:

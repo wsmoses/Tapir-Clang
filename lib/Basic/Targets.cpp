@@ -383,7 +383,7 @@ protected:
     DefineStd(Builder, "linux", Opts);
     Builder.defineMacro("__gnu_linux__");
     Builder.defineMacro("__ELF__");
-    if (Triple.getEnvironment() == llvm::Triple::Android) {
+    if (Triple.isAndroid()) {
       Builder.defineMacro("__ANDROID__", "1");
       unsigned Maj, Min, Rev;
       Triple.getEnvironmentVersion(Maj, Min, Rev);
@@ -887,9 +887,10 @@ public:
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override;
 
-  bool initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
-                      StringRef CPU,
-                      std::vector<std::string> &FeaturesVec) const override;
+  bool
+  initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
+                 StringRef CPU,
+                 const std::vector<std::string> &FeaturesVec) const override;
 
   bool handleTargetFeatures(std::vector<std::string> &Features,
                             DiagnosticsEngine &Diags) override;
@@ -1253,7 +1254,7 @@ void PPCTargetInfo::getTargetDefines(const LangOptions &Opts,
 // go ahead and error since the customer has expressed a somewhat incompatible
 // set of options.
 static bool ppcUserFeaturesCheck(DiagnosticsEngine &Diags,
-                                 std::vector<std::string> &FeaturesVec) {
+                                 const std::vector<std::string> &FeaturesVec) {
 
   if (std::find(FeaturesVec.begin(), FeaturesVec.end(), "-vsx") !=
       FeaturesVec.end()) {
@@ -1275,9 +1276,9 @@ static bool ppcUserFeaturesCheck(DiagnosticsEngine &Diags,
   return true;
 }
 
-bool PPCTargetInfo::initFeatureMap(llvm::StringMap<bool> &Features,
-                                   DiagnosticsEngine &Diags, StringRef CPU,
-                                   std::vector<std::string> &FeaturesVec) const {
+bool PPCTargetInfo::initFeatureMap(
+    llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags, StringRef CPU,
+    const std::vector<std::string> &FeaturesVec) const {
   Features["altivec"] = llvm::StringSwitch<bool>(CPU)
     .Case("7400", true)
     .Case("g4", true)
@@ -2400,9 +2401,10 @@ public:
   // initFeatureMap which calls this repeatedly.
   static void setFeatureEnabledImpl(llvm::StringMap<bool> &Features,
                                     StringRef Name, bool Enabled);
-  bool initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
-                      StringRef CPU,
-                      std::vector<std::string> &FeaturesVec) const override;
+  bool
+  initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
+                 StringRef CPU,
+                 const std::vector<std::string> &FeaturesVec) const override;
   bool hasFeature(StringRef Feature) const override;
   bool handleTargetFeatures(std::vector<std::string> &Features,
                             DiagnosticsEngine &Diags) override;
@@ -2530,7 +2532,7 @@ bool X86TargetInfo::setFPMath(StringRef Name) {
 
 bool X86TargetInfo::initFeatureMap(
     llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags, StringRef CPU,
-    std::vector<std::string> &FeaturesVec) const {
+    const std::vector<std::string> &FeaturesVec) const {
   // FIXME: This *really* should not be here.
   // X86_64 always has SSE2.
   if (getTriple().getArch() == llvm::Triple::x86_64)
@@ -2705,7 +2707,35 @@ bool X86TargetInfo::initFeatureMap(
     setFeatureEnabledImpl(Features, "cx16", true);
     break;
   }
-  return TargetInfo::initFeatureMap(Features, Diags, CPU, FeaturesVec);
+  if (!TargetInfo::initFeatureMap(Features, Diags, CPU, FeaturesVec))
+    return false;
+
+  // Can't do this earlier because we need to be able to explicitly enable
+  // or disable these features and the things that they depend upon.
+
+  // Enable popcnt if sse4.2 is enabled and popcnt is not explicitly disabled.
+  auto I = Features.find("sse4.2");
+  if (I != Features.end() && I->getValue() == true &&
+      std::find(FeaturesVec.begin(), FeaturesVec.end(), "-popcnt") ==
+          FeaturesVec.end())
+    Features["popcnt"] = true;
+
+  // Enable prfchw if 3DNow! is enabled and prfchw is not explicitly disabled.
+  I = Features.find("3dnow");
+  if (I != Features.end() && I->getValue() == true &&
+      std::find(FeaturesVec.begin(), FeaturesVec.end(), "-prfchw") ==
+          FeaturesVec.end())
+    Features["prfchw"] = true;
+
+  // Additionally, if SSE is enabled and mmx is not explicitly disabled,
+  // then enable MMX.
+  I = Features.find("sse");
+  if (I != Features.end() && I->getValue() == true &&
+      std::find(FeaturesVec.begin(), FeaturesVec.end(), "-mmx") ==
+          FeaturesVec.end())
+    Features["mmx"] = true;
+
+  return true;
 }
 
 void X86TargetInfo::setSSELevel(llvm::StringMap<bool> &Features,
@@ -2974,22 +3004,6 @@ bool X86TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
     XOPLevel = std::max(XOPLevel, XLevel);
   }
 
-  // Enable popcnt if sse4.2 is enabled and popcnt is not explicitly disabled.
-  // Can't do this earlier because we need to be able to explicitly enable
-  // popcnt and still disable sse4.2.
-  if (!HasPOPCNT && SSELevel >= SSE42 &&
-      std::find(Features.begin(), Features.end(), "-popcnt") == Features.end()){
-    HasPOPCNT = true;
-    Features.push_back("+popcnt");
-  }
-
-  // Enable prfchw if 3DNow! is enabled and prfchw is not explicitly disabled.
-  if (!HasPRFCHW && MMX3DNowLevel >= AMD3DNow &&
-      std::find(Features.begin(), Features.end(), "-prfchw") == Features.end()){
-    HasPRFCHW = true;
-    Features.push_back("+prfchw");
-  }
-
   // LLVM doesn't have a separate switch for fpmath, so only accept it if it
   // matches the selected sse level.
   if (FPMath == FP_SSE && SSELevel < SSE1) {
@@ -2999,17 +3013,6 @@ bool X86TargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
     Diags.Report(diag::err_target_unsupported_fpmath) << "387";
     return false;
   }
-
-  // Don't tell the backend if we're turning off mmx; it will end up disabling
-  // SSE, which we don't want.
-  // Additionally, if SSE is enabled and mmx is not explicitly disabled,
-  // then enable MMX.
-  std::vector<std::string>::iterator it;
-  it = std::find(Features.begin(), Features.end(), "-mmx");
-  if (it != Features.end())
-    Features.erase(it);
-  else if (SSELevel > NoSSE)
-    MMX3DNowLevel = std::max(MMX3DNowLevel, MMX);
 
   SimdDefaultAlign =
       hasFeature("avx512f") ? 512 : hasFeature("avx") ? 256 : 128;
@@ -3714,9 +3717,9 @@ public:
 };
 
 static void addCygMingDefines(const LangOptions &Opts, MacroBuilder &Builder) {
-  // Mingw and cygwin define __declspec(a) to __attribute__((a)).  Clang supports
-  // __declspec natively under -fms-extensions, but we define a no-op __declspec
-  // macro anyway for pre-processor compatibility.
+  // Mingw and cygwin define __declspec(a) to __attribute__((a)).  Clang
+  // supports __declspec natively under -fms-extensions, but we define a no-op
+  // __declspec macro anyway for pre-processor compatibility.
   if (Opts.MicrosoftExt)
     Builder.defineMacro("__declspec", "__declspec");
   else
@@ -4086,7 +4089,6 @@ class ARMTargetInfo : public TargetInfo {
 
   std::string ABI, CPU;
 
-  StringRef DefaultCPU;
   StringRef CPUProfile;
   StringRef CPUAttr;
 
@@ -4097,7 +4099,7 @@ class ARMTargetInfo : public TargetInfo {
   } FPMath;
 
   unsigned ArchISA;
-  unsigned ArchKind;
+  unsigned ArchKind = llvm::ARM::AK_ARMV4T;
   unsigned ArchProfile;
   unsigned ArchVersion;
 
@@ -4235,13 +4237,11 @@ class ARMTargetInfo : public TargetInfo {
   void setArchInfo() {
     StringRef ArchName = getTriple().getArchName();
 
-    ArchISA    = llvm::ARM::parseArchISA(ArchName);
-    DefaultCPU = getDefaultCPU(ArchName);
-
-    unsigned ArchKind = llvm::ARM::parseArch(ArchName);
-    if (ArchKind == llvm::ARM::AK_INVALID)
-      // set arch of the CPU, either provided explicitly or hardcoded default
-      ArchKind = llvm::ARM::parseCPUArch(CPU);
+    ArchISA     = llvm::ARM::parseArchISA(ArchName);
+    CPU         = llvm::ARM::getDefaultCPU(ArchName);
+    unsigned AK = llvm::ARM::parseArch(ArchName);
+    if (AK != llvm::ARM::AK_INVALID)
+      ArchKind = AK;
     setArchInfo(ArchKind);
   }
 
@@ -4260,13 +4260,12 @@ class ARMTargetInfo : public TargetInfo {
   }
 
   void setAtomic() {
-    // when triple does not specify a sub arch, 
+    // when triple does not specify a sub arch,
     // then we are not using inline atomics
-    bool ShouldUseInlineAtomic = DefaultCPU.empty() ? 
-                                 false :
+    bool ShouldUseInlineAtomic =
                    (ArchISA == llvm::ARM::IK_ARM   && ArchVersion >= 6) ||
                    (ArchISA == llvm::ARM::IK_THUMB && ArchVersion >= 7);
-    // Cortex M does not support 8 byte atomics, while general Thumb2 does. 
+    // Cortex M does not support 8 byte atomics, while general Thumb2 does.
     if (ArchProfile == llvm::ARM::PK_M) {
       MaxAtomicPromoteWidth = 32;
       if (ShouldUseInlineAtomic)
@@ -4276,7 +4275,7 @@ class ARMTargetInfo : public TargetInfo {
       MaxAtomicPromoteWidth = 64;
       if (ShouldUseInlineAtomic)
         MaxAtomicInlineWidth = 64;
-    } 
+    }
   }
 
   bool isThumb() const {
@@ -4289,10 +4288,6 @@ class ARMTargetInfo : public TargetInfo {
 
   bool supportsThumb2() const {
     return CPUAttr.equals("6T2") || ArchVersion >= 7;
-  }
-
-  StringRef getDefaultCPU(StringRef ArchName) const {
-    return llvm::ARM::getDefaultCPU(ArchName);
   }
 
   StringRef getCPUAttr() const {
@@ -4340,7 +4335,7 @@ class ARMTargetInfo : public TargetInfo {
 
 public:
   ARMTargetInfo(const llvm::Triple &Triple, bool IsBigEndian)
-      : TargetInfo(Triple), CPU("arm1136j-s"), FPMath(FP_Default),
+      : TargetInfo(Triple), FPMath(FP_Default),
         IsAAPCS(true), LDREX(0), HW_FP(0) {
     BigEndian = IsBigEndian;
 
@@ -4353,7 +4348,7 @@ public:
       break;
     }
 
-    // cache arch related info
+    // Cache arch related info.
     setArchInfo();
 
     // {} in inline assembly are neon specifiers, not assembly variant
@@ -4389,8 +4384,8 @@ public:
         setABI("aapcs");
         break;
       case llvm::Triple::GNU:
-	setABI("apcs-gnu");
-	break;
+        setABI("apcs-gnu");
+      break;
       default:
         if (Triple.getOS() == llvm::Triple::NetBSD)
           setABI("apcs-gnu");
@@ -4434,10 +4429,11 @@ public:
   }
 
   // FIXME: This should be based on Arch attributes, not CPU names.
-  bool initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
-                      StringRef CPU,
-                      std::vector<std::string> &FeaturesVec) const override {
-   
+  bool
+  initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
+                 StringRef CPU,
+                 const std::vector<std::string> &FeaturesVec) const override {
+
     std::vector<const char*> TargetFeatures;
 
     // get default FPU features
@@ -4450,11 +4446,7 @@ public:
 
     for (const char *Feature : TargetFeatures)
       if (Feature[0] == '+')
-        Features[Feature+1] = true; 
-
-    if (ArchVersion < 6  || 
-       (ArchVersion == 6 && ArchProfile == llvm::ARM::PK_M))
-      Features["strict-align"] = true;
+        Features[Feature+1] = true;
 
     return TargetInfo::initFeatureMap(Features, Diags, CPU, FeaturesVec);
   }
@@ -4628,17 +4620,17 @@ public:
       Builder.defineMacro("__ARM_ARCH_PROFILE", "'" + CPUProfile + "'");
 
     // ACLE 6.4.3 Unaligned access supported in hardware
-    if (Unaligned) 
+    if (Unaligned)
       Builder.defineMacro("__ARM_FEATURE_UNALIGNED", "1");
- 
+
     // ACLE 6.4.4 LDREX/STREX
     if (LDREX)
       Builder.defineMacro("__ARM_FEATURE_LDREX", "0x" + llvm::utohexstr(LDREX));
 
     // ACLE 6.4.5 CLZ
-    if (ArchVersion == 5 || 
-       (ArchVersion == 6 && CPUProfile != "M") || 
-        ArchVersion >  6) 
+    if (ArchVersion == 5 ||
+       (ArchVersion == 6 && CPUProfile != "M") ||
+        ArchVersion >  6)
       Builder.defineMacro("__ARM_FEATURE_CLZ", "1");
 
     // ACLE 6.5.1 Hardware Floating Point
@@ -4693,7 +4685,8 @@ public:
       Builder.defineMacro("__ARM_FEATURE_SIMD32", "1");
 
     // ACLE 6.4.10 Hardware Integer Divide
-    if (((HWDiv & HWDivThumb) && isThumb()) || ((HWDiv & HWDivARM) && !isThumb())) {
+    if (((HWDiv & HWDivThumb) && isThumb()) ||
+        ((HWDiv & HWDivARM) && !isThumb())) {
       Builder.defineMacro("__ARM_FEATURE_IDIV", "1");
       Builder.defineMacro("__ARM_ARCH_EXT_IDIV__", "1");
     }
@@ -4720,7 +4713,8 @@ public:
       Builder.defineMacro("__ARM_NEON__");
       // current AArch32 NEON implementations do not support double-precision
       // floating-point even when it is present in VFP.
-      Builder.defineMacro("__ARM_NEON_FP", "0x" + llvm::utohexstr(HW_FP & ~HW_FP_DP));
+      Builder.defineMacro("__ARM_NEON_FP",
+                          "0x" + llvm::utohexstr(HW_FP & ~HW_FP_DP));
     }
 
     Builder.defineMacro("__ARM_SIZEOF_WCHAR_T",
@@ -5887,7 +5881,8 @@ class SystemZTargetInfo : public TargetInfo {
 
 public:
   SystemZTargetInfo(const llvm::Triple &Triple)
-    : TargetInfo(Triple), CPU("z10"), HasTransactionalExecution(false), HasVector(false) {
+      : TargetInfo(Triple), CPU("z10"), HasTransactionalExecution(false),
+        HasVector(false) {
     IntMaxType = SignedLong;
     Int64Type = SignedLong;
     TLSSupported = true;
@@ -5947,9 +5942,10 @@ public:
 
     return CPUKnown;
   }
-  bool initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
-                      StringRef CPU,
-                      std::vector<std::string> &FeaturesVec) const override {
+  bool
+  initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
+                 StringRef CPU,
+                 const std::vector<std::string> &FeaturesVec) const override {
     if (CPU == "zEC12")
       Features["transactional-execution"] = true;
     if (CPU == "z13") {
@@ -6312,12 +6308,14 @@ public:
         .Case("mips64r5", true)
         .Case("mips64r6", true)
         .Case("octeon", true)
+        .Case("p5600", true)
         .Default(false);
   }
   const std::string& getCPU() const { return CPU; }
-  bool initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
-                      StringRef CPU,
-                      std::vector<std::string> &FeaturesVec) const override {
+  bool
+  initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
+                 StringRef CPU,
+                 const std::vector<std::string> &FeaturesVec) const override {
     if (CPU == "octeon")
       Features["mips64r2"] = Features["cnmips"] = true;
     else
@@ -6995,9 +6993,10 @@ protected:
   }
 
 private:
-  bool initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
-                      StringRef CPU,
-                      std::vector<std::string> &FeaturesVec) const override {
+  bool
+  initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
+                 StringRef CPU,
+                 const std::vector<std::string> &FeaturesVec) const override {
     if (CPU == "bleeding-edge")
       Features["simd128"] = true;
     return TargetInfo::initFeatureMap(Features, Diags, CPU, FeaturesVec);
