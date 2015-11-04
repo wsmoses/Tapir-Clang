@@ -216,6 +216,13 @@ protected:
   /// \brief Check whether the target triple's architecture is 32-bits.
   bool isTarget32Bit() const { return getTriple().isArch32Bit(); }
 
+  bool addLibStdCXXIncludePaths(Twine Base, Twine Suffix, StringRef GCCTriple,
+                                StringRef GCCMultiarchTriple,
+                                StringRef TargetMultiarchTriple,
+                                Twine IncludeSuffix,
+                                const llvm::opt::ArgList &DriverArgs,
+                                llvm::opt::ArgStringList &CC1Args) const;
+
   /// @}
 
 private:
@@ -275,8 +282,8 @@ public:
 
   /// Add any profiling runtime libraries that are needed. This is essentially a
   /// MachO specific version of addProfileRT in Tools.cpp.
-  virtual void addProfileRTLibs(const llvm::opt::ArgList &Args,
-                                llvm::opt::ArgStringList &CmdArgs) const {
+  void addProfileRTLibs(const llvm::opt::ArgList &Args,
+                        llvm::opt::ArgStringList &CmdArgs) const override {
     // There aren't any profiling libs for embedded targets currently.
   }
 
@@ -332,7 +339,9 @@ public:
 
   bool UseDwarfDebugFlags() const override;
 
-  bool UseSjLjExceptions() const override { return false; }
+  bool UseSjLjExceptions(const llvm::opt::ArgList &Args) const override {
+    return false;
+  }
 
   /// }
 };
@@ -347,7 +356,15 @@ public:
   // the argument translation business.
   mutable bool TargetInitialized;
 
-  enum DarwinPlatformKind { MacOS, IPhoneOS, IPhoneOSSimulator };
+  enum DarwinPlatformKind {
+    MacOS,
+    IPhoneOS,
+    IPhoneOSSimulator,
+    TvOS,
+    TvOSSimulator,
+    WatchOS,
+    WatchOSSimulator
+  };
 
   mutable DarwinPlatformKind TargetPlatform;
 
@@ -375,7 +392,8 @@ public:
                               llvm::opt::ArgStringList &CmdArgs) const override;
 
   bool isKernelStatic() const override {
-    return !isTargetIPhoneOS() || isIPhoneOSVersionLT(6, 0);
+    return (!(isTargetIPhoneOS() && !isIPhoneOSVersionLT(6, 0)) &&
+            !isTargetWatchOS());
   }
 
   void addProfileRTLibs(const llvm::opt::ArgList &Args,
@@ -404,17 +422,48 @@ protected:
 
   bool isTargetIPhoneOS() const {
     assert(TargetInitialized && "Target not initialized!");
-    return TargetPlatform == IPhoneOS;
+    return TargetPlatform == IPhoneOS || TargetPlatform == TvOS;
   }
 
   bool isTargetIOSSimulator() const {
     assert(TargetInitialized && "Target not initialized!");
-    return TargetPlatform == IPhoneOSSimulator;
+    return TargetPlatform == IPhoneOSSimulator ||
+           TargetPlatform == TvOSSimulator;
   }
 
   bool isTargetIOSBased() const {
     assert(TargetInitialized && "Target not initialized!");
     return isTargetIPhoneOS() || isTargetIOSSimulator();
+  }
+
+  bool isTargetTvOS() const {
+    assert(TargetInitialized && "Target not initialized!");
+    return TargetPlatform == TvOS;
+  }
+
+  bool isTargetTvOSSimulator() const {
+    assert(TargetInitialized && "Target not initialized!");
+    return TargetPlatform == TvOSSimulator;
+  }
+
+  bool isTargetTvOSBased() const {
+    assert(TargetInitialized && "Target not initialized!");
+    return TargetPlatform == TvOS || TargetPlatform == TvOSSimulator;
+  }
+
+  bool isTargetWatchOS() const {
+    assert(TargetInitialized && "Target not initialized!");
+    return TargetPlatform == WatchOS;
+  }
+
+  bool isTargetWatchOSSimulator() const {
+    assert(TargetInitialized && "Target not initialized!");
+    return TargetPlatform == WatchOSSimulator;
+  }
+
+  bool isTargetWatchOSBased() const {
+    assert(TargetInitialized && "Target not initialized!");
+    return TargetPlatform == WatchOS || TargetPlatform == WatchOSSimulator;
   }
 
   bool isTargetMacOS() const {
@@ -467,7 +516,7 @@ public:
   unsigned GetDefaultStackProtectorLevel(bool KernelOrKext) const override {
     // Stack protectors default to on for user code on 10.5,
     // and for everything in 10.6 and beyond
-    if (isTargetIOSBased())
+    if (isTargetIOSBased() || isTargetWatchOSBased())
       return 1;
     else if (isTargetMacOS() && !isMacosxVersionLT(10, 6))
       return 1;
@@ -481,7 +530,7 @@ public:
 
   void CheckObjCARC() const override;
 
-  bool UseSjLjExceptions() const override;
+  bool UseSjLjExceptions(const llvm::opt::ArgList &Args) const override;
 
   SanitizerMask getSupportedSanitizers() const override;
 };
@@ -667,7 +716,7 @@ public:
       const llvm::opt::ArgList &DriverArgs,
       llvm::opt::ArgStringList &CC1Args) const override;
 
-  bool UseSjLjExceptions() const override;
+  bool UseSjLjExceptions(const llvm::opt::ArgList &Args) const override;
   bool isPIEDefault() const override;
   SanitizerMask getSupportedSanitizers() const override;
   unsigned GetDefaultDwarfVersion() const override { return 2; }
@@ -737,6 +786,8 @@ public:
       llvm::opt::ArgStringList &CC1Args) const override;
   bool isPIEDefault() const override;
   SanitizerMask getSupportedSanitizers() const override;
+  void addProfileRTLibs(const llvm::opt::ArgList &Args,
+                        llvm::opt::ArgStringList &CmdArgs) const override;
 
   std::string Linker;
   std::vector<std::string> ExtraOpts;
@@ -746,13 +797,6 @@ protected:
   Tool *buildLinker() const override;
 
 private:
-  bool addLibStdCXXIncludePaths(Twine Base, Twine Suffix, StringRef GCCTriple,
-                                StringRef GCCMultiarchTriple,
-                                StringRef TargetMultiarchTriple,
-                                Twine IncludeSuffix,
-                                const llvm::opt::ArgList &DriverArgs,
-                                llvm::opt::ArgStringList &CC1Args) const;
-
   std::string computeSysRoot() const;
 };
 
@@ -935,6 +979,8 @@ public:
   void AddCXXStdlibLibArgs(const llvm::opt::ArgList &Args,
                            llvm::opt::ArgStringList &CmdArgs) const override;
 
+  SanitizerMask getSupportedSanitizers() const override;
+
 protected:
   Tool *buildLinker() const override;
   Tool *buildAssembler() const override;
@@ -978,6 +1024,9 @@ public:
   void
   AddClangSystemIncludeArgs(const llvm::opt::ArgList &DriverArgs,
                             llvm::opt::ArgStringList &CC1Args) const override;
+  void AddClangCXXStdlibIncludeArgs(
+      const llvm::opt::ArgList &DriverArgs,
+      llvm::opt::ArgStringList &CC1Args) const override;
   Tool *SelectTool(const JobAction &JA) const override;
   void getCompilerSupportDir(std::string &Dir) const;
   void getBuiltinLibDir(std::string &Dir) const;

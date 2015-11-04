@@ -418,11 +418,23 @@ const internal::VariadicAllOfMatcher<TemplateArgument> templateArgument;
 /// \code
 ///   template <typename T, int N> struct C {};
 /// \endcode
-/// templateArgument()
+/// nonTypeTemplateParmDecl()
 ///   matches 'N', but not 'T'.
 const internal::VariadicDynCastAllOfMatcher<
   Decl,
   NonTypeTemplateParmDecl> nonTypeTemplateParmDecl;
+
+/// \brief Matches template type parameter declarations.
+///
+/// Given
+/// \code
+///   template <typename T, int N> struct C {};
+/// \endcode
+/// templateTypeParmDecl()
+///   matches 'T', but not 'N'.
+const internal::VariadicDynCastAllOfMatcher<
+  Decl,
+  TemplateTypeParmDecl> templateTypeParmDecl;
 
 /// \brief Matches public C++ declarations.
 ///
@@ -2056,8 +2068,10 @@ internal::Matcher<T> findAll(const internal::Matcher<T> &Matcher) {
 ///
 /// Usable as: Any Matcher
 const internal::ArgumentAdaptingMatcherFunc<
-    internal::HasParentMatcher, internal::TypeList<Decl, Stmt>,
-    internal::TypeList<Decl, Stmt> > LLVM_ATTRIBUTE_UNUSED hasParent = {};
+    internal::HasParentMatcher,
+    internal::TypeList<Decl, NestedNameSpecifierLoc, Stmt, TypeLoc>,
+    internal::TypeList<Decl, NestedNameSpecifierLoc, Stmt, TypeLoc>>
+    LLVM_ATTRIBUTE_UNUSED hasParent = {};
 
 /// \brief Matches AST nodes that have an ancestor that matches the provided
 /// matcher.
@@ -2071,8 +2085,10 @@ const internal::ArgumentAdaptingMatcherFunc<
 ///
 /// Usable as: Any Matcher
 const internal::ArgumentAdaptingMatcherFunc<
-    internal::HasAncestorMatcher, internal::TypeList<Decl, Stmt>,
-    internal::TypeList<Decl, Stmt> > LLVM_ATTRIBUTE_UNUSED hasAncestor = {};
+    internal::HasAncestorMatcher,
+    internal::TypeList<Decl, NestedNameSpecifierLoc, Stmt, TypeLoc>,
+    internal::TypeList<Decl, NestedNameSpecifierLoc, Stmt, TypeLoc>>
+    LLVM_ATTRIBUTE_UNUSED hasAncestor = {};
 
 /// \brief Matches if the provided matcher does not match.
 ///
@@ -3111,9 +3127,11 @@ AST_POLYMORPHIC_MATCHER_P(hasOperatorName,
 /// \code
 ///   a || b
 /// \endcode
-AST_MATCHER_P(BinaryOperator, hasLHS,
-              internal::Matcher<Expr>, InnerMatcher) {
-  Expr *LeftHandSide = Node.getLHS();
+AST_POLYMORPHIC_MATCHER_P(hasLHS,
+                          AST_POLYMORPHIC_SUPPORTED_TYPES(BinaryOperator,
+                                                          ArraySubscriptExpr),
+                          internal::Matcher<Expr>, InnerMatcher) {
+  const Expr *LeftHandSide = Node.getLHS();
   return (LeftHandSide != nullptr &&
           InnerMatcher.matches(*LeftHandSide, Finder, Builder));
 }
@@ -3124,9 +3142,11 @@ AST_MATCHER_P(BinaryOperator, hasLHS,
 /// \code
 ///   a || b
 /// \endcode
-AST_MATCHER_P(BinaryOperator, hasRHS,
-              internal::Matcher<Expr>, InnerMatcher) {
-  Expr *RightHandSide = Node.getRHS();
+AST_POLYMORPHIC_MATCHER_P(hasRHS,
+                          AST_POLYMORPHIC_SUPPORTED_TYPES(BinaryOperator,
+                                                          ArraySubscriptExpr),
+                          internal::Matcher<Expr>, InnerMatcher) {
+  const Expr *RightHandSide = Node.getRHS();
   return (RightHandSide != nullptr &&
           InnerMatcher.matches(*RightHandSide, Finder, Builder));
 }
@@ -3230,7 +3250,7 @@ AST_MATCHER(RecordDecl, isClass) {
 /// \endcode
 AST_MATCHER_P(ConditionalOperator, hasTrueExpression,
               internal::Matcher<Expr>, InnerMatcher) {
-  Expr *Expression = Node.getTrueExpr();
+  const Expr *Expression = Node.getTrueExpr();
   return (Expression != nullptr &&
           InnerMatcher.matches(*Expression, Finder, Builder));
 }
@@ -3243,7 +3263,7 @@ AST_MATCHER_P(ConditionalOperator, hasTrueExpression,
 /// \endcode
 AST_MATCHER_P(ConditionalOperator, hasFalseExpression,
               internal::Matcher<Expr>, InnerMatcher) {
-  Expr *Expression = Node.getFalseExpr();
+  const Expr *Expression = Node.getFalseExpr();
   return (Expression != nullptr &&
           InnerMatcher.matches(*Expression, Finder, Builder));
 }
@@ -3367,6 +3387,23 @@ AST_MATCHER(CXXMethodDecl, isPure) {
 /// cxxMethodDecl(isConst()) matches A::foo() but not A::bar()
 AST_MATCHER(CXXMethodDecl, isConst) {
   return Node.isConst();
+}
+
+/// \brief Matches if the given method declaration declares a copy assignment
+/// operator.
+///
+/// Given
+/// \code
+/// struct A {
+///   A &operator=(const A &);
+///   A &operator=(A &&);
+/// };
+/// \endcode
+///
+/// cxxMethodDecl(isCopyAssignmentOperator()) matches the first method but not
+/// the second one.
+AST_MATCHER(CXXMethodDecl, isCopyAssignmentOperator) {
+  return Node.isCopyAssignmentOperator();
 }
 
 /// \brief Matches if the given method declaration overrides another method.
@@ -4237,7 +4274,7 @@ AST_MATCHER_P(NestedNameSpecifierLoc, specifiesTypeLoc,
 AST_MATCHER_P_OVERLOAD(NestedNameSpecifier, hasPrefix,
                        internal::Matcher<NestedNameSpecifier>, InnerMatcher,
                        0) {
-  NestedNameSpecifier *NextNode = Node.getPrefix();
+  const NestedNameSpecifier *NextNode = Node.getPrefix();
   if (!NextNode)
     return false;
   return InnerMatcher.matches(*NextNode, Finder, Builder);
@@ -4291,9 +4328,14 @@ AST_MATCHER_P_OVERLOAD(Decl, equalsNode, const Decl*, Other, 0) {
 /// \brief Matches if a node equals another node.
 ///
 /// \c Stmt has pointer identity in the AST.
-///
 AST_MATCHER_P_OVERLOAD(Stmt, equalsNode, const Stmt*, Other, 1) {
   return &Node == Other;
+}
+/// \brief Matches if a node equals another node.
+///
+/// \c Type has pointer identity in the AST.
+AST_MATCHER_P_OVERLOAD(Type, equalsNode, const Type*, Other, 2) {
+    return &Node == Other;
 }
 
 /// @}

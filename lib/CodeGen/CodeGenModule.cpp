@@ -65,6 +65,7 @@ static CGCXXABI *createCXXABI(CodeGenModule &CGM) {
   case TargetCXXABI::GenericARM:
   case TargetCXXABI::iOS:
   case TargetCXXABI::iOS64:
+  case TargetCXXABI::WatchOS:
   case TargetCXXABI::GenericMIPS:
   case TargetCXXABI::GenericItanium:
   case TargetCXXABI::WebAssembly:
@@ -87,8 +88,8 @@ CodeGenModule::CodeGenModule(ASTContext &C, const HeaderSearchOptions &HSO,
       VMContext(M.getContext()), TBAA(nullptr), TheTargetCodeGenInfo(nullptr),
       Types(*this), VTables(*this), ObjCRuntime(nullptr),
       OpenCLRuntime(nullptr), OpenMPRuntime(nullptr), CUDARuntime(nullptr),
-      DebugInfo(nullptr), ARCData(nullptr),
-      NoObjCARCExceptionsMetadata(nullptr), RRData(nullptr), PGOReader(nullptr),
+      DebugInfo(nullptr), ObjCData(nullptr),
+      NoObjCARCExceptionsMetadata(nullptr), PGOReader(nullptr),
       CFConstantStringClassRef(nullptr), ConstantStringClassRef(nullptr),
       NSConstantStringType(nullptr), NSConcreteGlobalBlock(nullptr),
       NSConcreteStackBlock(nullptr), BlockObjectAssign(nullptr),
@@ -142,9 +143,8 @@ CodeGenModule::CodeGenModule(ASTContext &C, const HeaderSearchOptions &HSO,
 
   Block.GlobalUniqueCount = 0;
 
-  if (C.getLangOpts().ObjCAutoRefCount)
-    ARCData = new ARCEntrypoints();
-  RRData = new RREntrypoints();
+  if (C.getLangOpts().ObjC1)
+    ObjCData = new ObjCEntrypoints();
 
   if (!CodeGenOpts.InstrProfileInput.empty()) {
     auto ReaderOrErr =
@@ -172,8 +172,7 @@ CodeGenModule::~CodeGenModule() {
   delete TheTargetCodeGenInfo;
   delete TBAA;
   delete DebugInfo;
-  delete ARCData;
-  delete RRData;
+  delete ObjCData;
 }
 
 void CodeGenModule::createObjCRuntime() {
@@ -189,6 +188,7 @@ void CodeGenModule::createObjCRuntime() {
   case ObjCRuntime::FragileMacOSX:
   case ObjCRuntime::MacOSX:
   case ObjCRuntime::iOS:
+  case ObjCRuntime::WatchOS:
     ObjCRuntime = CreateMacObjCRuntime(*this);
     return;
   }
