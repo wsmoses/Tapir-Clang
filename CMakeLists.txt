@@ -196,7 +196,7 @@ set(GCC_INSTALL_PREFIX "" CACHE PATH "Directory where gcc is installed." )
 set(DEFAULT_SYSROOT "" CACHE PATH
   "Default <path> to all compiler invocations for --sysroot=<path>." )
 
-set(CLANG_DEFAULT_OPENMP_RUNTIME "libgomp" CACHE STRING
+set(CLANG_DEFAULT_OPENMP_RUNTIME "libomp" CACHE STRING
   "Default OpenMP runtime used by -fopenmp.")
 
 set(CLANG_VENDOR "" CACHE STRING
@@ -354,7 +354,7 @@ endmacro()
 
 macro(add_clang_library name)
   cmake_parse_arguments(ARG
-    ""
+    "SHARED"
     ""
     "ADDITIONAL_HEADERS"
     ${ARGN})
@@ -390,17 +390,29 @@ macro(add_clang_library name)
       ${ARG_ADDITIONAL_HEADERS} # It may contain unparsed unknown args.
       )
   endif()
-  llvm_add_library(${name} ${ARG_UNPARSED_ARGUMENTS} ${srcs})
+  if(ARG_SHARED)
+    set(ARG_ENABLE_SHARED SHARED)
+  endif()
+  llvm_add_library(${name} ${ARG_ENABLE_SHARED} ${ARG_UNPARSED_ARGUMENTS} ${srcs})
 
   if(TARGET ${name})
     target_link_libraries(${name} ${cmake_2_8_12_INTERFACE} ${LLVM_COMMON_LIBS})
 
     if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY OR ${name} STREQUAL "libclang")
       install(TARGETS ${name}
+        COMPONENT ${name}
         EXPORT ClangTargets
         LIBRARY DESTINATION lib${LLVM_LIBDIR_SUFFIX}
         ARCHIVE DESTINATION lib${LLVM_LIBDIR_SUFFIX}
         RUNTIME DESTINATION bin)
+
+      if (${ARG_SHARED} AND NOT CMAKE_CONFIGURATION_TYPES)
+        add_custom_target(install-${name}
+                          DEPENDS ${name}
+                          COMMAND "${CMAKE_COMMAND}"
+                                  -DCMAKE_INSTALL_COMPONENT=${name}
+                                  -P "${CMAKE_BINARY_DIR}/cmake_install.cmake")
+      endif()
     endif()
     set_property(GLOBAL APPEND PROPERTY CLANG_EXPORTS ${name})
   else()
@@ -450,12 +462,27 @@ if (NOT LLVM_INSTALL_TOOLCHAIN_ONLY)
     )
 endif()
 
+if(INTERNAL_INSTALL_PREFIX)
+  set(LIBCLANG_HEADERS_INSTALL_DESTINATION "${INTERNAL_INSTALL_PREFIX}/include")
+else()
+  set(LIBCLANG_HEADERS_INSTALL_DESTINATION include)
+endif()
+
 install(DIRECTORY include/clang-c
-  DESTINATION include
+  COMPONENT libclang-headers
+  DESTINATION "${LIBCLANG_HEADERS_INSTALL_DESTINATION}"
   FILES_MATCHING
   PATTERN "*.h"
   PATTERN ".svn" EXCLUDE
   )
+
+if (NOT CMAKE_CONFIGURATION_TYPES) # don't add this for IDE's.
+  add_custom_target(install-libclang-headers
+    DEPENDS
+    COMMAND "${CMAKE_COMMAND}"
+            -DCMAKE_INSTALL_COMPONENT=libclang-headers
+            -P "${CMAKE_BINARY_DIR}/cmake_install.cmake")
+endif()
 
 add_definitions( -D_GNU_SOURCE )
 
@@ -543,6 +570,7 @@ if( CLANG_INCLUDE_TESTS )
       ARGS ${LLVM_LIT_EXTRA_ARGS}
       )
   endif()
+  add_subdirectory(utils/perf-training)
 endif()
 
 option(CLANG_INCLUDE_DOCS "Generate build targets for the Clang docs."
@@ -595,9 +623,24 @@ if (CLANG_ENABLE_BOOTSTRAP)
       )
     set(cmake_3_4_USES_TERMINAL USES_TERMINAL 1)
   endif()
+
+  if(NOT CLANG_STAGE)
+    set(CLANG_STAGE stage1)
+    message(STATUS "Setting current clang stage to: ${CLANG_STAGE}")
+  endif()
+
+  string(REGEX MATCH "stage([0-9]*)" MATCHED_STAGE "${CLANG_STAGE}")
+  if(MATCHED_STAGE)
+    math(EXPR STAGE_NUM "${MATCHED_STAGE} + 1")
+    set(NEXT_CLANG_STAGE stage${STAGE_NUM})
+  else()
+    set(NEXT_CLANG_STAGE bootstrap)
+  endif()
+  message(STATUS "Setting next clang stage to: ${NEXT_CLANG_STAGE}")
   
-  set(STAMP_DIR ${CMAKE_CURRENT_BINARY_DIR}/bootstrap-stamps/)
-  set(BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/bootstrap-bins/)
+  
+  set(STAMP_DIR ${CMAKE_CURRENT_BINARY_DIR}/${NEXT_CLANG_STAGE}-stamps/)
+  set(BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/${NEXT_CLANG_STAGE}-bins/)
 
   # If on Darwin we need to make bootstrap depend on LTO and pass
   # DARWIN_LTO_LIBRARY so that -flto will work using the just-built compiler
@@ -608,22 +651,60 @@ if (CLANG_ENABLE_BOOTSTRAP)
     set(LTO_RANLIB -DCMAKE_RANLIB=${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-ranlib)
   endif()
 
-  add_custom_target(bootstrap-clear
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/bootstrap-cleared
+  add_custom_target(${NEXT_CLANG_STAGE}-clear
+    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/${NEXT_CLANG_STAGE}-cleared
     )
   add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/bootstrap-cleared
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${NEXT_CLANG_STAGE}-cleared
     DEPENDS clang ${LTO_DEP}
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${BINARY_DIR}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${BINARY_DIR}
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${STAMP_DIR}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${STAMP_DIR}
-    COMMENT "Clobberring bootstrap build and stamp directories"
+    COMMENT "Clobberring ${NEXT_CLANG_STAGE} build and stamp directories"
     )
 
-  ExternalProject_Add(bootstrap
-    DEPENDS clang ${LTO_DEP}
-    PREFIX bootstrap
+  if(CMAKE_VERBOSE_MAKEFILE)
+    set(verbose -DCMAKE_VERBOSE_MAKEFILE=On)
+  endif()
+
+  set(BOOTSTRAP_DEFAULT_PASSTHROUGH
+    PACKAGE_VERSION
+    LLVM_VERSION_MAJOR
+    LLVM_VERSION_MINOR
+    LLVM_VERSION_PATCH
+    LLVM_VERSION_SUFFIX
+    CLANG_REPOSITORY_STRING
+    CMAKE_MAKE_PROGRAM)
+
+  if(TARGET compiler-rt)
+    set(RUNTIME_DEP compiler-rt)
+  endif()
+
+  # Find all variables that start with BOOTSTRAP_ and populate a variable with
+  # them.
+  get_cmake_property(variableNames VARIABLES)
+  foreach(variableName ${variableNames})
+    if(variableName MATCHES "^BOOTSTRAP_")
+      string(SUBSTRING ${variableName} 10 -1 varName)
+      string(REPLACE ";" "\;" value "${${variableName}}")
+      list(APPEND PASSTHROUGH_VARIABLES
+        -D${varName}=${value})
+    endif()
+  endforeach()
+
+  # Populate the passthrough variables
+  foreach(variableName ${CLANG_BOOTSTRAP_PASSTHROUGH} ${BOOTSTRAP_DEFAULT_PASSTHROUGH})
+    if(${variableName})
+      string(REPLACE ";" "\;" value ${${variableName}})
+      list(APPEND PASSTHROUGH_VARIABLES
+        -D${variableName}=${value})
+    endif()
+  endforeach()
+
+  ExternalProject_Add(${NEXT_CLANG_STAGE}
+    DEPENDS clang ${LTO_DEP} ${RUNTIME_DEP}
+    PREFIX ${NEXT_CLANG_STAGE}
     SOURCE_DIR ${CMAKE_SOURCE_DIR}
     STAMP_DIR ${STAMP_DIR}
     BINARY_DIR ${BINARY_DIR}
@@ -633,38 +714,46 @@ if (CLANG_ENABLE_BOOTSTRAP)
                 # seem to work, so instead I'm passing this through
                 -DCMAKE_INSTALL_PREFIX=${CMAKE_INSTALL_PREFIX}
                 ${CLANG_BOOTSTRAP_CMAKE_ARGS}
+                ${PASSTHROUGH_VARIABLES}
                 -DCMAKE_CXX_COMPILER=${LLVM_RUNTIME_OUTPUT_INTDIR}/clang++
                 -DCMAKE_C_COMPILER=${LLVM_RUNTIME_OUTPUT_INTDIR}/clang
                 -DCMAKE_ASM_COMPILER=${LLVM_RUNTIME_OUTPUT_INTDIR}/clang
-                ${LTO_LIBRARY} ${LTO_AR} ${LTO_RANLIB}
+                -DCLANG_STAGE=${NEXT_CLANG_STAGE}
+                ${LTO_LIBRARY} ${LTO_AR} ${LTO_RANLIB} ${verbose}
     INSTALL_COMMAND ""
     STEP_TARGETS configure build
     ${cmake_3_4_USES_TERMINAL_OPTIONS}
     )
 
   # exclude really-install from main target
-  set_target_properties(bootstrap PROPERTIES _EP_really-install_EXCLUDE_FROM_MAIN On)
-  ExternalProject_Add_Step(bootstrap really-install
+  set_target_properties(${NEXT_CLANG_STAGE} PROPERTIES _EP_really-install_EXCLUDE_FROM_MAIN On)
+  ExternalProject_Add_Step(${NEXT_CLANG_STAGE} really-install
     COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target install
-    COMMENT "Performing install step for 'bootstrap'"
+    COMMENT "Performing install step for '${NEXT_CLANG_STAGE}'"
     DEPENDEES build
     ${cmake_3_4_USES_TERMINAL}
   )
-  ExternalProject_Add_StepTargets(bootstrap really-install)
-  add_custom_target(bootstrap-install DEPENDS bootstrap-really-install)
+  ExternalProject_Add_StepTargets(${NEXT_CLANG_STAGE} really-install)
+  add_custom_target(${NEXT_CLANG_STAGE}-install DEPENDS ${NEXT_CLANG_STAGE}-really-install)
 
-
-  set(ADDITIONAL_TARGETS_TO_ADD check-llvm check-clang check-all)
-  foreach(target ${ADDITIONAL_TARGETS_TO_ADD})
+  if(NOT CLANG_BOOTSTRAP_TARGETS)
+    set(CLANG_BOOTSTRAP_TARGETS check-llvm check-clang check-all)
+  endif()
+  foreach(target ${CLANG_BOOTSTRAP_TARGETS})
     # exclude from main target
-    set_target_properties(bootstrap PROPERTIES _EP_${target}_EXCLUDE_FROM_MAIN On)
+    set_target_properties(${NEXT_CLANG_STAGE} PROPERTIES _EP_${target}_EXCLUDE_FROM_MAIN On)
 
-    ExternalProject_Add_Step(bootstrap ${target}
+    ExternalProject_Add_Step(${NEXT_CLANG_STAGE} ${target}
       COMMAND ${CMAKE_COMMAND} --build <BINARY_DIR> --target ${target}
-      COMMENT "Performing ${target} for 'bootstrap'"
+      COMMENT "Performing ${target} for '${NEXT_CLANG_STAGE}'"
       DEPENDEES configure
       ${cmake_3_4_USES_TERMINAL}
     )
-    ExternalProject_Add_StepTargets(bootstrap ${target})
+
+    if(target MATCHES "^stage[0-9]*")
+      add_custom_target(${target} DEPENDS ${NEXT_CLANG_STAGE}-${target})
+    endif()
+
+    ExternalProject_Add_StepTargets(${NEXT_CLANG_STAGE} ${target})
   endforeach()
 endif()

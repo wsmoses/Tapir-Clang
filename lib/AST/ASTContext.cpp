@@ -660,8 +660,7 @@ ASTContext::getCanonicalTemplateTemplateParmDecl(
                                        nullptr,
                          TemplateParameterList::Create(*this, SourceLocation(),
                                                        SourceLocation(),
-                                                       CanonParams.data(),
-                                                       CanonParams.size(),
+                                                       CanonParams,
                                                        SourceLocation()));
 
   // Get the new insert position for the node we care about.
@@ -3983,20 +3982,20 @@ QualType ASTContext::getUnaryTransformType(QualType BaseType,
 /// getAutoType - Return the uniqued reference to the 'auto' type which has been
 /// deduced to the given type, or to the canonical undeduced 'auto' type, or the
 /// canonical deduced-but-dependent 'auto' type.
-QualType ASTContext::getAutoType(QualType DeducedType, bool IsDecltypeAuto,
+QualType ASTContext::getAutoType(QualType DeducedType, AutoTypeKeyword Keyword,
                                  bool IsDependent) const {
-  if (DeducedType.isNull() && !IsDecltypeAuto && !IsDependent)
+  if (DeducedType.isNull() && Keyword == AutoTypeKeyword::Auto && !IsDependent)
     return getAutoDeductType();
 
   // Look in the folding set for an existing type.
   void *InsertPos = nullptr;
   llvm::FoldingSetNodeID ID;
-  AutoType::Profile(ID, DeducedType, IsDecltypeAuto, IsDependent);
+  AutoType::Profile(ID, DeducedType, Keyword, IsDependent);
   if (AutoType *AT = AutoTypes.FindNodeOrInsertPos(ID, InsertPos))
     return QualType(AT, 0);
 
   AutoType *AT = new (*this, TypeAlignment) AutoType(DeducedType,
-                                                     IsDecltypeAuto,
+                                                     Keyword,
                                                      IsDependent);
   Types.push_back(AT);
   if (InsertPos)
@@ -4036,7 +4035,7 @@ QualType ASTContext::getAtomicType(QualType T) const {
 QualType ASTContext::getAutoDeductType() const {
   if (AutoDeductTy.isNull())
     AutoDeductTy = QualType(
-      new (*this, TypeAlignment) AutoType(QualType(), /*decltype(auto)*/false,
+      new (*this, TypeAlignment) AutoType(QualType(), AutoTypeKeyword::Auto,
                                           /*dependent*/false),
       0);
   return AutoDeductTy;
@@ -8729,7 +8728,6 @@ createDynTypedNode(const NestedNameSpecifierLoc &Node) {
   ///
   /// FIXME: Currently only builds up the map using \c Stmt and \c Decl nodes.
   class ParentMapASTVisitor : public RecursiveASTVisitor<ParentMapASTVisitor> {
-
   public:
     /// \brief Builds and returns the translation unit's parent map.
     ///
@@ -8756,15 +8754,11 @@ createDynTypedNode(const NestedNameSpecifierLoc &Node) {
     bool shouldVisitImplicitCode() const {
       return true;
     }
-    // Disables data recursion. We intercept Traverse* methods in the RAV, which
-    // are not triggered during data recursion.
-    bool shouldUseDataRecursionFor(clang::Stmt *S) const {
-      return false;
-    }
 
-    template <typename T, typename MapNodeTy, typename MapTy>
+    template <typename T, typename MapNodeTy, typename BaseTraverseFn,
+              typename MapTy>
     bool TraverseNode(T Node, MapNodeTy MapNode,
-                      bool (VisitorBase::*traverse)(T), MapTy *Parents) {
+                      BaseTraverseFn BaseTraverse, MapTy *Parents) {
       if (!Node)
         return true;
       if (ParentStack.size() > 0) {
@@ -8812,31 +8806,37 @@ createDynTypedNode(const NestedNameSpecifierLoc &Node) {
         }
       }
       ParentStack.push_back(createDynTypedNode(Node));
-      bool Result = (this ->* traverse) (Node);
+      bool Result = BaseTraverse();
       ParentStack.pop_back();
       return Result;
     }
 
     bool TraverseDecl(Decl *DeclNode) {
-      return TraverseNode(DeclNode, DeclNode, &VisitorBase::TraverseDecl,
+      return TraverseNode(DeclNode, DeclNode,
+                          [&] { return VisitorBase::TraverseDecl(DeclNode); },
                           Parents);
     }
 
     bool TraverseStmt(Stmt *StmtNode) {
-      return TraverseNode(StmtNode, StmtNode, &VisitorBase::TraverseStmt,
+      return TraverseNode(StmtNode, StmtNode,
+                          [&] { return VisitorBase::TraverseStmt(StmtNode); },
                           Parents);
     }
 
     bool TraverseTypeLoc(TypeLoc TypeLocNode) {
-      return TraverseNode(TypeLocNode,
-                          ast_type_traits::DynTypedNode::create(TypeLocNode),
-                          &VisitorBase::TraverseTypeLoc, OtherParents);
+      return TraverseNode(
+          TypeLocNode, ast_type_traits::DynTypedNode::create(TypeLocNode),
+          [&] { return VisitorBase::TraverseTypeLoc(TypeLocNode); },
+          OtherParents);
     }
 
     bool TraverseNestedNameSpecifierLoc(NestedNameSpecifierLoc NNSLocNode) {
       return TraverseNode(
           NNSLocNode, ast_type_traits::DynTypedNode::create(NNSLocNode),
-          &VisitorBase::TraverseNestedNameSpecifierLoc, OtherParents);
+          [&] {
+            return VisitorBase::TraverseNestedNameSpecifierLoc(NNSLocNode);
+          },
+          OtherParents);
     }
 
     ASTContext::ParentMapPointers *Parents;

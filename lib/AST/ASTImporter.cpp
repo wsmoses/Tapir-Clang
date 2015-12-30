@@ -1749,7 +1749,7 @@ QualType ASTNodeImporter::VisitAutoType(const AutoType *T) {
       return QualType();
   }
   
-  return Importer.getToContext().getAutoType(ToDeduced, T->isDecltypeAuto(), 
+  return Importer.getToContext().getAutoType(ToDeduced, T->getKeyword(),
                                              /*IsDependent*/false);
 }
 
@@ -2147,7 +2147,7 @@ TemplateParameterList *ASTNodeImporter::ImportTemplateParameterList(
   return TemplateParameterList::Create(Importer.getToContext(),
                                        Importer.Import(Params->getTemplateLoc()),
                                        Importer.Import(Params->getLAngleLoc()),
-                                       ToParams.data(), ToParams.size(),
+                                       ToParams,
                                        Importer.Import(Params->getRAngleLoc()));
 }
 

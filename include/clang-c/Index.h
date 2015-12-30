@@ -32,7 +32,7 @@
  * compatible, thus CINDEX_VERSION_MAJOR is expected to remain stable.
  */
 #define CINDEX_VERSION_MAJOR 0
-#define CINDEX_VERSION_MINOR 31
+#define CINDEX_VERSION_MINOR 32
 
 #define CINDEX_VERSION_ENCODE(major, minor) ( \
       ((major) * 10000)                       \
@@ -284,7 +284,6 @@ CINDEX_LINKAGE unsigned clang_CXIndex_getGlobalOptions(CXIndex);
  * \brief A particular source file that is part of a translation unit.
  */
 typedef void *CXFile;
-
 
 /**
  * \brief Retrieve the complete file and path name of the given file.
@@ -704,7 +703,6 @@ CINDEX_LINKAGE unsigned clang_getNumDiagnosticsInSet(CXDiagnosticSet Diags);
  */
 CINDEX_LINKAGE CXDiagnostic clang_getDiagnosticInSet(CXDiagnosticSet Diags,
                                                      unsigned Index);  
-
 
 /**
  * \brief Describes the kind of error that occurred (if any) in a call to
@@ -1202,7 +1200,15 @@ enum CXTranslationUnit_Flags {
    * included into the set of code completions returned from this translation
    * unit.
    */
-  CXTranslationUnit_IncludeBriefCommentsInCodeCompletion = 0x80
+  CXTranslationUnit_IncludeBriefCommentsInCodeCompletion = 0x80,
+
+  /**
+   * \brief Used to indicate that the precompiled preamble should be created on
+   * the first parse. Otherwise it will be created on the first reparse. This
+   * trades runtime on the first parse (serializing the preamble takes time) for
+   * reduced runtime on the second parse (can now reuse the preamble).
+   */
+  CXTranslationUnit_CreatePreambleOnFirstParse = 0x100
 };
 
 /**
@@ -1287,6 +1293,17 @@ clang_parseTranslationUnit2(CXIndex CIdx,
                             unsigned num_unsaved_files,
                             unsigned options,
                             CXTranslationUnit *out_TU);
+
+/**
+ * \brief Same as clang_parseTranslationUnit2 but requires a full command line
+ * for \c command_line_args including argv[0]. This is useful if the standard
+ * library paths are relative to the binary.
+ */
+CINDEX_LINKAGE enum CXErrorCode clang_parseTranslationUnit2FullArgv(
+    CXIndex CIdx, const char *source_filename,
+    const char *const *command_line_args, int num_command_line_args,
+    struct CXUnsavedFile *unsaved_files, unsigned num_unsaved_files,
+    unsigned options, CXTranslationUnit *out_TU);
 
 /**
  * \brief Flags that control how translation units are saved.
@@ -2245,19 +2262,31 @@ enum CXCursorKind {
    */
   CXCursor_OMPTargetDataDirective        = 257,
 
+  /** \brief OpenMP taskloop directive.
+   */
+  CXCursor_OMPTaskLoopDirective          = 258,
+
+  /** \brief OpenMP taskloop simd directive.
+   */
+  CXCursor_OMPTaskLoopSimdDirective      = 259,
+
+   /** \brief OpenMP distribute directive.
+   */
+  CXCursor_OMPDistributeDirective        = 260,
+
   /** \brief A _Cilk_spawn statement.
    */
-  CXCursor_CilkSpawnStmt                 = 258,
+  CXCursor_CilkSpawnStmt                 = 261,
 
   /** \brief A _Cilk_sync statement.
    */
-  CXCursor_CilkSyncStmt                  = 259,
+  CXCursor_CilkSyncStmt                  = 262,
 
   /** \brief A _Cilk_for statement.
    */
-  CXCursor_CilkForStmt                   = 260,
+  CXCursor_CilkForStmt                   = 263,
 
-  /* CXCursor_LastStmt                      = CXCursor_OMPTargetDataDirective, */
+  /* CXCursor_LastStmt                      = CXCursor_OMPDistributeDirective, */
   CXCursor_LastStmt                      = CXCursor_CilkForStmt,
 
   /**
@@ -2293,7 +2322,9 @@ enum CXCursorKind {
   CXCursor_CUDAHostAttr                  = 415,
   CXCursor_CUDASharedAttr                = 416,
   CXCursor_VisibilityAttr                = 417,
-  CXCursor_LastAttr                      = CXCursor_VisibilityAttr,
+  CXCursor_DLLExport                     = 418,
+  CXCursor_DLLImport                     = 419,
+  CXCursor_LastAttr                      = CXCursor_DLLImport,
 
   /* Preprocessing */
   CXCursor_PreprocessingDirective        = 500,
@@ -2309,8 +2340,9 @@ enum CXCursorKind {
    * \brief A module import declaration.
    */
   CXCursor_ModuleImportDecl              = 600,
+  CXCursor_TypeAliasTemplateDecl         = 601,
   CXCursor_FirstExtraDecl                = CXCursor_ModuleImportDecl,
-  CXCursor_LastExtraDecl                 = CXCursor_ModuleImportDecl,
+  CXCursor_LastExtraDecl                 = CXCursor_TypeAliasTemplateDecl,
 
   /**
    * \brief A code completion overload candidate.
@@ -2461,6 +2493,32 @@ enum CXLinkageKind {
  */
 CINDEX_LINKAGE enum CXLinkageKind clang_getCursorLinkage(CXCursor cursor);
 
+enum CXVisibilityKind {
+  /** \brief This value indicates that no visibility information is available
+   * for a provided CXCursor. */
+  CXVisibility_Invalid,
+
+  /** \brief Symbol not seen by the linker. */
+  CXVisibility_Hidden,
+  /** \brief Symbol seen by the linker but resolves to a symbol inside this object. */
+  CXVisibility_Protected,
+  /** \brief Symbol seen by the linker and acts like a normal symbol. */
+  CXVisibility_Default
+};
+
+/**
+ * \brief Describe the visibility of the entity referred to by a cursor.
+ *
+ * This returns the default visibility if not explicitly specified by
+ * a visibility attribute. The default visibility may be changed by
+ * commandline arguments.
+ *
+ * \param cursor The cursor to query.
+ *
+ * \returns The visibility of the cursor.
+ */
+CINDEX_LINKAGE enum CXVisibilityKind clang_getCursorVisibility(CXCursor cursor);
+
 /**
  * \brief Determine the availability of the entity that this cursor refers to,
  * taking the current target platform into account.
@@ -2579,7 +2637,6 @@ CINDEX_LINKAGE enum CXLanguageKind clang_getCursorLanguage(CXCursor cursor);
  * \brief Returns the translation unit that a cursor originated from.
  */
 CINDEX_LINKAGE CXTranslationUnit clang_Cursor_getTranslationUnit(CXCursor);
-
 
 /**
  * \brief A fast container representing a set of CXCursors.
@@ -2873,7 +2930,8 @@ enum CXTypeKind {
   CXType_IncompleteArray = 114,
   CXType_VariableArray = 115,
   CXType_DependentSizedArray = 116,
-  CXType_MemberPointer = 117
+  CXType_MemberPointer = 117,
+  CXType_Auto = 118
 };
 
 /**
@@ -2897,7 +2955,6 @@ enum CXCallingConv {
   CXCallingConv_Invalid = 100,
   CXCallingConv_Unexposed = 200
 };
-
 
 /**
  * \brief The type of an element in the abstract syntax tree.
@@ -3336,7 +3393,6 @@ CINDEX_LINKAGE long long clang_Cursor_getOffsetOfField(CXCursor C);
  */
 CINDEX_LINKAGE unsigned clang_Cursor_isAnonymous(CXCursor C);
 
-
 enum CXRefQualifierKind {
   /** \brief No ref-qualifier was provided. */
   CXRefQualifier_None = 0,
@@ -3464,7 +3520,6 @@ CINDEX_LINKAGE CXCursor clang_getOverloadedDecl(CXCursor cursor,
  *
  * @{
  */
-
 
 /**
  * \brief For cursors representing an iboutletcollection attribute,
@@ -3619,7 +3674,6 @@ CINDEX_LINKAGE CXString
 CINDEX_LINKAGE CXString
   clang_constructUSR_ObjCProtocol(const char *protocol_name);
 
-
 /**
  * \brief Construct a USR for a specified Objective-C instance variable and
  *   the USR for its containing class.
@@ -3744,7 +3798,6 @@ CINDEX_LINKAGE unsigned clang_isCursorDefinition(CXCursor);
  * \returns The canonical cursor for the entity referred to by the given cursor.
  */
 CINDEX_LINKAGE CXCursor clang_getCanonicalCursor(CXCursor);
-
 
 /**
  * \brief If the cursor points to a selector identifier in an Objective-C
@@ -3874,6 +3927,12 @@ CINDEX_LINKAGE CXString clang_Cursor_getBriefCommentText(CXCursor C);
  * \brief Retrieve the CXString representing the mangled name of the cursor.
  */
 CINDEX_LINKAGE CXString clang_Cursor_getMangling(CXCursor);
+
+/**
+ * \brief Retrieve the CXStrings representing the mangled symbols of the C++
+ * constructor or destructor at the cursor.
+ */
+CINDEX_LINKAGE CXStringSet *clang_Cursor_getCXXManglings(CXCursor);
 
 /**
  * @}
@@ -4966,8 +5025,7 @@ enum CXCursorKind clang_codeCompleteGetContainerKind(
  */
 CINDEX_LINKAGE
 CXString clang_codeCompleteGetContainerUSR(CXCodeCompleteResults *Results);
-  
-  
+
 /**
  * \brief Returns the currently-entered selector for an Objective-C message
  * send, formatted like "initWithFoo:bar:". Only guaranteed to return a
@@ -4986,7 +5044,6 @@ CXString clang_codeCompleteGetObjCSelector(CXCodeCompleteResults *Results);
  * @}
  */
 
-
 /**
  * \defgroup CINDEX_MISC Miscellaneous utility functions
  *
@@ -4999,7 +5056,6 @@ CXString clang_codeCompleteGetObjCSelector(CXCodeCompleteResults *Results);
  */
 CINDEX_LINKAGE CXString clang_getClangVersion(void);
 
-  
 /**
  * \brief Enable/disable crash recovery.
  *
@@ -5686,6 +5742,18 @@ CINDEX_LINKAGE int clang_indexSourceFile(CXIndexAction,
                                          unsigned TU_options);
 
 /**
+ * \brief Same as clang_indexSourceFile but requires a full command line
+ * for \c command_line_args including argv[0]. This is useful if the standard
+ * library paths are relative to the binary.
+ */
+CINDEX_LINKAGE int clang_indexSourceFileFullArgv(
+    CXIndexAction, CXClientData client_data, IndexerCallbacks *index_callbacks,
+    unsigned index_callbacks_size, unsigned index_options,
+    const char *source_filename, const char *const *command_line_args,
+    int num_command_line_args, struct CXUnsavedFile *unsaved_files,
+    unsigned num_unsaved_files, CXTranslationUnit *out_TU, unsigned TU_options);
+
+/**
  * \brief Index the given translation unit via callbacks implemented through
  * #IndexerCallbacks.
  * 
@@ -5766,7 +5834,6 @@ CINDEX_LINKAGE unsigned clang_Type_visitFields(CXType T,
                                                CXFieldVisitor visitor,
                                                CXClientData client_data);
 
-
 /**
  * @}
  */
@@ -5779,4 +5846,3 @@ CINDEX_LINKAGE unsigned clang_Type_visitFields(CXType T,
 }
 #endif
 #endif
-

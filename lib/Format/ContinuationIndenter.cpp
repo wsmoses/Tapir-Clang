@@ -125,10 +125,10 @@ bool ContinuationIndenter::canBreak(const LineState &State) {
 
   // Don't break after very short return types (e.g. "void") as that is often
   // unexpected.
-  if (Current.is(TT_FunctionDeclarationName) &&
-      Style.AlwaysBreakAfterDefinitionReturnType == FormatStyle::DRTBS_None &&
-      State.Column < 6)
-    return false;
+  if (Current.is(TT_FunctionDeclarationName) && State.Column < 6) {
+    if (Style.AlwaysBreakAfterReturnType == FormatStyle::RTBS_None)
+      return false;
+  }
 
   return !State.Stack.back().NoLineBreak;
 }
@@ -144,6 +144,7 @@ bool ContinuationIndenter::mustBreak(const LineState &State) {
   if (Previous.is(tok::semi) && State.LineContainsContinuedForLoopSection)
     return true;
   if ((startsNextParameter(Current, Style) || Previous.is(tok::semi) ||
+       (Previous.is(TT_TemplateCloser) && Current.is(TT_StartOfName)) ||
        (Style.BreakBeforeTernaryOperators && Current.is(TT_ConditionalExpr) &&
         Previous.isNot(tok::question)) ||
        (!Style.BreakBeforeTernaryOperators &&
@@ -1075,7 +1076,8 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
       return 0;
     }
   } else if (Current.is(TT_BlockComment) && Current.isTrailingComment()) {
-    if (CommentPragmasRegex.match(Current.TokenText.substr(2)))
+    if (!Style.ReflowComments ||
+        CommentPragmasRegex.match(Current.TokenText.substr(2)))
       return 0;
     Token.reset(new BreakableBlockComment(
         Current, State.Line->Level, StartColumn, Current.OriginalColumn,
@@ -1083,7 +1085,8 @@ unsigned ContinuationIndenter::breakProtrudingToken(const FormatToken &Current,
   } else if (Current.is(TT_LineComment) &&
              (Current.Previous == nullptr ||
               Current.Previous->isNot(TT_ImplicitStringLiteral))) {
-    if (CommentPragmasRegex.match(Current.TokenText.substr(2)))
+    if (!Style.ReflowComments ||
+        CommentPragmasRegex.match(Current.TokenText.substr(2)))
       return 0;
     Token.reset(new BreakableLineComment(Current, State.Line->Level,
                                          StartColumn, /*InPPDirective=*/false,

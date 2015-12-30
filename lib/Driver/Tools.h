@@ -57,7 +57,8 @@ private:
                                const Driver &D, const llvm::opt::ArgList &Args,
                                llvm::opt::ArgStringList &CmdArgs,
                                const InputInfo &Output,
-                               const InputInfoList &Inputs) const;
+                               const InputInfoList &Inputs,
+                               const ToolChain *AuxToolChain) const;
 
   void AddAArch64TargetArgs(const llvm::opt::ArgList &Args,
                             llvm::opt::ArgStringList &CmdArgs) const;
@@ -244,6 +245,21 @@ public:
 
 } // end namespace amdgpu
 
+namespace wasm {
+
+class LLVM_LIBRARY_VISIBILITY Linker : public GnuTool {
+public:
+  explicit Linker(const ToolChain &TC);
+  bool isLinkJob() const override;
+  bool hasIntegratedCPP() const override;
+  void ConstructJob(Compilation &C, const JobAction &JA,
+                    const InputInfo &Output, const InputInfoList &Inputs,
+                    const llvm::opt::ArgList &TCArgs,
+                    const char *LinkingOutput) const override;
+};
+
+} // end namespace wasm
+
 namespace arm {
 std::string getARMTargetCPU(StringRef CPU, StringRef Arch,
                             const llvm::Triple &Triple);
@@ -270,6 +286,8 @@ NanEncoding getSupportedNanEncoding(StringRef &CPU);
 void getMipsCPUAndABI(const llvm::opt::ArgList &Args,
                       const llvm::Triple &Triple, StringRef &CPUName,
                       StringRef &ABIName);
+std::string getMipsABILibSuffix(const llvm::opt::ArgList &Args,
+                                const llvm::Triple &Triple);
 bool hasMipsAbiArg(const llvm::opt::ArgList &Args, const char *Value);
 bool isUCLibc(const llvm::opt::ArgList &Args);
 bool isNaN2008(const llvm::opt::ArgList &Args, const llvm::Triple &Triple);
@@ -553,9 +571,9 @@ public:
                     const char *LinkingOutput) const override;
 };
 
-class LLVM_LIBRARY_VISIBILITY Linker : public Tool {
+class LLVM_LIBRARY_VISIBILITY Linker : public GnuTool {
 public:
-  Linker(const ToolChain &TC) : Tool("NaCl::Linker", "linker", TC) {}
+  Linker(const ToolChain &TC) : GnuTool("NaCl::Linker", "linker", TC) {}
 
   bool hasIntegratedCPP() const override { return false; }
   bool isLinkJob() const override { return true; }
@@ -738,6 +756,16 @@ enum class FloatABI {
 
 FloatABI getARMFloatABI(const ToolChain &TC, const llvm::opt::ArgList &Args);
 } // end namespace arm
+
+namespace ppc {
+enum class FloatABI {
+  Invalid,
+  Soft,
+  Hard,
+};
+
+FloatABI getPPCFloatABI(const Driver &D, const llvm::opt::ArgList &Args);
+} // end namespace ppc
 
 namespace XCore {
 // For XCore, we do not need to instantiate tools for PreProcess, PreCompile and

@@ -216,6 +216,7 @@ void InitHeaderSearch::AddDefaultCIncludePaths(const llvm::Triple &triple,
     case llvm::Triple::Bitrig:
     case llvm::Triple::NaCl:
     case llvm::Triple::PS4:
+    case llvm::Triple::ELFIAMCU:
       break;
     case llvm::Triple::Win32:
       if (triple.getEnvironment() != llvm::Triple::Cygnus)
@@ -318,6 +319,7 @@ void InitHeaderSearch::AddDefaultCIncludePaths(const llvm::Triple &triple,
   case llvm::Triple::CloudABI:
   case llvm::Triple::RTEMS:
   case llvm::Triple::NaCl:
+  case llvm::Triple::ELFIAMCU:
     break;
   case llvm::Triple::PS4: {
     // <isysroot> gets prepended later in AddPath().
@@ -408,10 +410,7 @@ AddDefaultCPlusPlusIncludePaths(const llvm::Triple &triple, const HeaderSearchOp
     }
     break;
   case llvm::Triple::DragonFly:
-    if (llvm::sys::fs::exists("/usr/lib/gcc47"))
-      AddPath("/usr/include/c++/4.7", CXXSystem, false);
-    else
-      AddPath("/usr/include/c++/4.4", CXXSystem, false);
+    AddPath("/usr/include/c++/5.0", CXXSystem, false);
     break;
   case llvm::Triple::OpenBSD: {
     std::string t = triple.getTriple();

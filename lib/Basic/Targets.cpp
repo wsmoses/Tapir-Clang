@@ -1826,8 +1826,15 @@ public:
   }
 
   bool validateAsmConstraint(const char *&Name,
-                             TargetInfo::ConstraintInfo &info) const override {
-    return true;
+                             TargetInfo::ConstraintInfo &Info) const override {
+    switch (*Name) {
+    default: break;
+    case 'v': // vgpr
+    case 's': // sgpr
+      Info.setAllowsRegister();
+      return true;
+    }
+    return false;
   }
 
   ArrayRef<Builtin::Info> getTargetBuiltins() const override {
@@ -2357,6 +2364,20 @@ public:
   bool validateCpuSupports(StringRef Name) const override;
   bool validateAsmConstraint(const char *&Name,
                              TargetInfo::ConstraintInfo &info) const override;
+
+  bool validateGlobalRegisterVariable(StringRef RegName,
+                                      unsigned RegSize,
+                                      bool &HasSizeMismatch) const override {
+    // esp and ebp are the only 32-bit registers the x86 backend can currently
+    // handle.
+    if (RegName.equals("esp") || RegName.equals("ebp")) {
+      // Check that the register size is 32-bit.
+      HasSizeMismatch = RegSize != 32;
+      return true;
+    }
+
+    return false;
+  }
 
   bool validateOutputSize(StringRef Constraint, unsigned Size) const override;
 
@@ -3370,11 +3391,6 @@ void X86TargetInfo::getTargetDefines(const LangOptions &Opts,
   }
   if (CPU >= CK_i586)
     Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_8");
-
-  if (getTriple().isOSIAMCU()) {
-    Builder.defineMacro("__iamcu");
-    Builder.defineMacro("__iamcu__");
-  }
 }
 
 bool X86TargetInfo::hasFeature(StringRef Feature) const {
@@ -3623,11 +3639,6 @@ public:
     IntPtrType = SignedInt;
     RegParmMax = 3;
 
-    if (getTriple().isOSIAMCU()) {
-      LongDoubleWidth = 64;
-      LongDoubleFormat = &llvm::APFloat::IEEEdouble;
-    }
-
     // Use fpret for all types.
     RealTypeUsesObjCFPRet = ((1 << TargetInfo::Float) |
                              (1 << TargetInfo::Double) |
@@ -3823,7 +3834,6 @@ class CygwinX86_32TargetInfo : public X86_32TargetInfo {
 public:
   CygwinX86_32TargetInfo(const llvm::Triple &Triple)
       : X86_32TargetInfo(Triple) {
-    TLSSupported = false;
     WCharType = UnsignedShort;
     DoubleAlign = LongLongAlign = 64;
     DataLayoutString = "e-m:x-p:32:32-i64:64-f80:32-n8:16:32-a:0:32-S32";
@@ -3857,6 +3867,27 @@ public:
     X86_32TargetInfo::getTargetDefines(Opts, Builder);
     Builder.defineMacro("__INTEL__");
     Builder.defineMacro("__HAIKU__");
+  }
+};
+
+// X86-32 MCU target
+class MCUX86_32TargetInfo : public X86_32TargetInfo {
+public:
+  MCUX86_32TargetInfo(const llvm::Triple &Triple) : X86_32TargetInfo(Triple) {
+    LongDoubleWidth = 64;
+    LongDoubleFormat = &llvm::APFloat::IEEEdouble;
+  }
+
+  CallingConvCheckResult checkCallingConvention(CallingConv CC) const override {
+    // On MCU we support only C calling convention.
+    return CC == CC_C ? CCCR_OK : CCCR_Warning;
+  }
+
+  void getTargetDefines(const LangOptions &Opts,
+                        MacroBuilder &Builder) const override {
+    X86_32TargetInfo::getTargetDefines(Opts, Builder);
+    Builder.defineMacro("__iamcu");
+    Builder.defineMacro("__iamcu__");
   }
 };
 
@@ -3974,6 +4005,22 @@ public:
 
   // for x32 we need it here explicitly
   bool hasInt128Type() const override { return true; }
+
+  bool validateGlobalRegisterVariable(StringRef RegName,
+                                      unsigned RegSize,
+                                      bool &HasSizeMismatch) const override {
+    // rsp and rbp are the only 64-bit registers the x86 backend can currently
+    // handle.
+    if (RegName.equals("rsp") || RegName.equals("rbp")) {
+      // Check that the register size is 64-bit.
+      HasSizeMismatch = RegSize != 64;
+      return true;
+    }
+
+    // Check if the register is a 32-bit register the backend can handle.
+    return X86TargetInfo::validateGlobalRegisterVariable(RegName, RegSize,
+                                                         HasSizeMismatch);
+  }
 };
 
 // x86-64 Windows target
@@ -4366,15 +4413,10 @@ class ARMTargetInfo : public TargetInfo {
     default:
       return llvm::ARM::getCPUAttr(ArchKind);
     case llvm::ARM::AK_ARMV6M:
-    case llvm::ARM::AK_ARMV6SM:
-    case llvm::ARM::AK_ARMV6HL:
       return "6M";
     case llvm::ARM::AK_ARMV7S:
       return "7S";
-    case llvm::ARM::AK_ARMV7:
     case llvm::ARM::AK_ARMV7A:
-    case llvm::ARM::AK_ARMV7L:
-    case llvm::ARM::AK_ARMV7HL:
       return "7A";
     case llvm::ARM::AK_ARMV7R:
       return "7R";
@@ -4506,13 +4548,14 @@ public:
                  const std::vector<std::string> &FeaturesVec) const override {
 
     std::vector<const char*> TargetFeatures;
+    unsigned Arch = llvm::ARM::parseArch(getTriple().getArchName());
 
     // get default FPU features
-    unsigned FPUKind = llvm::ARM::getDefaultFPU(CPU);
+    unsigned FPUKind = llvm::ARM::getDefaultFPU(CPU, Arch);
     llvm::ARM::getFPUFeatures(FPUKind, TargetFeatures);
 
     // get default Extension features
-    unsigned Extensions = llvm::ARM::getDefaultExtensions(CPU);
+    unsigned Extensions = llvm::ARM::getDefaultExtensions(CPU, Arch);
     llvm::ARM::getExtensionFeatures(Extensions, TargetFeatures);
 
     for (const char *Feature : TargetFeatures)
@@ -4657,7 +4700,7 @@ public:
 
     // ACLE 6.4.1 ARM/Thumb instruction set architecture
     // __ARM_ARCH is defined as an integer value indicating the current ARM ISA
-    Builder.defineMacro("__ARM_ARCH", llvm::utostr(ArchVersion));
+    Builder.defineMacro("__ARM_ARCH", Twine(ArchVersion));
 
     if (ArchVersion >= 8) {
       // ACLE 6.5.7 Crypto Extension
@@ -4825,6 +4868,9 @@ public:
 
     if (Opts.UnsafeFPMath)
       Builder.defineMacro("__ARM_FP_FAST", "1");
+
+    if (ArchKind == llvm::ARM::AK_ARMV8_1A)
+      Builder.defineMacro("__ARM_FEATURE_QRDMX", "1");
   }
 
   ArrayRef<Builtin::Info> getTargetBuiltins() const override {
@@ -5206,6 +5252,7 @@ class AArch64TargetInfo : public TargetInfo {
   unsigned CRC;
   unsigned Crypto;
   unsigned Unaligned;
+  unsigned V8_1A;
 
   static const Builtin::Info BuiltinInfo[];
 
@@ -5263,7 +5310,7 @@ public:
   bool setCPU(const std::string &Name) override {
     bool CPUKnown = llvm::StringSwitch<bool>(Name)
                         .Case("generic", true)
-                        .Cases("cortex-a53", "cortex-a57", "cortex-a72", true)
+                        .Cases("cortex-a53", "cortex-a57", "cortex-a72", "cortex-a35", true)
                         .Case("cyclone", true)
                         .Default(false);
     return CPUKnown;
@@ -5328,6 +5375,9 @@ public:
     if (Unaligned)
       Builder.defineMacro("__ARM_FEATURE_UNALIGNED", "1");
 
+    if (V8_1A)
+      Builder.defineMacro("__ARM_FEATURE_QRDMX", "1");
+
     // All of the __sync_(bool|val)_compare_and_swap_(1|2|4|8) builtins work.
     Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_1");
     Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_2");
@@ -5353,6 +5403,7 @@ public:
     CRC = 0;
     Crypto = 0;
     Unaligned = 1;
+    V8_1A = 0;
 
     for (const auto &Feature : Features) {
       if (Feature == "+neon")
@@ -5363,6 +5414,8 @@ public:
         Crypto = 1;
       if (Feature == "+strict-align")
         Unaligned = 0;
+      if (Feature == "+v8.1a")
+        V8_1A = 1;
     }
 
     setDataLayoutString();
@@ -5591,14 +5644,27 @@ class HexagonTargetInfo : public TargetInfo {
   static const char * const GCCRegNames[];
   static const TargetInfo::GCCRegAlias GCCRegAliases[];
   std::string CPU;
+  bool HasHVX, HasHVXDouble;
+
 public:
   HexagonTargetInfo(const llvm::Triple &Triple) : TargetInfo(Triple) {
     BigEndian = false;
-    DataLayoutString = "e-m:e-p:32:32-i1:32-i64:64-a:0-n32";
+    DataLayoutString = "e-m:e-p:32:32:32-"
+                       "i64:64:64-i32:32:32-i16:16:16-i1:8:8-"
+                       "f64:64:64-f32:32:32-v64:64:64-v32:32:32-a:0-n16:32";
+    SizeType    = UnsignedInt;
+    PtrDiffType = SignedInt;
+    IntPtrType  = SignedInt;
 
     // {} in inline assembly are packet specifiers, not assembly variant
     // specifiers.
     NoAsmVariants = true;
+
+    LargeArrayMinWidth = 64;
+    LargeArrayAlign = 64;
+    UseBitFieldTypeAlignment = true;
+    ZeroLengthBitfieldBoundary = 32;
+    HasHVX = HasHVXDouble = false;
   }
 
   ArrayRef<Builtin::Info> getTargetBuiltins() const override {
@@ -5614,9 +5680,22 @@ public:
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override;
 
+  bool isCLZForZeroUndef() const override { return false; }
+
   bool hasFeature(StringRef Feature) const override {
-    return Feature == "hexagon";
+    return llvm::StringSwitch<bool>(Feature)
+      .Case("hexagon", true)
+      .Case("hvx", HasHVX)
+      .Case("hvx-double", HasHVXDouble)
+      .Default(false);
   }
+
+  bool initFeatureMap(llvm::StringMap<bool> &Features, DiagnosticsEngine &Diags,
+        StringRef CPU, const std::vector<std::string> &FeaturesVec)
+        const override;
+
+  bool handleTargetFeatures(std::vector<std::string> &Features,
+                            DiagnosticsEngine &Diags) override;
 
   BuiltinVaListKind getBuiltinVaListKind() const override {
     return TargetInfo::CharPtrBuiltinVaList;
@@ -5631,71 +5710,77 @@ public:
     return llvm::StringSwitch<const char*>(Name)
       .Case("hexagonv4", "4")
       .Case("hexagonv5", "5")
+      .Case("hexagonv55", "55")
+      .Case("hexagonv60", "60")
       .Default(nullptr);
   }
 
   bool setCPU(const std::string &Name) override {
     if (!getHexagonCPUSuffix(Name))
       return false;
-
     CPU = Name;
     return true;
+  }
+
+  int getEHDataRegisterNumber(unsigned RegNo) const override {
+    return RegNo < 2 ? RegNo : -1;
   }
 };
 
 void HexagonTargetInfo::getTargetDefines(const LangOptions &Opts,
-                                MacroBuilder &Builder) const {
-  Builder.defineMacro("qdsp6");
-  Builder.defineMacro("__qdsp6", "1");
+                                         MacroBuilder &Builder) const {
   Builder.defineMacro("__qdsp6__", "1");
-
-  Builder.defineMacro("hexagon");
-  Builder.defineMacro("__hexagon", "1");
   Builder.defineMacro("__hexagon__", "1");
 
-  if(CPU == "hexagonv1") {
-    Builder.defineMacro("__HEXAGON_V1__");
-    Builder.defineMacro("__HEXAGON_ARCH__", "1");
-    if(Opts.HexagonQdsp6Compat) {
-      Builder.defineMacro("__QDSP6_V1__");
-      Builder.defineMacro("__QDSP6_ARCH__", "1");
-    }
-  }
-  else if(CPU == "hexagonv2") {
-    Builder.defineMacro("__HEXAGON_V2__");
-    Builder.defineMacro("__HEXAGON_ARCH__", "2");
-    if(Opts.HexagonQdsp6Compat) {
-      Builder.defineMacro("__QDSP6_V2__");
-      Builder.defineMacro("__QDSP6_ARCH__", "2");
-    }
-  }
-  else if(CPU == "hexagonv3") {
-    Builder.defineMacro("__HEXAGON_V3__");
-    Builder.defineMacro("__HEXAGON_ARCH__", "3");
-    if(Opts.HexagonQdsp6Compat) {
-      Builder.defineMacro("__QDSP6_V3__");
-      Builder.defineMacro("__QDSP6_ARCH__", "3");
-    }
-  }
-  else if(CPU == "hexagonv4") {
+  if (CPU == "hexagonv4") {
     Builder.defineMacro("__HEXAGON_V4__");
     Builder.defineMacro("__HEXAGON_ARCH__", "4");
-    if(Opts.HexagonQdsp6Compat) {
+    if (Opts.HexagonQdsp6Compat) {
       Builder.defineMacro("__QDSP6_V4__");
       Builder.defineMacro("__QDSP6_ARCH__", "4");
     }
-  }
-  else if(CPU == "hexagonv5") {
+  } else if (CPU == "hexagonv5") {
     Builder.defineMacro("__HEXAGON_V5__");
     Builder.defineMacro("__HEXAGON_ARCH__", "5");
     if(Opts.HexagonQdsp6Compat) {
       Builder.defineMacro("__QDSP6_V5__");
       Builder.defineMacro("__QDSP6_ARCH__", "5");
     }
+  } else if (CPU == "hexagonv60") {
+    Builder.defineMacro("__HEXAGON_V60__");
+    Builder.defineMacro("__HEXAGON_ARCH__", "60");
+    Builder.defineMacro("__QDSP6_V60__");
+    Builder.defineMacro("__QDSP6_ARCH__", "60");
   }
 }
 
-const char * const HexagonTargetInfo::GCCRegNames[] = {
+bool HexagonTargetInfo::handleTargetFeatures(std::vector<std::string> &Features,
+                                             DiagnosticsEngine &Diags) {
+  for (auto &F : Features) {
+    if (F == "+hvx")
+      HasHVX = true;
+    else if (F == "-hvx")
+      HasHVX = HasHVXDouble = false;
+    else if (F == "+hvx-double")
+      HasHVX = HasHVXDouble = true;
+    else if (F == "-hvx-double")
+      HasHVXDouble = false;
+  }
+  return true;
+}
+
+bool HexagonTargetInfo::initFeatureMap(llvm::StringMap<bool> &Features,
+      DiagnosticsEngine &Diags, StringRef CPU,
+      const std::vector<std::string> &FeaturesVec) const {
+  // Default for v60: -hvx, -hvx-double.
+  Features["hvx"] = false;
+  Features["hvx-double"] = false;
+
+  return TargetInfo::initFeatureMap(Features, Diags, CPU, FeaturesVec);
+}
+
+
+const char *const HexagonTargetInfo::GCCRegNames[] = {
   "r0", "r1", "r2", "r3", "r4", "r5", "r6", "r7",
   "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
   "r16", "r17", "r18", "r19", "r20", "r21", "r22", "r23",
@@ -5704,16 +5789,15 @@ const char * const HexagonTargetInfo::GCCRegNames[] = {
   "sa0", "lc0", "sa1", "lc1", "m0", "m1", "usr", "ugp"
 };
 
-ArrayRef<const char *> HexagonTargetInfo::getGCCRegNames() const {
+ArrayRef<const char*> HexagonTargetInfo::getGCCRegNames() const {
   return llvm::makeArrayRef(GCCRegNames);
 }
-
 
 const TargetInfo::GCCRegAlias HexagonTargetInfo::GCCRegAliases[] = {
   { { "sp" }, "r29" },
   { { "fp" }, "r30" },
   { { "lr" }, "r31" },
- };
+};
 
 ArrayRef<TargetInfo::GCCRegAlias> HexagonTargetInfo::getGCCRegAliases() const {
   return llvm::makeArrayRef(GCCRegAliases);
@@ -5792,6 +5876,80 @@ public:
     // FIXME: Implement!
     return "";
   }
+
+  // No Sparc V7 for now, the backend doesn't support it anyway.
+  enum CPUKind {
+    CK_GENERIC,
+    CK_V8,
+    CK_SUPERSPARC,
+    CK_SPARCLITE,
+    CK_F934,
+    CK_HYPERSPARC,
+    CK_SPARCLITE86X,
+    CK_SPARCLET,
+    CK_TSC701,
+    CK_V9,
+    CK_ULTRASPARC,
+    CK_ULTRASPARC3,
+    CK_NIAGARA,
+    CK_NIAGARA2,
+    CK_NIAGARA3,
+    CK_NIAGARA4
+  } CPU = CK_GENERIC;
+
+  enum CPUGeneration {
+    CG_V8,
+    CG_V9,
+  };
+
+  CPUGeneration getCPUGeneration(CPUKind Kind) const {
+    switch (Kind) {
+    case CK_GENERIC:
+    case CK_V8:
+    case CK_SUPERSPARC:
+    case CK_SPARCLITE:
+    case CK_F934:
+    case CK_HYPERSPARC:
+    case CK_SPARCLITE86X:
+    case CK_SPARCLET:
+    case CK_TSC701:
+      return CG_V8;
+    case CK_V9:
+    case CK_ULTRASPARC:
+    case CK_ULTRASPARC3:
+    case CK_NIAGARA:
+    case CK_NIAGARA2:
+    case CK_NIAGARA3:
+    case CK_NIAGARA4:
+      return CG_V9;
+    }
+    llvm_unreachable("Unexpected CPU kind");
+  }
+
+  CPUKind getCPUKind(StringRef Name) const {
+    return llvm::StringSwitch<CPUKind>(Name)
+        .Case("v8", CK_V8)
+        .Case("supersparc", CK_SUPERSPARC)
+        .Case("sparclite", CK_SPARCLITE)
+        .Case("f934", CK_F934)
+        .Case("hypersparc", CK_HYPERSPARC)
+        .Case("sparclite86x", CK_SPARCLITE86X)
+        .Case("sparclet", CK_SPARCLET)
+        .Case("tsc701", CK_TSC701)
+        .Case("v9", CK_V9)
+        .Case("ultrasparc", CK_ULTRASPARC)
+        .Case("ultrasparc3", CK_ULTRASPARC3)
+        .Case("niagara", CK_NIAGARA)
+        .Case("niagara2", CK_NIAGARA2)
+        .Case("niagara3", CK_NIAGARA3)
+        .Case("niagara4", CK_NIAGARA4)
+        .Default(CK_GENERIC);
+  }
+
+  bool setCPU(const std::string &Name) override {
+    CPU = getCPUKind(Name);
+    return CPU != CK_GENERIC;
+  }
 };
 
 const char * const SparcTargetInfo::GCCRegNames[] = {
@@ -5868,7 +6026,20 @@ public:
   void getTargetDefines(const LangOptions &Opts,
                         MacroBuilder &Builder) const override {
     SparcTargetInfo::getTargetDefines(Opts, Builder);
-    Builder.defineMacro("__sparcv8");
+    switch (getCPUGeneration(CPU)) {
+    case CG_V8:
+      Builder.defineMacro("__sparcv8");
+      if (getTriple().getOS() != llvm::Triple::Solaris)
+        Builder.defineMacro("__sparcv8__");
+      break;
+    case CG_V9:
+      Builder.defineMacro("__sparcv9");
+      if (getTriple().getOS() != llvm::Triple::Solaris) {
+        Builder.defineMacro("__sparcv9__");
+        Builder.defineMacro("__sparc_v9__");
+      }
+      break;
+    }
   }
 };
 
@@ -5919,19 +6090,9 @@ public:
   }
 
   bool setCPU(const std::string &Name) override {
-    bool CPUKnown = llvm::StringSwitch<bool>(Name)
-      .Case("v9", true)
-      .Case("ultrasparc", true)
-      .Case("ultrasparc3", true)
-      .Case("niagara", true)
-      .Case("niagara2", true)
-      .Case("niagara3", true)
-      .Case("niagara4", true)
-      .Default(false);
-
-    // No need to store the CPU yet.  There aren't any CPU-specific
-    // macros to define.
-    return CPUKnown;
+    if (!SparcTargetInfo::setCPU(Name))
+      return false;
+    return getCPUGeneration(CPU) == CG_V9;
   }
 };
 
@@ -6424,6 +6585,12 @@ public:
 
     Builder.defineMacro("_MIPS_ARCH", "\"" + CPU + "\"");
     Builder.defineMacro("_MIPS_ARCH_" + StringRef(CPU).upper());
+
+    // These shouldn't be defined for MIPS-I but there's no need to check
+    // for that since MIPS-I isn't supported.
+    Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_1");
+    Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_2");
+    Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_4");
   }
 
   ArrayRef<Builtin::Info> getTargetBuiltins() const override {
@@ -6798,6 +6965,8 @@ public:
     }
     else
       llvm_unreachable("Invalid ABI for Mips64.");
+
+    Builder.defineMacro("__GCC_HAVE_SYNC_COMPARE_AND_SWAP_8");
   }
   ArrayRef<TargetInfo::GCCRegAlias> getGCCRegAliases() const override {
     static const TargetInfo::GCCRegAlias GCCRegAliases[] = {
@@ -7005,6 +7174,8 @@ public:
     LargeArrayAlign = 128;
     SimdDefaultAlign = 128;
     SigAtomicType = SignedLong;
+    LongDoubleWidth = LongDoubleAlign = 128;
+    LongDoubleFormat = &llvm::APFloat::IEEEquad;
   }
 
 protected:
@@ -7059,7 +7230,6 @@ private:
                    clang::WebAssembly::LastTSBuiltin - Builtin::FirstTSBuiltin);
   }
   BuiltinVaListKind getBuiltinVaListKind() const final {
-    // TODO: Implement va_list properly.
     return VoidPtrBuiltinVaList;
   }
   ArrayRef<const char *> getGCCRegNames() const final {
@@ -7657,6 +7827,8 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple) {
       return new RTEMSX86_32TargetInfo(Triple);
     case llvm::Triple::NaCl:
       return new NaClTargetInfo<X86_32TargetInfo>(Triple);
+    case llvm::Triple::ELFIAMCU:
+      return new MCUX86_32TargetInfo(Triple);
     default:
       return new X86_32TargetInfo(Triple);
     }

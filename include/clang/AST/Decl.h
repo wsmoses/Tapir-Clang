@@ -319,7 +319,8 @@ public:
   NamedDecl *getUnderlyingDecl() {
     // Fast-path the common case.
     if (this->getKind() != UsingShadow &&
-        this->getKind() != ObjCCompatibleAlias)
+        this->getKind() != ObjCCompatibleAlias &&
+        this->getKind() != NamespaceAlias)
       return this;
 
     return getUnderlyingDeclImpl();
@@ -1558,26 +1559,26 @@ private:
 
   LazyDeclStmtPtr Body;
 
-  // FIXME: This can be packed into the bitfields in Decl.
-  // NOTE: VC++ treats enums as signed, avoid using the StorageClass enum
+  // FIXME: This can be packed into the bitfields in DeclContext.
+  // NOTE: VC++ packs bitfields poorly if the types differ.
   unsigned SClass : 2;
-  bool IsInline : 1;
-  bool IsInlineSpecified : 1;
-  bool IsVirtualAsWritten : 1;
-  bool IsPure : 1;
-  bool HasInheritedPrototype : 1;
-  bool HasWrittenPrototype : 1;
-  bool IsDeleted : 1;
-  bool IsTrivial : 1; // sunk from CXXMethodDecl
-  bool IsDefaulted : 1; // sunk from CXXMethoDecl
-  bool IsExplicitlyDefaulted : 1; //sunk from CXXMethodDecl
-  bool HasImplicitReturnZero : 1;
-  bool IsLateTemplateParsed : 1;
-  bool IsConstexpr : 1;
-  bool IsSpawning: 1;
+  unsigned IsInline : 1;
+  unsigned IsInlineSpecified : 1;
+  unsigned IsVirtualAsWritten : 1;
+  unsigned IsPure : 1;
+  unsigned HasInheritedPrototype : 1;
+  unsigned HasWrittenPrototype : 1;
+  unsigned IsDeleted : 1;
+  unsigned IsTrivial : 1; // sunk from CXXMethodDecl
+  unsigned IsDefaulted : 1; // sunk from CXXMethoDecl
+  unsigned IsExplicitlyDefaulted : 1; //sunk from CXXMethodDecl
+  unsigned HasImplicitReturnZero : 1;
+  unsigned IsLateTemplateParsed : 1;
+  unsigned IsConstexpr : 1;
+  // unsigned IsSpawning: 1;
 
   /// \brief Indicates if the function uses __try.
-  bool UsesSEHTry : 1;
+  unsigned UsesSEHTry : 1;
 
   /// \brief Indicates if the function was a definition but its body was
   /// skipped.
@@ -1852,9 +1853,9 @@ public:
   bool usesSEHTry() const { return UsesSEHTry; }
   void setUsesSEHTry(bool UST) { UsesSEHTry = UST; }
 
-  /// \brief Whether this function is a Cilk spawning function.
-  bool isSpawning() const { return IsSpawning; }
-  void setSpawning() { IsSpawning = true; }
+  // /// \brief Whether this function is a Cilk spawning function.
+  // bool isSpawning() const { return IsSpawning; }
+  // void setSpawning() { IsSpawning = true; }
 
   /// \brief Whether this function has been deleted.
   ///
@@ -3311,7 +3312,14 @@ public:
 
   bool hasVolatileMember() const { return HasVolatileMember; }
   void setHasVolatileMember (bool val) { HasVolatileMember = val; }
-  
+
+  bool hasLoadedFieldsFromExternalStorage() const {
+    return LoadedFieldsFromExternalStorage;
+  }
+  void setHasLoadedFieldsFromExternalStorage(bool val) {
+    LoadedFieldsFromExternalStorage = val;
+  }
+
   /// \brief Determines whether this declaration represents the
   /// injected class name.
   ///
@@ -3637,8 +3645,8 @@ private:
   unsigned ContextParam;
   /// \brief The body of the outlined function.
   llvm::PointerIntPair<Stmt *, 1, bool> BodyAndNothrow;
-  /// \brief Whether this CapturedDecl contains Cilk spawns.
-  bool IsSpawning;
+  // /// \brief Whether this CapturedDecl contains Cilk spawns.
+  // bool IsSpawning;
 
   explicit CapturedDecl(DeclContext *DC, unsigned NumParams)
     : Decl(Captured, DC, SourceLocation()), DeclContext(Captured),
@@ -3661,8 +3669,8 @@ public:
   Stmt *getBody() const override { return BodyAndNothrow.getPointer(); }
   void setBody(Stmt *B) { BodyAndNothrow.setPointer(B); }
 
-  void setSpawning() { IsSpawning = true; }
-  bool isSpawning() const { return IsSpawning; }
+  // void setSpawning() { IsSpawning = true; }
+  // bool isSpawning() const { return IsSpawning; }
 
   bool isNothrow() const { return BodyAndNothrow.getInt(); }
   void setNothrow(bool Nothrow = true) { BodyAndNothrow.setInt(Nothrow); }

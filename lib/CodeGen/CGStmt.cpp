@@ -261,6 +261,15 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
   case Stmt::OMPTargetDataDirectiveClass:
     EmitOMPTargetDataDirective(cast<OMPTargetDataDirective>(*S));
     break;
+  case Stmt::OMPTaskLoopDirectiveClass:
+    EmitOMPTaskLoopDirective(cast<OMPTaskLoopDirective>(*S));
+    break;
+  case Stmt::OMPTaskLoopSimdDirectiveClass:
+    EmitOMPTaskLoopSimdDirective(cast<OMPTaskLoopSimdDirective>(*S));
+    break;
+case Stmt::OMPDistributeDirectiveClass:
+    EmitOMPDistributeDirective(cast<OMPDistributeDirective>(*S));
+	break;
   }
 }
 
@@ -367,7 +376,7 @@ void CodeGenFunction::SimplifyForwardingBlocks(llvm::BasicBlock *BB) {
     return;
 
   // Can only simplify empty blocks.
-  if (BI != BB->begin())
+  if (BI->getIterator() != BB->begin())
     return;
 
   BB->replaceAllUsesWith(BI->getSuccessor(0));
@@ -389,7 +398,7 @@ void CodeGenFunction::EmitBlock(llvm::BasicBlock *BB, bool IsFinished) {
   // Place the block after the current block, if possible, or else at
   // the end of the function.
   if (CurBB && CurBB->getParent())
-    CurFn->getBasicBlockList().insertAfter(CurBB, BB);
+    CurFn->getBasicBlockList().insertAfter(CurBB->getIterator(), BB);
   else
     CurFn->getBasicBlockList().push_back(BB);
   Builder.SetInsertPoint(BB);
@@ -416,7 +425,8 @@ void CodeGenFunction::EmitBlockAfterUses(llvm::BasicBlock *block) {
   bool inserted = false;
   for (llvm::User *u : block->users()) {
     if (llvm::Instruction *insn = dyn_cast<llvm::Instruction>(u)) {
-      CurFn->getBasicBlockList().insertAfter(insn->getParent(), block);
+      CurFn->getBasicBlockList().insertAfter(insn->getParent()->getIterator(),
+                                             block);
       inserted = true;
       break;
     }
@@ -1847,7 +1857,8 @@ llvm::Value* CodeGenFunction::EmitAsmInput(
   if (Info.allowsRegister() || !Info.allowsMemory())
     if (CodeGenFunction::hasScalarEvaluationKind(InputExpr->getType()))
       return EmitScalarExpr(InputExpr);
-
+  if (InputExpr->getStmtClass() == Expr::CXXThisExprClass)
+    return EmitScalarExpr(InputExpr);
   InputExpr = InputExpr->IgnoreParenNoopCasts(getContext());
   LValue Dest = EmitLValue(InputExpr);
   return EmitAsmInputLValue(Info, Dest, InputExpr->getType(), ConstraintStr,
@@ -1868,13 +1879,15 @@ static llvm::MDNode *getAsmSrcLocInfo(const StringLiteral *Str,
   if (!StrVal.empty()) {
     const SourceManager &SM = CGF.CGM.getContext().getSourceManager();
     const LangOptions &LangOpts = CGF.CGM.getLangOpts();
+    unsigned StartToken = 0;
+    unsigned ByteOffset = 0;
 
     // Add the location of the start of each subsequent line of the asm to the
     // MDNode.
-    for (unsigned i = 0, e = StrVal.size()-1; i != e; ++i) {
+    for (unsigned i = 0, e = StrVal.size() - 1; i != e; ++i) {
       if (StrVal[i] != '\n') continue;
-      SourceLocation LineLoc = Str->getLocationOfByte(i+1, SM, LangOpts,
-                                                      CGF.getTarget());
+      SourceLocation LineLoc = Str->getLocationOfByte(
+          i + 1, SM, LangOpts, CGF.getTarget(), &StartToken, &ByteOffset);
       Locs.push_back(llvm::ConstantAsMetadata::get(
           llvm::ConstantInt::get(CGF.Int32Ty, LineLoc.getRawEncoding())));
     }
@@ -2151,6 +2164,15 @@ void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {
   Result->addAttribute(llvm::AttributeSet::FunctionIndex,
                        llvm::Attribute::NoUnwind);
 
+  if (isa<MSAsmStmt>(&S)) {
+    // If the assembly contains any labels, mark the call noduplicate to prevent
+    // defining the same ASM label twice (PR23715). This is pretty hacky, but it
+    // works.
+    if (AsmString.find("__MSASMLABEL_") != std::string::npos)
+      Result->addAttribute(llvm::AttributeSet::FunctionIndex,
+                           llvm::Attribute::NoDuplicate);
+  }
+
   // Attach readnone and readonly attributes.
   if (!HasSideEffect) {
     if (ReadNone)
@@ -2324,7 +2346,7 @@ CodeGenFunction::GenerateCapturedStmtFunction(const CapturedStmt &S) {
     CXXThisValue = EmitLoadOfLValue(ThisLValue, Loc).getScalarVal();
   }
 
-  PGO.assignRegionCounters(CD, F);
+  PGO.assignRegionCounters(GlobalDecl(CD), F);
   CapturedStmtInfo->EmitBody(*this, CD->getBody());
   FinishFunction(CD->getBodyRBrace());
 

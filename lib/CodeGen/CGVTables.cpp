@@ -175,14 +175,16 @@ CodeGenFunction::GenerateVarArgsThunk(llvm::Function *Fn,
   // Find the first store of "this", which will be to the alloca associated
   // with "this".
   Address ThisPtr(&*AI, CGM.getClassPointerAlignment(MD->getParent()));
-  llvm::BasicBlock *EntryBB = Fn->begin();
-  llvm::Instruction *ThisStore =
+  llvm::BasicBlock *EntryBB = &Fn->front();
+  llvm::BasicBlock::iterator ThisStore =
       std::find_if(EntryBB->begin(), EntryBB->end(), [&](llvm::Instruction &I) {
-    return isa<llvm::StoreInst>(I) && I.getOperand(0) == ThisPtr.getPointer();
-  });
-  assert(ThisStore && "Store of this should be in entry block?");
+        return isa<llvm::StoreInst>(I) &&
+               I.getOperand(0) == ThisPtr.getPointer();
+      });
+  assert(ThisStore != EntryBB->end() &&
+         "Store of this should be in entry block?");
   // Adjust "this", if necessary.
-  Builder.SetInsertPoint(ThisStore);
+  Builder.SetInsertPoint(&*ThisStore);
   llvm::Value *AdjustedThisPtr =
       CGM.getCXXABI().performThisAdjustment(*this, ThisPtr, Thunk.This);
   ThisStore->setOperand(0, AdjustedThisPtr);
@@ -580,6 +582,24 @@ llvm::Constant *CodeGenVTables::CreateVTableInitializer(
         break;
       }
 
+      if (CGM.getLangOpts().CUDA) {
+        // Emit NULL for methods we can't codegen on this
+        // side. Otherwise we'd end up with vtable with unresolved
+        // references.
+        const CXXMethodDecl *MD = cast<CXXMethodDecl>(GD.getDecl());
+        // OK on device side: functions w/ __device__ attribute
+        // OK on host side: anything except __device__-only functions.
+        bool CanEmitMethod = CGM.getLangOpts().CUDAIsDevice
+                                 ? MD->hasAttr<CUDADeviceAttr>()
+                                 : (MD->hasAttr<CUDAHostAttr>() ||
+                                    !MD->hasAttr<CUDADeviceAttr>());
+        if (!CanEmitMethod) {
+          Init = llvm::ConstantExpr::getNullValue(Int8PtrTy);
+          break;
+        }
+        // Method is acceptable, continue processing as usual.
+      }
+
       if (cast<CXXMethodDecl>(GD.getDecl())->isPure()) {
         // We have a pure virtual member function.
         if (!PureVirtualFn) {
@@ -932,6 +952,7 @@ void CodeGenModule::EmitVTableBitSetEntries(llvm::GlobalVariable *VTable,
   llvm::NamedMDNode *BitsetsMD =
       getModule().getOrInsertNamedMetadata("llvm.bitsets");
   for (auto BitsetEntry : BitsetEntries)
-    BitsetsMD->addOperand(CreateVTableBitSetEntry(
-        VTable, PointerWidth * BitsetEntry.second, BitsetEntry.first));
+    CreateVTableBitSetEntry(BitsetsMD, VTable,
+                            PointerWidth * BitsetEntry.second,
+                            BitsetEntry.first);
 }

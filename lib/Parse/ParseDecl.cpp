@@ -24,6 +24,7 @@
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/PrettyDeclStackTrace.h"
 #include "clang/Sema/Scope.h"
+#include "clang/Sema/SemaDiagnostic.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -1464,15 +1465,13 @@ Parser::DeclGroupPtrTy Parser::ParseDeclaration(unsigned Context,
     if (getLangOpts().CPlusPlus && NextToken().is(tok::kw_namespace)) {
       ProhibitAttributes(attrs);
       SourceLocation InlineLoc = ConsumeToken();
-      SingleDecl = ParseNamespace(Context, DeclEnd, InlineLoc);
-      break;
+      return ParseNamespace(Context, DeclEnd, InlineLoc);
     }
     return ParseSimpleDeclaration(Context, DeclEnd, attrs,
                                   true);
   case tok::kw_namespace:
     ProhibitAttributes(attrs);
-    SingleDecl = ParseNamespace(Context, DeclEnd);
-    break;
+    return ParseNamespace(Context, DeclEnd);
   case tok::kw_using:
     SingleDecl = ParseUsingDirectiveOrDeclaration(Context, ParsedTemplateInfo(),
                                                   DeclEnd, attrs, &OwnedType);
@@ -1975,8 +1974,8 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
         // Recover as if it were an explicit specialization.
         TemplateParameterLists FakedParamLists;
         FakedParamLists.push_back(Actions.ActOnTemplateParameterList(
-            0, SourceLocation(), TemplateInfo.TemplateLoc, LAngleLoc, nullptr,
-            0, LAngleLoc));
+            0, SourceLocation(), TemplateInfo.TemplateLoc, LAngleLoc, None,
+            LAngleLoc));
 
         ThisDecl =
             Actions.ActOnTemplateDeclarator(getCurScope(), FakedParamLists, D);
@@ -2157,7 +2156,7 @@ void Parser::ParseSpecifierQualifierList(DeclSpec &DS, AccessSpecifier AS,
     DS.ClearStorageClassSpecs();
   }
 
-  // Issue diagnostic and remove function specfier if present.
+  // Issue diagnostic and remove function specifier if present.
   if (Specs & DeclSpec::PQ_FunctionSpecifier) {
     if (DS.isInlineSpecified())
       Diag(DS.getInlineSpecLoc(), diag::err_typename_invalid_functionspec);
@@ -2670,7 +2669,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
 
       // If this is not a declaration specifier token, we're done reading decl
       // specifiers.  First verify that DeclSpec's are consistent.
-      DS.Finish(Diags, PP, Policy);
+      DS.Finish(Actions, Policy);
       return;
 
     case tok::l_square:
@@ -2785,8 +2784,8 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
           // arguments. Complain, then parse it as a type as the user
           // intended.
           Diag(TemplateId->TemplateNameLoc,
-               diag::err_out_of_line_template_id_names_constructor)
-            << TemplateId->Name;
+               diag::err_out_of_line_template_id_type_names_constructor)
+            << TemplateId->Name << 0 /* template name */;
         }
 
         DS.getTypeSpecScope() = SS;
@@ -2831,8 +2830,9 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
         // looked at the declarator, and the user probably meant this
         // to be a type. Complain that it isn't supposed to be treated
         // as a type, then proceed to parse it as a type.
-        Diag(Next.getLocation(), diag::err_out_of_line_type_names_constructor)
-          << Next.getIdentifierInfo();
+        Diag(Next.getLocation(),
+             diag::err_out_of_line_template_id_type_names_constructor)
+          << Next.getIdentifierInfo() << 1 /* type */;
       }
 
       ParsedType TypeRep = Actions.getTypeName(*Next.getIdentifierInfo(),
@@ -3137,6 +3137,11 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
         isInvalid = DS.SetStorageClassSpec(Actions, DeclSpec::SCS_auto, Loc,
                                            PrevSpec, DiagID, Policy);
       isStorageClass = true;
+      break;
+    case tok::kw___auto_type:
+      Diag(Tok, diag::ext_auto_type);
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_auto_type, Loc, PrevSpec,
+                                     DiagID, Policy);
       break;
     case tok::kw_register:
       isInvalid = DS.SetStorageClassSpec(Actions, DeclSpec::SCS_register, Loc,
@@ -3582,8 +3587,8 @@ void Parser::ParseStructUnionBody(SourceLocation RecordLoc,
   SmallVector<Decl *, 32> FieldDecls;
 
   // While we still have something to read, read the declarations in the struct.
-  while (Tok.isNot(tok::r_brace) && Tok.isNot(tok::eof) &&
-         !tryParseMisplacedModuleImport()) {
+  while (!tryParseMisplacedModuleImport() && Tok.isNot(tok::r_brace) &&
+         Tok.isNot(tok::eof)) {
     // Each iteration of this loop reads one struct-declaration.
 
     // Check for extraneous top-level semicolon.
@@ -4440,6 +4445,7 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw___private_extern__:
   case tok::kw_static:
   case tok::kw_auto:
+  case tok::kw___auto_type:
   case tok::kw_register:
   case tok::kw___thread:
   case tok::kw_thread_local:
@@ -4813,7 +4819,7 @@ void Parser::ParseTypeQualifierListOpt(DeclSpec &DS, unsigned AttrReqs,
       DoneWithTypeQuals:
       // If this is not a type-qualifier token, we're done reading type
       // qualifiers.  First verify that DeclSpec's are consistent.
-      DS.Finish(Diags, PP, Actions.getASTContext().getPrintingPolicy());
+      DS.Finish(Actions, Actions.getASTContext().getPrintingPolicy());
       if (EndLoc.isValid())
         DS.SetRangeEnd(EndLoc);
       return;
@@ -5190,6 +5196,15 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
           D.SetRangeBegin(D.getName().getSourceRange().getBegin());
         D.SetRangeEnd(D.getName().getSourceRange().getEnd());
       }
+      goto PastIdentifier;
+    }
+
+    if (D.getCXXScopeSpec().isNotEmpty()) {
+      // We have a scope specifier but no following unqualified-id.
+      Diag(PP.getLocForEndOfToken(D.getCXXScopeSpec().getEndLoc()),
+           diag::err_expected_unqualified_id)
+          << /*C++*/1;
+      D.SetIdentifier(nullptr, Tok.getLocation());
       goto PastIdentifier;
     }
   } else if (Tok.is(tok::identifier) && D.mayHaveIdentifier()) {

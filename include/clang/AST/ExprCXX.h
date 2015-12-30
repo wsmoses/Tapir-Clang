@@ -677,6 +677,69 @@ public:
   friend class ASTStmtReader;
 };
 
+/// MS property subscript expression.
+/// MSVC supports 'property' attribute and allows to apply it to the
+/// declaration of an empty array in a class or structure definition.
+/// For example:
+/// \code
+/// __declspec(property(get=GetX, put=PutX)) int x[];
+/// \endcode
+/// The above statement indicates that x[] can be used with one or more array
+/// indices. In this case, i=p->x[a][b] will be turned into i=p->GetX(a, b), and
+/// p->x[a][b] = i will be turned into p->PutX(a, b, i).
+/// This is a syntactic pseudo-object expression.
+class MSPropertySubscriptExpr : public Expr {
+  friend class ASTStmtReader;
+  enum { BASE_EXPR, IDX_EXPR, NUM_SUBEXPRS = 2 };
+  Stmt *SubExprs[NUM_SUBEXPRS];
+  SourceLocation RBracketLoc;
+
+  void setBase(Expr *Base) { SubExprs[BASE_EXPR] = Base; }
+  void setIdx(Expr *Idx) { SubExprs[IDX_EXPR] = Idx; }
+
+public:
+  MSPropertySubscriptExpr(Expr *Base, Expr *Idx, QualType Ty, ExprValueKind VK,
+                          ExprObjectKind OK, SourceLocation RBracketLoc)
+      : Expr(MSPropertySubscriptExprClass, Ty, VK, OK, Idx->isTypeDependent(),
+             Idx->isValueDependent(), Idx->isInstantiationDependent(),
+             Idx->containsUnexpandedParameterPack()),
+        RBracketLoc(RBracketLoc) {
+    SubExprs[BASE_EXPR] = Base;
+    SubExprs[IDX_EXPR] = Idx;
+  }
+
+  /// \brief Create an empty array subscript expression.
+  explicit MSPropertySubscriptExpr(EmptyShell Shell)
+      : Expr(MSPropertySubscriptExprClass, Shell) {}
+
+  Expr *getBase() { return cast<Expr>(SubExprs[BASE_EXPR]); }
+  const Expr *getBase() const { return cast<Expr>(SubExprs[BASE_EXPR]); }
+
+  Expr *getIdx() { return cast<Expr>(SubExprs[IDX_EXPR]); }
+  const Expr *getIdx() const { return cast<Expr>(SubExprs[IDX_EXPR]); }
+
+  SourceLocation getLocStart() const LLVM_READONLY {
+    return getBase()->getLocStart();
+  }
+  SourceLocation getLocEnd() const LLVM_READONLY { return RBracketLoc; }
+
+  SourceLocation getRBracketLoc() const { return RBracketLoc; }
+  void setRBracketLoc(SourceLocation L) { RBracketLoc = L; }
+
+  SourceLocation getExprLoc() const LLVM_READONLY {
+    return getBase()->getExprLoc();
+  }
+
+  static bool classof(const Stmt *T) {
+    return T->getStmtClass() == MSPropertySubscriptExprClass;
+  }
+
+  // Iterators
+  child_range children() {
+    return child_range(&SubExprs[0], &SubExprs[0] + NUM_SUBEXPRS);
+  }
+};
+
 /// A Microsoft C++ @c __uuidof expression, which gets
 /// the _GUID that corresponds to the supplied type or expression.
 ///
@@ -1533,14 +1596,12 @@ public:
 
   /// \brief Retrieve the initialization expressions for this lambda's captures.
   llvm::iterator_range<capture_init_iterator> capture_inits() {
-    return llvm::iterator_range<capture_init_iterator>(capture_init_begin(),
-                                                       capture_init_end());
+    return llvm::make_range(capture_init_begin(), capture_init_end());
   }
 
   /// \brief Retrieve the initialization expressions for this lambda's captures.
   llvm::iterator_range<const_capture_init_iterator> capture_inits() const {
-    return llvm::iterator_range<const_capture_init_iterator>(
-        capture_init_begin(), capture_init_end());
+    return llvm::make_range(capture_init_begin(), capture_init_end());
   }
 
   /// \brief Retrieve the first initialization argument for this
@@ -2367,7 +2428,7 @@ public:
 
 /// \brief A reference to an overloaded function set, either an
 /// \c UnresolvedLookupExpr or an \c UnresolvedMemberExpr.
-class LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) OverloadExpr : public Expr {
+class OverloadExpr : public Expr {
   /// \brief The common name of these declarations.
   DeclarationNameInfo NameInfo;
 
@@ -2387,12 +2448,17 @@ protected:
   bool HasTemplateKWAndArgsInfo;
 
   /// \brief Return the optional template keyword and arguments info.
-  ASTTemplateKWAndArgsInfo *getTemplateKWAndArgsInfo(); // defined far below.
+  ASTTemplateKWAndArgsInfo *
+  getTrailingASTTemplateKWAndArgsInfo(); // defined far below.
 
   /// \brief Return the optional template keyword and arguments info.
-  const ASTTemplateKWAndArgsInfo *getTemplateKWAndArgsInfo() const {
-    return const_cast<OverloadExpr*>(this)->getTemplateKWAndArgsInfo();
+  const ASTTemplateKWAndArgsInfo *getTrailingASTTemplateKWAndArgsInfo() const {
+    return const_cast<OverloadExpr *>(this)
+        ->getTrailingASTTemplateKWAndArgsInfo();
   }
+
+  /// Return the optional template arguments.
+  TemplateArgumentLoc *getTrailingTemplateArgumentLoc(); // defined far below
 
   OverloadExpr(StmtClass K, const ASTContext &C,
                NestedNameSpecifierLoc QualifierLoc,
@@ -2456,7 +2522,7 @@ public:
     return UnresolvedSetIterator(Results + NumResults);
   }
   llvm::iterator_range<decls_iterator> decls() const {
-    return llvm::iterator_range<decls_iterator>(decls_begin(), decls_end());
+    return llvm::make_range(decls_begin(), decls_end());
   }
 
   /// \brief Gets the number of declarations in the unresolved set.
@@ -2484,21 +2550,21 @@ public:
   /// this name, if any.
   SourceLocation getTemplateKeywordLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->getTemplateKeywordLoc();
+    return getTrailingASTTemplateKWAndArgsInfo()->TemplateKWLoc;
   }
 
   /// \brief Retrieve the location of the left angle bracket starting the
   /// explicit template argument list following the name, if any.
   SourceLocation getLAngleLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->LAngleLoc;
+    return getTrailingASTTemplateKWAndArgsInfo()->LAngleLoc;
   }
 
   /// \brief Retrieve the location of the right angle bracket ending the
   /// explicit template argument list following the name, if any.
   SourceLocation getRAngleLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->RAngleLoc;
+    return getTrailingASTTemplateKWAndArgsInfo()->RAngleLoc;
   }
 
   /// \brief Determines whether the name was preceded by the template keyword.
@@ -2507,39 +2573,23 @@ public:
   /// \brief Determines whether this expression had explicit template arguments.
   bool hasExplicitTemplateArgs() const { return getLAngleLoc().isValid(); }
 
-  // Note that, inconsistently with the explicit-template-argument AST
-  // nodes, users are *forbidden* from calling these methods on objects
-  // without explicit template arguments.
-
-  ASTTemplateArgumentListInfo &getExplicitTemplateArgs() {
-    assert(hasExplicitTemplateArgs());
-    return *getTemplateKWAndArgsInfo();
-  }
-
-  const ASTTemplateArgumentListInfo &getExplicitTemplateArgs() const {
-    return const_cast<OverloadExpr*>(this)->getExplicitTemplateArgs();
-  }
-
   TemplateArgumentLoc const *getTemplateArgs() const {
-    return getExplicitTemplateArgs().getTemplateArgs();
+    if (!hasExplicitTemplateArgs())
+      return nullptr;
+    return const_cast<OverloadExpr *>(this)->getTrailingTemplateArgumentLoc();
   }
 
   unsigned getNumTemplateArgs() const {
-    return getExplicitTemplateArgs().NumTemplateArgs;
+    if (!hasExplicitTemplateArgs())
+      return 0;
+
+    return getTrailingASTTemplateKWAndArgsInfo()->NumTemplateArgs;
   }
 
   /// \brief Copies the template arguments into the given structure.
   void copyTemplateArgumentsInto(TemplateArgumentListInfo &List) const {
-    getExplicitTemplateArgs().copyInto(List);
-  }
-
-  /// \brief Retrieves the optional explicit template arguments.
-  ///
-  /// This points to the same data as getExplicitTemplateArgs(), but
-  /// returns null if there are no explicit template arguments.
-  const ASTTemplateArgumentListInfo *getOptionalExplicitTemplateArgs() const {
-    if (!hasExplicitTemplateArgs()) return nullptr;
-    return &getExplicitTemplateArgs();
+    if (hasExplicitTemplateArgs())
+      getTrailingASTTemplateKWAndArgsInfo()->copyInto(getTemplateArgs(), List);
   }
 
   static bool classof(const Stmt *T) {
@@ -2562,7 +2612,10 @@ public:
 ///
 /// These never include UnresolvedUsingValueDecls, which are always class
 /// members and therefore appear only in UnresolvedMemberLookupExprs.
-class UnresolvedLookupExpr : public OverloadExpr {
+class UnresolvedLookupExpr final
+    : public OverloadExpr,
+      private llvm::TrailingObjects<
+          UnresolvedLookupExpr, ASTTemplateKWAndArgsInfo, TemplateArgumentLoc> {
   /// True if these lookup results should be extended by
   /// argument-dependent lookup if this is the operand of a function
   /// call.
@@ -2578,6 +2631,10 @@ class UnresolvedLookupExpr : public OverloadExpr {
   /// want to improve memory use here, this could go in a union
   /// against the qualified-lookup bits.
   CXXRecordDecl *NamingClass;
+
+  size_t numTrailingObjects(OverloadToken<ASTTemplateKWAndArgsInfo>) const {
+    return HasTemplateKWAndArgsInfo ? 1 : 0;
+  }
 
   UnresolvedLookupExpr(const ASTContext &C,
                        CXXRecordDecl *NamingClass,
@@ -2598,6 +2655,8 @@ class UnresolvedLookupExpr : public OverloadExpr {
       RequiresADL(false), Overloaded(false), NamingClass(nullptr)
   {}
 
+  friend TrailingObjects;
+  friend class OverloadExpr;
   friend class ASTStmtReader;
 
 public:
@@ -2673,8 +2732,11 @@ public:
 /// qualifier (X<T>::) and the name of the entity being referenced
 /// ("value"). Such expressions will instantiate to a DeclRefExpr once the
 /// declaration can be found.
-class LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) DependentScopeDeclRefExpr
-    : public Expr {
+class DependentScopeDeclRefExpr final
+    : public Expr,
+      private llvm::TrailingObjects<DependentScopeDeclRefExpr,
+                                    ASTTemplateKWAndArgsInfo,
+                                    TemplateArgumentLoc> {
   /// \brief The nested-name-specifier that qualifies this unresolved
   /// declaration name.
   NestedNameSpecifierLoc QualifierLoc;
@@ -2686,15 +2748,8 @@ class LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) DependentScopeDeclRefExpr
   /// keyword and arguments.
   bool HasTemplateKWAndArgsInfo;
 
-  /// \brief Return the optional template keyword and arguments info.
-  ASTTemplateKWAndArgsInfo *getTemplateKWAndArgsInfo() {
-    if (!HasTemplateKWAndArgsInfo) return nullptr;
-    return reinterpret_cast<ASTTemplateKWAndArgsInfo*>(this + 1);
-  }
-  /// \brief Return the optional template keyword and arguments info.
-  const ASTTemplateKWAndArgsInfo *getTemplateKWAndArgsInfo() const {
-    return const_cast<DependentScopeDeclRefExpr*>(this)
-      ->getTemplateKWAndArgsInfo();
+  size_t numTrailingObjects(OverloadToken<ASTTemplateKWAndArgsInfo>) const {
+    return HasTemplateKWAndArgsInfo ? 1 : 0;
   }
 
   DependentScopeDeclRefExpr(QualType T,
@@ -2739,21 +2794,21 @@ public:
   /// this name, if any.
   SourceLocation getTemplateKeywordLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->getTemplateKeywordLoc();
+    return getTrailingObjects<ASTTemplateKWAndArgsInfo>()->TemplateKWLoc;
   }
 
   /// \brief Retrieve the location of the left angle bracket starting the
   /// explicit template argument list following the name, if any.
   SourceLocation getLAngleLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->LAngleLoc;
+    return getTrailingObjects<ASTTemplateKWAndArgsInfo>()->LAngleLoc;
   }
 
   /// \brief Retrieve the location of the right angle bracket ending the
   /// explicit template argument list following the name, if any.
   SourceLocation getRAngleLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->RAngleLoc;
+    return getTrailingObjects<ASTTemplateKWAndArgsInfo>()->RAngleLoc;
   }
 
   /// Determines whether the name was preceded by the template keyword.
@@ -2762,42 +2817,26 @@ public:
   /// Determines whether this lookup had explicit template arguments.
   bool hasExplicitTemplateArgs() const { return getLAngleLoc().isValid(); }
 
-  // Note that, inconsistently with the explicit-template-argument AST
-  // nodes, users are *forbidden* from calling these methods on objects
-  // without explicit template arguments.
-
-  ASTTemplateArgumentListInfo &getExplicitTemplateArgs() {
-    assert(hasExplicitTemplateArgs());
-    return *reinterpret_cast<ASTTemplateArgumentListInfo*>(this + 1);
-  }
-
-  /// Gets a reference to the explicit template argument list.
-  const ASTTemplateArgumentListInfo &getExplicitTemplateArgs() const {
-    assert(hasExplicitTemplateArgs());
-    return *reinterpret_cast<const ASTTemplateArgumentListInfo*>(this + 1);
-  }
-
-  /// \brief Retrieves the optional explicit template arguments.
-  ///
-  /// This points to the same data as getExplicitTemplateArgs(), but
-  /// returns null if there are no explicit template arguments.
-  const ASTTemplateArgumentListInfo *getOptionalExplicitTemplateArgs() const {
-    if (!hasExplicitTemplateArgs()) return nullptr;
-    return &getExplicitTemplateArgs();
-  }
-
   /// \brief Copies the template arguments (if present) into the given
   /// structure.
   void copyTemplateArgumentsInto(TemplateArgumentListInfo &List) const {
-    getExplicitTemplateArgs().copyInto(List);
+    if (hasExplicitTemplateArgs())
+      getTrailingObjects<ASTTemplateKWAndArgsInfo>()->copyInto(
+          getTrailingObjects<TemplateArgumentLoc>(), List);
   }
 
   TemplateArgumentLoc const *getTemplateArgs() const {
-    return getExplicitTemplateArgs().getTemplateArgs();
+    if (!hasExplicitTemplateArgs())
+      return nullptr;
+
+    return getTrailingObjects<TemplateArgumentLoc>();
   }
 
   unsigned getNumTemplateArgs() const {
-    return getExplicitTemplateArgs().NumTemplateArgs;
+    if (!hasExplicitTemplateArgs())
+      return 0;
+
+    return getTrailingObjects<ASTTemplateKWAndArgsInfo>()->NumTemplateArgs;
   }
 
   /// Note: getLocStart() is the start of the whole DependentScopeDeclRefExpr,
@@ -2819,6 +2858,7 @@ public:
     return child_range(child_iterator(), child_iterator());
   }
 
+  friend TrailingObjects;
   friend class ASTStmtReader;
   friend class ASTStmtWriter;
 };
@@ -3021,8 +3061,11 @@ public:
 /// Like UnresolvedMemberExprs, these can be either implicit or
 /// explicit accesses.  It is only possible to get one of these with
 /// an implicit access if a qualifier is provided.
-class LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) CXXDependentScopeMemberExpr
-    : public Expr {
+class CXXDependentScopeMemberExpr final
+    : public Expr,
+      private llvm::TrailingObjects<CXXDependentScopeMemberExpr,
+                                    ASTTemplateKWAndArgsInfo,
+                                    TemplateArgumentLoc> {
   /// \brief The expression for the base pointer or class reference,
   /// e.g., the \c x in x.f.  Can be null in implicit accesses.
   Stmt *Base;
@@ -3060,15 +3103,8 @@ class LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) CXXDependentScopeMemberExpr
   /// FIXME: could also be a template-id
   DeclarationNameInfo MemberNameInfo;
 
-  /// \brief Return the optional template keyword and arguments info.
-  ASTTemplateKWAndArgsInfo *getTemplateKWAndArgsInfo() {
-    if (!HasTemplateKWAndArgsInfo) return nullptr;
-    return reinterpret_cast<ASTTemplateKWAndArgsInfo*>(this + 1);
-  }
-  /// \brief Return the optional template keyword and arguments info.
-  const ASTTemplateKWAndArgsInfo *getTemplateKWAndArgsInfo() const {
-    return const_cast<CXXDependentScopeMemberExpr*>(this)
-      ->getTemplateKWAndArgsInfo();
+  size_t numTrailingObjects(OverloadToken<ASTTemplateKWAndArgsInfo>) const {
+    return HasTemplateKWAndArgsInfo ? 1 : 0;
   }
 
   CXXDependentScopeMemberExpr(const ASTContext &C, Expr *Base,
@@ -3164,21 +3200,21 @@ public:
   /// member name, if any.
   SourceLocation getTemplateKeywordLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->getTemplateKeywordLoc();
+    return getTrailingObjects<ASTTemplateKWAndArgsInfo>()->TemplateKWLoc;
   }
 
   /// \brief Retrieve the location of the left angle bracket starting the
   /// explicit template argument list following the member name, if any.
   SourceLocation getLAngleLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->LAngleLoc;
+    return getTrailingObjects<ASTTemplateKWAndArgsInfo>()->LAngleLoc;
   }
 
   /// \brief Retrieve the location of the right angle bracket ending the
   /// explicit template argument list following the member name, if any.
   SourceLocation getRAngleLoc() const {
     if (!HasTemplateKWAndArgsInfo) return SourceLocation();
-    return getTemplateKWAndArgsInfo()->RAngleLoc;
+    return getTrailingObjects<ASTTemplateKWAndArgsInfo>()->RAngleLoc;
   }
 
   /// Determines whether the member name was preceded by the template keyword.
@@ -3188,50 +3224,30 @@ public:
   /// template argument list explicitly specified, e.g., x.f<int>.
   bool hasExplicitTemplateArgs() const { return getLAngleLoc().isValid(); }
 
-  /// \brief Retrieve the explicit template argument list that followed the
-  /// member template name, if any.
-  ASTTemplateArgumentListInfo &getExplicitTemplateArgs() {
-    assert(hasExplicitTemplateArgs());
-    return *reinterpret_cast<ASTTemplateArgumentListInfo *>(this + 1);
-  }
-
-  /// \brief Retrieve the explicit template argument list that followed the
-  /// member template name, if any.
-  const ASTTemplateArgumentListInfo &getExplicitTemplateArgs() const {
-    return const_cast<CXXDependentScopeMemberExpr *>(this)
-             ->getExplicitTemplateArgs();
-  }
-
-  /// \brief Retrieves the optional explicit template arguments.
-  ///
-  /// This points to the same data as getExplicitTemplateArgs(), but
-  /// returns null if there are no explicit template arguments.
-  const ASTTemplateArgumentListInfo *getOptionalExplicitTemplateArgs() const {
-    if (!hasExplicitTemplateArgs()) return nullptr;
-    return &getExplicitTemplateArgs();
-  }
-
   /// \brief Copies the template arguments (if present) into the given
   /// structure.
   void copyTemplateArgumentsInto(TemplateArgumentListInfo &List) const {
-    getExplicitTemplateArgs().copyInto(List);
-  }
-
-  /// \brief Initializes the template arguments using the given structure.
-  void initializeTemplateArgumentsFrom(const TemplateArgumentListInfo &List) {
-    getExplicitTemplateArgs().initializeFrom(List);
+    if (hasExplicitTemplateArgs())
+      getTrailingObjects<ASTTemplateKWAndArgsInfo>()->copyInto(
+          getTrailingObjects<TemplateArgumentLoc>(), List);
   }
 
   /// \brief Retrieve the template arguments provided as part of this
   /// template-id.
   const TemplateArgumentLoc *getTemplateArgs() const {
-    return getExplicitTemplateArgs().getTemplateArgs();
+    if (!hasExplicitTemplateArgs())
+      return nullptr;
+
+    return getTrailingObjects<TemplateArgumentLoc>();
   }
 
   /// \brief Retrieve the number of template arguments provided as part of this
   /// template-id.
   unsigned getNumTemplateArgs() const {
-    return getExplicitTemplateArgs().NumTemplateArgs;
+    if (!hasExplicitTemplateArgs())
+      return 0;
+
+    return getTrailingObjects<ASTTemplateKWAndArgsInfo>()->NumTemplateArgs;
   }
 
   SourceLocation getLocStart() const LLVM_READONLY {
@@ -3240,8 +3256,8 @@ public:
     if (getQualifier())
       return getQualifierLoc().getBeginLoc();
     return MemberNameInfo.getBeginLoc();
-
   }
+
   SourceLocation getLocEnd() const LLVM_READONLY {
     if (hasExplicitTemplateArgs())
       return getRAngleLoc();
@@ -3259,6 +3275,7 @@ public:
     return child_range(&Base, &Base + 1);
   }
 
+  friend TrailingObjects;
   friend class ASTStmtReader;
   friend class ASTStmtWriter;
 };
@@ -3278,8 +3295,10 @@ public:
 /// In the final AST, an explicit access always becomes a MemberExpr.
 /// An implicit access may become either a MemberExpr or a
 /// DeclRefExpr, depending on whether the member is static.
-class LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) UnresolvedMemberExpr
-    : public OverloadExpr {
+class UnresolvedMemberExpr final
+    : public OverloadExpr,
+      private llvm::TrailingObjects<
+          UnresolvedMemberExpr, ASTTemplateKWAndArgsInfo, TemplateArgumentLoc> {
   /// \brief Whether this member expression used the '->' operator or
   /// the '.' operator.
   bool IsArrow : 1;
@@ -3300,6 +3319,10 @@ class LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) UnresolvedMemberExpr
   /// \brief The location of the '->' or '.' operator.
   SourceLocation OperatorLoc;
 
+  size_t numTrailingObjects(OverloadToken<ASTTemplateKWAndArgsInfo>) const {
+    return HasTemplateKWAndArgsInfo ? 1 : 0;
+  }
+
   UnresolvedMemberExpr(const ASTContext &C, bool HasUnresolvedUsing,
                        Expr *Base, QualType BaseType, bool IsArrow,
                        SourceLocation OperatorLoc,
@@ -3313,6 +3336,8 @@ class LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) UnresolvedMemberExpr
     : OverloadExpr(UnresolvedMemberExprClass, Empty), IsArrow(false),
       HasUnresolvedUsing(false), Base(nullptr) { }
 
+  friend TrailingObjects;
+  friend class OverloadExpr;
   friend class ASTStmtReader;
 
 public:
@@ -3404,15 +3429,26 @@ public:
   }
 };
 
-inline ASTTemplateKWAndArgsInfo *OverloadExpr::getTemplateKWAndArgsInfo() {
+inline ASTTemplateKWAndArgsInfo *
+OverloadExpr::getTrailingASTTemplateKWAndArgsInfo() {
   if (!HasTemplateKWAndArgsInfo)
     return nullptr;
+
   if (isa<UnresolvedLookupExpr>(this))
-    return reinterpret_cast<ASTTemplateKWAndArgsInfo *>(
-        cast<UnresolvedLookupExpr>(this) + 1);
+    return cast<UnresolvedLookupExpr>(this)
+        ->getTrailingObjects<ASTTemplateKWAndArgsInfo>();
   else
-    return reinterpret_cast<ASTTemplateKWAndArgsInfo *>(
-        cast<UnresolvedMemberExpr>(this) + 1);
+    return cast<UnresolvedMemberExpr>(this)
+        ->getTrailingObjects<ASTTemplateKWAndArgsInfo>();
+}
+
+inline TemplateArgumentLoc *OverloadExpr::getTrailingTemplateArgumentLoc() {
+  if (isa<UnresolvedLookupExpr>(this))
+    return cast<UnresolvedLookupExpr>(this)
+        ->getTrailingObjects<TemplateArgumentLoc>();
+  else
+    return cast<UnresolvedMemberExpr>(this)
+        ->getTrailingObjects<TemplateArgumentLoc>();
 }
 
 /// \brief Represents a C++11 noexcept expression (C++ [expr.unary.noexcept]).
@@ -4008,65 +4044,61 @@ public:
   child_range children() { return child_range(SubExprs, SubExprs + 2); }
 };
 
-/// \brief Represents a 'co_await' expression. This expression checks whether its
-/// operand is ready, and suspends the coroutine if not. Then (after the resume
-/// if suspended) it resumes the coroutine and extracts the value from the
-/// operand. This implies making four calls:
+/// \brief Represents an expression that might suspend coroutine execution;
+/// either a co_await or co_yield expression.
 ///
-///   <operand>.operator co_await() or operator co_await(<operand>)
-///   <result>.await_ready()
-///   <result>.await_suspend(h)
-///   <result>.await_resume()
-///
-/// where h is a handle to the coroutine, and <result> is the result of calling
-/// operator co_await() if it exists or the original operand otherwise.
-///
-/// Note that the coroutine is prepared for suspension before the 'await_suspend'
-/// call, but resumes after that call, which may cause parts of the
-/// 'await_suspend' expression to occur much later than expected.
-class CoawaitExpr : public Expr {
-  SourceLocation CoawaitLoc;
+/// Evaluation of this expression first evaluates its 'ready' expression. If
+/// that returns 'false':
+///  -- execution of the coroutine is suspended
+///  -- the 'suspend' expression is evaluated
+///     -- if the 'suspend' expression returns 'false', the coroutine is
+///        resumed
+///     -- otherwise, control passes back to the resumer.
+/// If the coroutine is not suspended, or when it is resumed, the 'resume'
+/// expression is evaluated, and its result is the result of the overall
+/// expression.
+class CoroutineSuspendExpr : public Expr {
+  SourceLocation KeywordLoc;
 
-  enum SubExpr { Operand, Ready, Suspend, Resume, Count };
+  enum SubExpr { Common, Ready, Suspend, Resume, Count };
   Stmt *SubExprs[SubExpr::Count];
 
   friend class ASTStmtReader;
 public:
-  CoawaitExpr(SourceLocation CoawaitLoc, Expr *Operand, Expr *Ready,
-              Expr *Suspend, Expr *Resume)
-      : Expr(CoawaitExprClass, Resume->getType(), Resume->getValueKind(),
-             Resume->getObjectKind(),
-             Resume->isTypeDependent(),
-             Resume->isValueDependent(),
-             Operand->isInstantiationDependent(),
-             Operand->containsUnexpandedParameterPack()),
-      CoawaitLoc(CoawaitLoc) {
-    SubExprs[CoawaitExpr::Operand] = Operand;
-    SubExprs[CoawaitExpr::Ready] = Ready;
-    SubExprs[CoawaitExpr::Suspend] = Suspend;
-    SubExprs[CoawaitExpr::Resume] = Resume;
+  CoroutineSuspendExpr(StmtClass SC, SourceLocation KeywordLoc, Expr *Common,
+                       Expr *Ready, Expr *Suspend, Expr *Resume)
+      : Expr(SC, Resume->getType(), Resume->getValueKind(),
+             Resume->getObjectKind(), Resume->isTypeDependent(),
+             Resume->isValueDependent(), Common->isInstantiationDependent(),
+             Common->containsUnexpandedParameterPack()),
+        KeywordLoc(KeywordLoc) {
+    SubExprs[SubExpr::Common] = Common;
+    SubExprs[SubExpr::Ready] = Ready;
+    SubExprs[SubExpr::Suspend] = Suspend;
+    SubExprs[SubExpr::Resume] = Resume;
   }
-  CoawaitExpr(SourceLocation CoawaitLoc, QualType Ty, Expr *Operand)
-      : Expr(CoawaitExprClass, Ty, VK_RValue, OK_Ordinary,
-             true, true, true, Operand->containsUnexpandedParameterPack()),
-        CoawaitLoc(CoawaitLoc) {
-    assert(Operand->isTypeDependent() && Ty->isDependentType() &&
-           "wrong constructor for non-dependent co_await expression");
-    SubExprs[CoawaitExpr::Operand] = Operand;
-    SubExprs[CoawaitExpr::Ready] = nullptr;
-    SubExprs[CoawaitExpr::Suspend] = nullptr;
-    SubExprs[CoawaitExpr::Resume] = nullptr;
+  CoroutineSuspendExpr(StmtClass SC, SourceLocation KeywordLoc, QualType Ty,
+                       Expr *Common)
+      : Expr(SC, Ty, VK_RValue, OK_Ordinary, true, true, true,
+             Common->containsUnexpandedParameterPack()),
+        KeywordLoc(KeywordLoc) {
+    assert(Common->isTypeDependent() && Ty->isDependentType() &&
+           "wrong constructor for non-dependent co_await/co_yield expression");
+    SubExprs[SubExpr::Common] = Common;
+    SubExprs[SubExpr::Ready] = nullptr;
+    SubExprs[SubExpr::Suspend] = nullptr;
+    SubExprs[SubExpr::Resume] = nullptr;
   }
-  CoawaitExpr(EmptyShell Empty) : Expr(CoawaitExprClass, Empty) {
-    SubExprs[CoawaitExpr::Operand] = nullptr;
-    SubExprs[CoawaitExpr::Ready] = nullptr;
-    SubExprs[CoawaitExpr::Suspend] = nullptr;
-    SubExprs[CoawaitExpr::Resume] = nullptr;
+  CoroutineSuspendExpr(StmtClass SC, EmptyShell Empty) : Expr(SC, Empty) {
+    SubExprs[SubExpr::Common] = nullptr;
+    SubExprs[SubExpr::Ready] = nullptr;
+    SubExprs[SubExpr::Suspend] = nullptr;
+    SubExprs[SubExpr::Resume] = nullptr;
   }
 
-  SourceLocation getKeywordLoc() const { return CoawaitLoc; }
-  Expr *getOperand() const {
-    return static_cast<Expr*>(SubExprs[SubExpr::Operand]);
+  SourceLocation getKeywordLoc() const { return KeywordLoc; }
+  Expr *getCommonExpr() const {
+    return static_cast<Expr*>(SubExprs[SubExpr::Common]);
   }
 
   Expr *getReadyExpr() const {
@@ -4080,10 +4112,10 @@ public:
   }
 
   SourceLocation getLocStart() const LLVM_READONLY {
-    return CoawaitLoc;
+    return KeywordLoc;
   }
   SourceLocation getLocEnd() const LLVM_READONLY {
-    return getOperand()->getLocEnd();
+    return getCommonExpr()->getLocEnd();
   }
 
   child_range children() {
@@ -4091,52 +4123,50 @@ public:
   }
 
   static bool classof(const Stmt *T) {
+    return T->getStmtClass() == CoawaitExprClass ||
+           T->getStmtClass() == CoyieldExprClass;
+  }
+};
+
+/// \brief Represents a 'co_await' expression.
+class CoawaitExpr : public CoroutineSuspendExpr {
+  friend class ASTStmtReader;
+public:
+  CoawaitExpr(SourceLocation CoawaitLoc, Expr *Operand, Expr *Ready,
+              Expr *Suspend, Expr *Resume)
+      : CoroutineSuspendExpr(CoawaitExprClass, CoawaitLoc, Operand, Ready,
+                             Suspend, Resume) {}
+  CoawaitExpr(SourceLocation CoawaitLoc, QualType Ty, Expr *Operand)
+      : CoroutineSuspendExpr(CoawaitExprClass, CoawaitLoc, Ty, Operand) {}
+  CoawaitExpr(EmptyShell Empty)
+      : CoroutineSuspendExpr(CoawaitExprClass, Empty) {}
+
+  Expr *getOperand() const {
+    // FIXME: Dig out the actual operand or store it.
+    return getCommonExpr();
+  }
+
+  static bool classof(const Stmt *T) {
     return T->getStmtClass() == CoawaitExprClass;
   }
 };
 
-/// \brief Represents a 'co_yield' expression. This expression provides a value
-/// to the coroutine promise and optionally suspends the coroutine. This implies
-/// a making call to <promise>.yield_value(<operand>), which we name the "promise
-/// call".
-class CoyieldExpr : public Expr {
-  SourceLocation CoyieldLoc;
-
-  /// The operand of the 'co_yield' expression.
-  Stmt *Operand;
-  /// The implied call to the promise object. May be null if the
-  /// coroutine has not yet been finalized.
-  Stmt *PromiseCall;
-
+/// \brief Represents a 'co_yield' expression.
+class CoyieldExpr : public CoroutineSuspendExpr {
   friend class ASTStmtReader;
 public:
-  CoyieldExpr(SourceLocation CoyieldLoc, QualType Void, Expr *Operand)
-      : Expr(CoyieldExprClass, Void, VK_RValue, OK_Ordinary, false, false,
-             Operand->isInstantiationDependent(),
-             Operand->containsUnexpandedParameterPack()),
-        CoyieldLoc(CoyieldLoc), Operand(Operand), PromiseCall(nullptr) {}
-  CoyieldExpr(EmptyShell Empty) : Expr(CoyieldExprClass, Empty) {}
+  CoyieldExpr(SourceLocation CoyieldLoc, Expr *Operand, Expr *Ready,
+              Expr *Suspend, Expr *Resume)
+      : CoroutineSuspendExpr(CoyieldExprClass, CoyieldLoc, Operand, Ready,
+                             Suspend, Resume) {}
+  CoyieldExpr(SourceLocation CoyieldLoc, QualType Ty, Expr *Operand)
+      : CoroutineSuspendExpr(CoyieldExprClass, CoyieldLoc, Ty, Operand) {}
+  CoyieldExpr(EmptyShell Empty)
+      : CoroutineSuspendExpr(CoyieldExprClass, Empty) {}
 
-  SourceLocation getKeywordLoc() const { return CoyieldLoc; }
-  Expr *getOperand() const { return static_cast<Expr*>(Operand); }
-
-  /// \brief Get the call to the promise objet that is implied by an evaluation
-  /// of this expression. Will be nullptr if the coroutine has not yet been
-  /// finalized.
-  Expr *getPromiseCall() const { return static_cast<Expr*>(PromiseCall); }
-
-  /// \brief Set the resolved promise call. This is delayed until the
-  /// complete coroutine body has been parsed and the promise type is known.
-  void finalize(Stmt *PC) { PromiseCall = PC; }
-
-  SourceLocation getLocStart() const LLVM_READONLY { return CoyieldLoc; }
-  SourceLocation getLocEnd() const LLVM_READONLY {
-    return Operand->getLocEnd();
-  }
-
-  child_range children() {
-    Stmt **Which = PromiseCall ? &PromiseCall : &Operand;
-    return child_range(Which, Which + 1);
+  Expr *getOperand() const {
+    // FIXME: Dig out the actual operand or store it.
+    return getCommonExpr();
   }
 
   static bool classof(const Stmt *T) {

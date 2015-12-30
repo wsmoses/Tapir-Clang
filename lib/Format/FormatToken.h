@@ -553,6 +553,7 @@ struct AdditionalKeywords {
 
     kw_mark = &IdentTable.get("mark");
 
+    kw_extend = &IdentTable.get("extend");
     kw_option = &IdentTable.get("option");
     kw_optional = &IdentTable.get("optional");
     kw_repeated = &IdentTable.get("repeated");
@@ -560,6 +561,7 @@ struct AdditionalKeywords {
     kw_returns = &IdentTable.get("returns");
 
     kw_signals = &IdentTable.get("signals");
+    kw_qsignals = &IdentTable.get("Q_SIGNALS");
     kw_slots = &IdentTable.get("slots");
     kw_qslots = &IdentTable.get("Q_SLOTS");
   }
@@ -597,6 +599,7 @@ struct AdditionalKeywords {
   IdentifierInfo *kw_mark;
 
   // Proto keywords.
+  IdentifierInfo *kw_extend;
   IdentifierInfo *kw_option;
   IdentifierInfo *kw_optional;
   IdentifierInfo *kw_repeated;
@@ -605,6 +608,7 @@ struct AdditionalKeywords {
 
   // QT keywords.
   IdentifierInfo *kw_signals;
+  IdentifierInfo *kw_qsignals;
   IdentifierInfo *kw_slots;
   IdentifierInfo *kw_qslots;
 };

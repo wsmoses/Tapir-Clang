@@ -1,4 +1,4 @@
-//===--- CompilerInvocation.cpp -------------------------------------------===//
+//===--- 
 //
 //                     The LLVM Compiler Infrastructure
 //
@@ -38,6 +38,7 @@
 #include "llvm/Support/Host.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
+#include "llvm/Target/TargetOptions.h"
 #include <atomic>
 #include <memory>
 #include <sys/stat.h>
@@ -364,6 +365,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
                              const TargetOptions &TargetOpts) {
   using namespace options;
   bool Success = true;
+  llvm::Triple Triple = llvm::Triple(TargetOpts.Triple);
 
   unsigned OptimizationLevel = getOptimizationLevel(Args, IK, Diags);
   // TODO: This could be done in Driver
@@ -403,11 +405,19 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
             .Case("limited", CodeGenOptions::LimitedDebugInfo)
             .Case("standalone", CodeGenOptions::FullDebugInfo));
   }
+  if (Arg *A = Args.getLastArg(OPT_debugger_tuning_EQ)) {
+    Opts.setDebuggerTuning(
+        llvm::StringSwitch<CodeGenOptions::DebuggerKind>(A->getValue())
+            .Case("gdb", CodeGenOptions::DebuggerKindGDB)
+            .Case("lldb", CodeGenOptions::DebuggerKindLLDB)
+            .Case("sce", CodeGenOptions::DebuggerKindSCE));
+  }
   Opts.DwarfVersion = getLastArgIntValue(Args, OPT_dwarf_version_EQ, 0, Diags);
   Opts.DebugColumnInfo = Args.hasArg(OPT_dwarf_column_info);
   Opts.EmitCodeView = Args.hasArg(OPT_gcodeview);
   Opts.SplitDwarfFile = Args.getLastArgValue(OPT_split_dwarf_file);
   Opts.DebugTypeExtRefs = Args.hasArg(OPT_dwarf_ext_refs);
+  Opts.DebugExplicitImport = Triple.isPS4CPU(); 
 
   for (const auto &Arg : Args.getAllArgValues(OPT_fdebug_prefix_map_EQ))
     Opts.DebugPrefixMap.insert(StringRef(Arg).split('='));
@@ -452,10 +462,25 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.CXXCtorDtorAliases = Args.hasArg(OPT_mconstructor_aliases);
   Opts.CodeModel = getCodeModel(Args, Diags);
   Opts.DebugPass = Args.getLastArgValue(OPT_mdebug_pass);
-  Opts.DisableFPElim = Args.hasArg(OPT_mdisable_fp_elim);
+  Opts.DisableFPElim =
+      (Args.hasArg(OPT_mdisable_fp_elim) || Args.hasArg(OPT_pg));
   Opts.DisableFree = Args.hasArg(OPT_disable_free);
   Opts.DisableTailCalls = Args.hasArg(OPT_mdisable_tail_calls);
   Opts.FloatABI = Args.getLastArgValue(OPT_mfloat_abi);
+  if (Arg *A = Args.getLastArg(OPT_meabi)) {
+    StringRef Value = A->getValue();
+    llvm::EABI EABIVersion = llvm::StringSwitch<llvm::EABI>(Value)
+                                 .Case("default", llvm::EABI::Default)
+                                 .Case("4", llvm::EABI::EABI4)
+                                 .Case("5", llvm::EABI::EABI5)
+                                 .Case("gnu", llvm::EABI::GNU)
+                                 .Default(llvm::EABI::Unknown);
+    if (EABIVersion == llvm::EABI::Unknown)
+      Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args)
+                                                << Value;
+    else
+      Opts.EABIVersion = Value;
+  }
   Opts.LessPreciseFPMAD = Args.hasArg(OPT_cl_mad_enable);
   Opts.LimitFloatPrecision = Args.getLastArgValue(OPT_mlimit_float_precision);
   Opts.NoInfsFPMath = (Args.hasArg(OPT_menable_no_infinities) ||
@@ -474,6 +499,8 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.FatalWarnings = Args.hasArg(OPT_massembler_fatal_warnings);
   Opts.EnableSegmentedStacks = Args.hasArg(OPT_split_stacks);
   Opts.RelaxAll = Args.hasArg(OPT_mrelax_all);
+  Opts.IncrementalLinkerCompatible =
+      Args.hasArg(OPT_mincremental_linker_compatible);
   Opts.OmitLeafFramePointer = Args.hasArg(OPT_momit_leaf_frame_pointer);
   Opts.SaveTempLabels = Args.hasArg(OPT_msave_temp_labels);
   Opts.NoDwarfDirectoryAsm = Args.hasArg(OPT_fno_dwarf_directory_asm);
@@ -505,6 +532,12 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.PrepareForLTO = Args.hasArg(OPT_flto, OPT_flto_EQ);
   const Arg *A = Args.getLastArg(OPT_flto, OPT_flto_EQ);
   Opts.EmitFunctionSummary = A && A->containsValue("thin");
+  if (Arg *A = Args.getLastArg(OPT_fthinlto_index_EQ)) {
+    if (IK != IK_LLVM_IR)
+      Diags.Report(diag::err_drv_argument_only_allowed_with)
+          << A->getAsString(Args) << "-x ir";
+    Opts.ThinLTOIndexFile = Args.getLastArgValue(OPT_fthinlto_index_EQ);
+  }
 
   Opts.MSVolatile = Args.hasArg(OPT_fms_volatile);
 
@@ -561,6 +594,7 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
       getLastArgIntValue(Args, OPT_fsanitize_memory_track_origins_EQ, 0, Diags);
   Opts.SanitizeMemoryUseAfterDtor =
       Args.hasArg(OPT_fsanitize_memory_use_after_dtor);
+  Opts.SanitizeCfiCrossDso = Args.hasArg(OPT_fsanitize_cfi_cross_dso);
   Opts.SSPBufferSize =
       getLastArgIntValue(Args, OPT_stack_protector_buffer_size, 8, Diags);
   Opts.StackRealignment = Args.hasArg(OPT_mstackrealign);
@@ -1000,6 +1034,7 @@ static InputKind ParseFrontendArgs(FrontendOptions &Opts, ArgList &Args,
   Opts.ModuleMapFiles = Args.getAllArgValues(OPT_fmodule_map_file);
   Opts.ModuleFiles = Args.getAllArgValues(OPT_fmodule_file);
   Opts.ModulesEmbedFiles = Args.getAllArgValues(OPT_fmodules_embed_file_EQ);
+  Opts.ModulesEmbedAllFiles = Args.hasArg(OPT_fmodules_embed_all_files);
 
   Opts.CodeCompleteOpts.IncludeMacros
     = Args.hasArg(OPT_code_completion_macros);
@@ -1617,8 +1652,6 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
       Args.hasArg(OPT_fmodules_decluse) || Opts.ModulesStrictDeclUse;
   Opts.ModulesLocalVisibility =
       Args.hasArg(OPT_fmodules_local_submodule_visibility);
-  Opts.ModulesHideInternalLinkage =
-      !Args.hasArg(OPT_fno_modules_hide_internal_linkage);
   Opts.ModulesSearchAll = Opts.Modules &&
     !Args.hasArg(OPT_fno_modules_search_all) &&
     Args.hasArg(OPT_fmodules_search_all);
