@@ -1673,7 +1673,6 @@ private:
   StmtResult ParseBreakStatement();
   StmtResult ParseReturnStatement();
   StmtResult ParseCilkSpawnStatement();
-  ExprResult ParseCilkSpawnExpr();
   StmtResult ParseCilkSyncStatement();
   StmtResult ParseCilkForStatement(SourceLocation *TrailingElseLoc);
   StmtResult ParseAsmStatement(bool &msAsm);

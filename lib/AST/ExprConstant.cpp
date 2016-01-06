@@ -9177,9 +9177,6 @@ static ICEDiag CheckICE(const Expr* E, const ASTContext &Ctx) {
     }
     return ICEDiag(IK_NotICE, E->getLocStart());
   }
-  case Expr::CilkSpawnExprClass:
-    return CheckICE( cast<Expr>(cast<CilkSpawnExpr>(E)->getSpawnedExpr()), Ctx);
-
   case Expr::UnaryOperatorClass: {
     const UnaryOperator *Exp = cast<UnaryOperator>(E);
     switch (Exp->getOpcode()) {

@@ -367,13 +367,6 @@ void StmtPrinter::VisitCilkSpawnStmt(CilkSpawnStmt *Node) {
   if (Policy.IncludeNewlines) OS << "\n";
 }
 
-void StmtPrinter::VisitCilkSpawnExpr(CilkSpawnExpr *Node) {
-  Indent() << "_Cilk_spawn ";
-  PrintStmt(Node->getSpawnedExpr());
-  OS << ";";
-  if (Policy.IncludeNewlines) OS << "\n";
-}
-
 void StmtPrinter::VisitReturnStmt(ReturnStmt *Node) {
   Indent() << "return";
   if (Node->getRetValue()) {

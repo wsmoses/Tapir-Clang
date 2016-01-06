@@ -3395,7 +3395,6 @@ public:
 
   StmtResult ActOnCilkSyncStmt(SourceLocation SyncLoc);
   StmtResult ActOnCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *S);
-  ExprResult ActOnCilkSpawnExpr(SourceLocation SpawnLoc, Expr *S);
 
   // bool CheckIfBodyModifiesLoopControlVar(Stmt *Body);
   StmtResult ActOnCilkForStmt(SourceLocation CilkForLoc,

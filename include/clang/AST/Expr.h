@@ -1640,48 +1640,6 @@ public:
   child_range children() { return child_range(&Val, &Val+1); }
 };
 
-/// CilkSpawnStmt - This represents a _Cilk_spawn.
-///
-class CilkSpawnExpr : public Expr {
-  SourceLocation SpawnLoc;
-  Stmt *SpawnedExpr;
-
-public:
-
-  CilkSpawnExpr(SourceLocation SL, Expr *val)
-      : Expr(CilkSpawnExprClass, val->getType(),
-           val->getValueKind(), val->getObjectKind(),
-           val->isTypeDependent(), val->isValueDependent(),
-           val->isInstantiationDependent(),
-           val->containsUnexpandedParameterPack()),
-	SpawnLoc(SL),
-	SpawnedExpr(val) { }
-
-  explicit CilkSpawnExpr(EmptyShell Empty)
-    : Expr(CilkSpawnExprClass, Empty) { }
-
-  const Stmt *getSpawnedExpr() const { return cast<Expr>(SpawnedExpr); }
-  Expr *getSpawnedExpr() { return cast<Expr>(SpawnedExpr); }
-  void setSpawnedExpr(Expr *S) { SpawnedExpr = S; }
-
-  SourceLocation getSpawnLoc() const { return SpawnLoc; }
-  void setSpawnLoc(SourceLocation L) { SpawnLoc = L; }
-
-  SourceLocation getLocStart() const LLVM_READONLY { return SpawnLoc; }
-  SourceLocation getLocEnd() const LLVM_READONLY {
-    return SpawnedExpr->getLocEnd();
-  }
-
-  static bool classof(const Stmt *T) {
-    return T->getStmtClass() == CilkSpawnExprClass;
-  }
-
-  // Iterators
-  child_range children() {
-    return child_range(&SpawnedExpr, &SpawnedExpr+1);
-  }
-};
-
 /// UnaryOperator - This represents the unary-expression's (except sizeof and
 /// alignof), the postinc/postdec operators from postfix-expression, and various
 /// extensions.

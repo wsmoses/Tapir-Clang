@@ -507,22 +507,6 @@ class CastExpressionIdValidator : public CorrectionCandidateCallback {
 };
 }
 
-/// ParseCilkSpawnStatement
-///       jump-statement:
-///         '_Cilk_spawn' expression
-ExprResult Parser::ParseCilkSpawnExpr() {
-  assert(Tok.is(tok::kw__Cilk_spawn) && "Not a _Cilk_spawn expr!");
-  SourceLocation SpawnLoc = ConsumeToken();  // eat the '_Cilk_spawn'.
-
-  // Parse statement of spawned child
-  auto SubStmt = ParseExpression();
-  if (SubStmt.isInvalid()) {
-    SkipUntil(tok::semi);
-    return ExprError();
-  }
-  return Actions.ActOnCilkSpawnExpr(SpawnLoc, SubStmt.get());
-}
-
 /// \brief Parse a cast-expression, or, if \pisUnaryExpression is true, parse
 /// a unary-expression.
 ///
@@ -1045,9 +1029,6 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
       Res = Actions.ActOnUnaryOp(getCurScope(), SavedLoc, SavedKind, Res.get());
     return Res;
   }
-  case tok::kw__Cilk_spawn:
-    return ParseCilkSpawnExpr();
-
 
   case tok::star:          // unary-expression: '*' cast-expression
   case tok::plus:          // unary-expression: '+' cast-expression
