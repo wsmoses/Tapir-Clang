@@ -283,6 +283,9 @@ static Cl::Kinds ClassifyInternal(ASTContext &Ctx, const Expr *E) {
       return ClassifyBinaryOp(Ctx, cast<BinaryOperator>(E));
     return Cl::CL_PRValue;
 
+  case Expr::CilkSpawnExprClass:
+    return Cl::CL_PRValue;
+
   case Expr::CallExprClass:
   case Expr::CXXOperatorCallExprClass:
   case Expr::CXXMemberCallExprClass:

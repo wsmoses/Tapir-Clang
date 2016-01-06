@@ -2831,6 +2831,7 @@ recurse:
     llvm_unreachable("unexpected statement kind");
 
   // FIXME: invent manglings for all these.
+  case Expr::CilkSpawnExprClass:
   case Expr::BlockExprClass:
   case Expr::ChooseExprClass:
   case Expr::CompoundLiteralExprClass:

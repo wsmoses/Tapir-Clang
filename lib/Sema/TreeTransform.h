@@ -1253,6 +1253,14 @@ public:
     return getSema().ActOnCilkSpawnStmt(SpawnLoc, S);
   }
 
+  /// \brief Build a new Cilk spawn expression.
+  ///
+  /// By default, performs semantic analysis to build the new expression.
+  /// Subclasses may override this routine to provide different behavior.
+  ExprResult RebuildCilkSpawnExpr(SourceLocation SpawnLoc, Expr *S) {
+    return getSema().ActOnCilkSpawnExpr(SpawnLoc, S);
+  }
+
   /// \brief Build a new declaration statement.
   ///
   /// By default, performs semantic analysis to build the new statement.
@@ -11618,6 +11626,21 @@ TreeTransform<Derived>::TransformCilkSpawnStmt(CilkSpawnStmt *S) {
     return S;
 
   return getDerived().RebuildCilkSpawnStmt(S->getSpawnLoc(), Child.get());
+}
+
+
+template<typename Derived>
+ExprResult
+TreeTransform<Derived>::TransformCilkSpawnExpr(CilkSpawnExpr *S) {
+  ExprResult Child = getDerived().TransformExpr(S->getSpawnedExpr());
+  if (Child.isInvalid())
+    return ExprError();
+
+  if (!getDerived().AlwaysRebuild() &&
+      Child.get() == S->getSpawnedExpr())
+    return S;
+
+  return getDerived().RebuildCilkSpawnExpr(S->getSpawnLoc(), Child.get());
 }
 
 template<typename Derived>

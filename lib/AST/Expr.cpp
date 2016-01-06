@@ -3021,6 +3021,8 @@ bool Expr::HasSideEffects(const ASTContext &Ctx,
       break;
     return true;
 
+  //todo consider when no side effects
+  case CilkSpawnExprClass:
   case MSPropertyRefExprClass:
   case MSPropertySubscriptExprClass:
   case CompoundAssignOperatorClass:

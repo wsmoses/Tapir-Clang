@@ -14593,17 +14593,12 @@ Sema::ActOnObjCBoolLiteral(SourceLocation OpLoc, tok::TokenKind Kind) {
       ObjCBoolLiteralExpr(Kind == tok::kw___objc_yes, BoolT, OpLoc);
 }
 
-// ExprResult
-// Sema::ActOnCilkSpawnCall(SourceLocation SpawnLoc, Expr *E) {
-//   assert(FunctionScopes.size() > 0 && "FunctionScopes missing TU scope");
-//   if (FunctionScopes.size() < 1 ||
-//       getCurFunction()->CompoundScopes.size() < 1) {
-//     Diag(SpawnLoc, diag::err_spawn_invalid_scope);
-//     return ExprError();
-//   }
+ ExprResult
+ Sema::ActOnCilkSpawnExpr(SourceLocation SpawnLoc, Expr *E) {
+  DiagnoseUnusedExprResult(E);
 
-//   return BuildCilkSpawnCall(SpawnLoc, E);
-// }
+  return new (Context) CilkSpawnExpr(SpawnLoc, E);
+ }
 
 // ExprResult
 // Sema::BuildCilkSpawnCall(SourceLocation SpawnLoc, Expr *E) {

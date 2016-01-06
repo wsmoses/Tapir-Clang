@@ -946,6 +946,8 @@ CanThrowResult Sema::canThrow(const Expr *E) {
   //   [Can throw] if in a potentially-evaluated context the expression would
   //   contain:
   switch (E->getStmtClass()) {
+  case Expr::CilkSpawnExprClass:
+    return canThrow( cast<Expr>( cast<CilkSpawnExpr>(E)->getSpawnedExpr() ) );
   case Expr::CXXThrowExprClass:
     //   - a potentially evaluated throw-expression
     return CT_Can;

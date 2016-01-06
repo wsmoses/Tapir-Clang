@@ -2003,7 +2003,9 @@ enum CXCursorKind {
    */
   CXCursor_OMPArraySectionExpr           = 147,
 
-  CXCursor_LastExpr                      = CXCursor_OMPArraySectionExpr,
+  CXCursor_CilkSpawnExpr                 = 148,
+
+  CXCursor_LastExpr                      = CXCursor_CilkSpawnExpr,
 
   /* Statements */
   CXCursor_FirstStmt                     = 200,

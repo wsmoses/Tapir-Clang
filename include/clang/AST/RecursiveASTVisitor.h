@@ -2248,6 +2248,7 @@ DEF_TRAVERSE_STMT(ObjCBridgedCastExpr, {
   TRY_TO(TraverseTypeLoc(S->getTypeInfoAsWritten()->getTypeLoc()));
 })
 DEF_TRAVERSE_STMT(ParenExpr, {})
+DEF_TRAVERSE_STMT(CilkSpawnExpr, {})
 DEF_TRAVERSE_STMT(ParenListExpr, {})
 DEF_TRAVERSE_STMT(PredefinedExpr, {})
 DEF_TRAVERSE_STMT(ShuffleVectorExpr, {})

@@ -1223,6 +1223,8 @@ namespace clang {
       EXPR_STRING_LITERAL,
       /// \brief A CharacterLiteral record.
       EXPR_CHARACTER_LITERAL,
+      /// \brief A CilkSpawnExpr record.
+      EXPR_CILKSPAWN,
       /// \brief A ParenExpr record.
       EXPR_PAREN,
       /// \brief A ParenListExpr record.

@@ -4522,6 +4522,8 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
       return cxstring::createRef("OverloadCandidate");
   case CXCursor_TypeAliasTemplateDecl:
       return cxstring::createRef("TypeAliasTemplateDecl");
+  case CXCursor_CilkSpawnExpr:
+    return cxstring::createRef("CilkSpawnExpr");
   case CXCursor_CilkSpawnStmt:
     return cxstring::createRef("CilkSpawnStmt");
   case CXCursor_CilkSyncStmt:
