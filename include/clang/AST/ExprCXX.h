@@ -235,7 +235,9 @@ public:
 ///
 /// This expression node represents a C++ static cast, e.g.,
 /// \c static_cast<int>(1.0).
-class CXXStaticCastExpr : public CXXNamedCastExpr {
+class CXXStaticCastExpr final
+    : public CXXNamedCastExpr,
+      private llvm::TrailingObjects<CXXStaticCastExpr, CXXBaseSpecifier *> {
   CXXStaticCastExpr(QualType ty, ExprValueKind vk, CastKind kind, Expr *op,
                     unsigned pathSize, TypeSourceInfo *writtenTy,
                     SourceLocation l, SourceLocation RParenLoc,
@@ -259,6 +261,9 @@ public:
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == CXXStaticCastExprClass;
   }
+
+  friend TrailingObjects;
+  friend class CastExpr;
 };
 
 /// \brief A C++ @c dynamic_cast expression (C++ [expr.dynamic.cast]).
@@ -266,7 +271,9 @@ public:
 /// This expression node represents a dynamic cast, e.g.,
 /// \c dynamic_cast<Derived*>(BasePtr). Such a cast may perform a run-time
 /// check to determine how to perform the type conversion.
-class CXXDynamicCastExpr : public CXXNamedCastExpr {
+class CXXDynamicCastExpr final
+    : public CXXNamedCastExpr,
+      private llvm::TrailingObjects<CXXDynamicCastExpr, CXXBaseSpecifier *> {
   CXXDynamicCastExpr(QualType ty, ExprValueKind VK, CastKind kind,
                      Expr *op, unsigned pathSize, TypeSourceInfo *writtenTy,
                      SourceLocation l, SourceLocation RParenLoc,
@@ -293,6 +300,9 @@ public:
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == CXXDynamicCastExprClass;
   }
+
+  friend TrailingObjects;
+  friend class CastExpr;
 };
 
 /// \brief A C++ @c reinterpret_cast expression (C++ [expr.reinterpret.cast]).
@@ -303,7 +313,10 @@ public:
 /// A reinterpret_cast provides a differently-typed view of a value but
 /// (in Clang, as in most C++ implementations) performs no actual work at
 /// run time.
-class CXXReinterpretCastExpr : public CXXNamedCastExpr {
+class CXXReinterpretCastExpr final
+    : public CXXNamedCastExpr,
+      private llvm::TrailingObjects<CXXReinterpretCastExpr,
+                                    CXXBaseSpecifier *> {
   CXXReinterpretCastExpr(QualType ty, ExprValueKind vk, CastKind kind,
                          Expr *op, unsigned pathSize,
                          TypeSourceInfo *writtenTy, SourceLocation l,
@@ -328,6 +341,9 @@ public:
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == CXXReinterpretCastExprClass;
   }
+
+  friend TrailingObjects;
+  friend class CastExpr;
 };
 
 /// \brief A C++ \c const_cast expression (C++ [expr.const.cast]).
@@ -337,7 +353,9 @@ public:
 ///
 /// A const_cast can remove type qualifiers but does not change the underlying
 /// value.
-class CXXConstCastExpr : public CXXNamedCastExpr {
+class CXXConstCastExpr final
+    : public CXXNamedCastExpr,
+      private llvm::TrailingObjects<CXXConstCastExpr, CXXBaseSpecifier *> {
   CXXConstCastExpr(QualType ty, ExprValueKind VK, Expr *op,
                    TypeSourceInfo *writtenTy, SourceLocation l,
                    SourceLocation RParenLoc, SourceRange AngleBrackets)
@@ -358,6 +376,9 @@ public:
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == CXXConstCastExprClass;
   }
+
+  friend TrailingObjects;
+  friend class CastExpr;
 };
 
 /// \brief A call to a literal operator (C++11 [over.literal])
@@ -930,13 +951,9 @@ public:
 /// This wraps up a function call argument that was created from the
 /// corresponding parameter's default argument, when the call did not
 /// explicitly supply arguments for all of the parameters.
-class CXXDefaultArgExpr : public Expr {
+class CXXDefaultArgExpr final : public Expr {
   /// \brief The parameter whose default is being used.
-  ///
-  /// When the bit is set, the subexpression is stored after the
-  /// CXXDefaultArgExpr itself. When the bit is clear, the parameter's
-  /// actual default expression is the subexpression.
-  llvm::PointerIntPair<ParmVarDecl *, 1, bool> Param;
+  ParmVarDecl *Param;
 
   /// \brief The location where the default argument expression was used.
   SourceLocation Loc;
@@ -948,16 +965,7 @@ class CXXDefaultArgExpr : public Expr {
              : param->getDefaultArg()->getType(),
            param->getDefaultArg()->getValueKind(),
            param->getDefaultArg()->getObjectKind(), false, false, false, false),
-      Param(param, false), Loc(Loc) { }
-
-  CXXDefaultArgExpr(StmtClass SC, SourceLocation Loc, ParmVarDecl *param,
-                    Expr *SubExpr)
-    : Expr(SC, SubExpr->getType(),
-           SubExpr->getValueKind(), SubExpr->getObjectKind(),
-           false, false, false, false),
-      Param(param, true), Loc(Loc) {
-    *reinterpret_cast<Expr **>(this + 1) = SubExpr;
-  }
+      Param(param), Loc(Loc) { }
 
 public:
   CXXDefaultArgExpr(EmptyShell Empty) : Expr(CXXDefaultArgExprClass, Empty) {}
@@ -969,24 +977,15 @@ public:
     return new (C) CXXDefaultArgExpr(CXXDefaultArgExprClass, Loc, Param);
   }
 
-  // \p Param is the parameter whose default argument is used by this
-  // expression, and \p SubExpr is the expression that will actually be used.
-  static CXXDefaultArgExpr *Create(const ASTContext &C, SourceLocation Loc,
-                                   ParmVarDecl *Param, Expr *SubExpr);
-
   // Retrieve the parameter that the argument was created from.
-  const ParmVarDecl *getParam() const { return Param.getPointer(); }
-  ParmVarDecl *getParam() { return Param.getPointer(); }
+  const ParmVarDecl *getParam() const { return Param; }
+  ParmVarDecl *getParam() { return Param; }
 
   // Retrieve the actual argument to the function call.
   const Expr *getExpr() const {
-    if (Param.getInt())
-      return *reinterpret_cast<Expr const * const*> (this + 1);
     return getParam()->getDefaultArg();
   }
   Expr *getExpr() {
-    if (Param.getInt())
-      return *reinterpret_cast<Expr **> (this + 1);
     return getParam()->getDefaultArg();
   }
 
@@ -1313,7 +1312,9 @@ public:
 /// \code
 ///   x = int(0.5);
 /// \endcode
-class CXXFunctionalCastExpr : public ExplicitCastExpr {
+class CXXFunctionalCastExpr final
+    : public ExplicitCastExpr,
+      private llvm::TrailingObjects<CXXFunctionalCastExpr, CXXBaseSpecifier *> {
   SourceLocation LParenLoc;
   SourceLocation RParenLoc;
 
@@ -1350,6 +1351,9 @@ public:
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == CXXFunctionalCastExprClass;
   }
+
+  friend TrailingObjects;
+  friend class CastExpr;
 };
 
 /// @brief Represents a C++ functional cast expression that builds a
@@ -1415,7 +1419,9 @@ public:
 /// C++1y introduces a new form of "capture" called an init-capture that
 /// includes an initializing expression (rather than capturing a variable),
 /// and which can never occur implicitly.
-class LambdaExpr : public Expr {
+class LambdaExpr final
+    : public Expr,
+      private llvm::TrailingObjects<LambdaExpr, Stmt *, unsigned, VarDecl *> {
   /// \brief The source range that covers the lambda introducer ([...]).
   SourceRange IntroducerRange;
 
@@ -1450,23 +1456,21 @@ class LambdaExpr : public Expr {
   /// module file just to determine the source range.
   SourceLocation ClosingBrace;
 
-  // Note: The capture initializers are stored directly after the lambda
-  // expression, along with the index variables used to initialize by-copy
-  // array captures.
+  size_t numTrailingObjects(OverloadToken<Stmt *>) const {
+    return NumCaptures + 1;
+  }
 
-  typedef LambdaCapture Capture;
+  size_t numTrailingObjects(OverloadToken<unsigned>) const {
+    return HasArrayIndexVars ? NumCaptures + 1 : 0;
+  }
 
   /// \brief Construct a lambda expression.
   LambdaExpr(QualType T, SourceRange IntroducerRange,
              LambdaCaptureDefault CaptureDefault,
-             SourceLocation CaptureDefaultLoc,
-             ArrayRef<Capture> Captures,
-             bool ExplicitParams,
-             bool ExplicitResultType,
-             ArrayRef<Expr *> CaptureInits,
-             ArrayRef<VarDecl *> ArrayIndexVars,
-             ArrayRef<unsigned> ArrayIndexStarts,
-             SourceLocation ClosingBrace,
+             SourceLocation CaptureDefaultLoc, ArrayRef<LambdaCapture> Captures,
+             bool ExplicitParams, bool ExplicitResultType,
+             ArrayRef<Expr *> CaptureInits, ArrayRef<VarDecl *> ArrayIndexVars,
+             ArrayRef<unsigned> ArrayIndexStarts, SourceLocation ClosingBrace,
              bool ContainsUnexpandedParameterPack);
 
   /// \brief Construct an empty lambda expression.
@@ -1477,53 +1481,35 @@ class LambdaExpr : public Expr {
     getStoredStmts()[NumCaptures] = nullptr;
   }
 
-  Stmt **getStoredStmts() { return reinterpret_cast<Stmt **>(this + 1); }
+  Stmt **getStoredStmts() { return getTrailingObjects<Stmt *>(); }
 
-  Stmt *const *getStoredStmts() const {
-    return reinterpret_cast<Stmt *const *>(this + 1);
-  }
+  Stmt *const *getStoredStmts() const { return getTrailingObjects<Stmt *>(); }
 
   /// \brief Retrieve the mapping from captures to the first array index
   /// variable.
-  unsigned *getArrayIndexStarts() {
-    return reinterpret_cast<unsigned *>(getStoredStmts() + NumCaptures + 1);
-  }
+  unsigned *getArrayIndexStarts() { return getTrailingObjects<unsigned>(); }
 
   const unsigned *getArrayIndexStarts() const {
-    return reinterpret_cast<const unsigned *>(getStoredStmts() + NumCaptures +
-                                              1);
+    return getTrailingObjects<unsigned>();
   }
 
   /// \brief Retrieve the complete set of array-index variables.
-  VarDecl **getArrayIndexVars() {
-    unsigned ArrayIndexSize = llvm::RoundUpToAlignment(
-        sizeof(unsigned) * (NumCaptures + 1), llvm::alignOf<VarDecl *>());
-    return reinterpret_cast<VarDecl **>(
-        reinterpret_cast<char *>(getArrayIndexStarts()) + ArrayIndexSize);
-  }
+  VarDecl **getArrayIndexVars() { return getTrailingObjects<VarDecl *>(); }
 
   VarDecl *const *getArrayIndexVars() const {
-    unsigned ArrayIndexSize = llvm::RoundUpToAlignment(
-        sizeof(unsigned) * (NumCaptures + 1), llvm::alignOf<VarDecl *>());
-    return reinterpret_cast<VarDecl *const *>(
-        reinterpret_cast<const char *>(getArrayIndexStarts()) + ArrayIndexSize);
+    return getTrailingObjects<VarDecl *>();
   }
 
 public:
   /// \brief Construct a new lambda expression.
-  static LambdaExpr *Create(const ASTContext &C,
-                            CXXRecordDecl *Class,
-                            SourceRange IntroducerRange,
-                            LambdaCaptureDefault CaptureDefault,
-                            SourceLocation CaptureDefaultLoc,
-                            ArrayRef<Capture> Captures,
-                            bool ExplicitParams,
-                            bool ExplicitResultType,
-                            ArrayRef<Expr *> CaptureInits,
-                            ArrayRef<VarDecl *> ArrayIndexVars,
-                            ArrayRef<unsigned> ArrayIndexStarts,
-                            SourceLocation ClosingBrace,
-                            bool ContainsUnexpandedParameterPack);
+  static LambdaExpr *
+  Create(const ASTContext &C, CXXRecordDecl *Class, SourceRange IntroducerRange,
+         LambdaCaptureDefault CaptureDefault, SourceLocation CaptureDefaultLoc,
+         ArrayRef<LambdaCapture> Captures, bool ExplicitParams,
+         bool ExplicitResultType, ArrayRef<Expr *> CaptureInits,
+         ArrayRef<VarDecl *> ArrayIndexVars,
+         ArrayRef<unsigned> ArrayIndexStarts, SourceLocation ClosingBrace,
+         bool ContainsUnexpandedParameterPack);
 
   /// \brief Construct a new lambda expression that will be deserialized from
   /// an external source.
@@ -1546,7 +1532,7 @@ public:
 
   /// \brief An iterator that walks over the captures of the lambda,
   /// both implicit and explicit.
-  typedef const Capture *capture_iterator;
+  typedef const LambdaCapture *capture_iterator;
 
   /// \brief An iterator over a range of lambda captures.
   typedef llvm::iterator_range<capture_iterator> capture_range;
@@ -1683,9 +1669,11 @@ public:
   SourceLocation getLocEnd() const LLVM_READONLY { return ClosingBrace; }
 
   child_range children() {
+    // Includes initialization exprs plus body stmt
     return child_range(getStoredStmts(), getStoredStmts() + NumCaptures + 1);
   }
 
+  friend TrailingObjects;
   friend class ASTStmtReader;
   friend class ASTStmtWriter;
 };
@@ -2200,7 +2188,9 @@ public:
 ///   __is_enum(std::string) == false
 ///   __is_trivially_constructible(vector<int>, int*, int*)
 /// \endcode
-class TypeTraitExpr : public Expr {
+class TypeTraitExpr final
+    : public Expr,
+      private llvm::TrailingObjects<TypeTraitExpr, TypeSourceInfo *> {
   /// \brief The location of the type trait keyword.
   SourceLocation Loc;
   
@@ -2217,16 +2207,10 @@ class TypeTraitExpr : public Expr {
 
   TypeTraitExpr(EmptyShell Empty) : Expr(TypeTraitExprClass, Empty) { }
 
-  /// \brief Retrieve the argument types.
-  TypeSourceInfo **getTypeSourceInfos() {
-    return reinterpret_cast<TypeSourceInfo **>(this+1);
+  size_t numTrailingObjects(OverloadToken<TypeSourceInfo *>) const {
+    return getNumArgs();
   }
-  
-  /// \brief Retrieve the argument types.
-  TypeSourceInfo * const *getTypeSourceInfos() const {
-    return reinterpret_cast<TypeSourceInfo * const*>(this+1);
-  }
-  
+
 public:
   /// \brief Create a new type trait expression.
   static TypeTraitExpr *Create(const ASTContext &C, QualType T,
@@ -2258,22 +2242,9 @@ public:
   }
   
   /// \brief Retrieve the argument types.
-  ArrayRef<TypeSourceInfo *> getArgs() const { 
-    return llvm::makeArrayRef(getTypeSourceInfos(), getNumArgs());
-  }
-  
-  typedef TypeSourceInfo **arg_iterator;
-  arg_iterator arg_begin() { 
-    return getTypeSourceInfos(); 
-  }
-  arg_iterator arg_end() { 
-    return getTypeSourceInfos() + getNumArgs(); 
-  }
-
-  typedef TypeSourceInfo const * const *arg_const_iterator;
-  arg_const_iterator arg_begin() const { return getTypeSourceInfos(); }
-  arg_const_iterator arg_end() const { 
-    return getTypeSourceInfos() + getNumArgs(); 
+  ArrayRef<TypeSourceInfo *> getArgs() const {
+    return llvm::makeArrayRef(getTrailingObjects<TypeSourceInfo *>(),
+                              getNumArgs());
   }
 
   SourceLocation getLocStart() const LLVM_READONLY { return Loc; }
@@ -2288,9 +2259,9 @@ public:
     return child_range(child_iterator(), child_iterator());
   }
 
+  friend TrailingObjects;
   friend class ASTStmtReader;
   friend class ASTStmtWriter;
-
 };
 
 /// \brief An Embarcadero array type trait, as used in the implementation of
@@ -2873,7 +2844,9 @@ public:
 /// This expression also tracks whether the sub-expression contains a
 /// potentially-evaluated block literal.  The lifetime of a block
 /// literal is the extent of the enclosing scope.
-class ExprWithCleanups : public Expr {
+class ExprWithCleanups final
+    : public Expr,
+      private llvm::TrailingObjects<ExprWithCleanups, BlockDecl *> {
 public:
   /// The type of objects that are kept in the cleanup.
   /// It's useful to remember the set of blocks;  we could also
@@ -2887,12 +2860,7 @@ private:
   ExprWithCleanups(EmptyShell, unsigned NumObjects);
   ExprWithCleanups(Expr *SubExpr, ArrayRef<CleanupObject> Objects);
 
-  CleanupObject *getObjectsBuffer() {
-    return reinterpret_cast<CleanupObject*>(this + 1);
-  }
-  const CleanupObject *getObjectsBuffer() const {
-    return reinterpret_cast<const CleanupObject*>(this + 1);
-  }
+  friend TrailingObjects;
   friend class ASTStmtReader;
 
 public:
@@ -2903,7 +2871,8 @@ public:
                                   ArrayRef<CleanupObject> objects);
 
   ArrayRef<CleanupObject> getObjects() const {
-    return llvm::makeArrayRef(getObjectsBuffer(), getNumObjects());
+    return llvm::makeArrayRef(getTrailingObjects<CleanupObject>(),
+                              getNumObjects());
   }
 
   unsigned getNumObjects() const { return ExprWithCleanupsBits.NumObjects; }
@@ -2955,7 +2924,9 @@ public:
 /// When the returned expression is instantiated, it may resolve to a
 /// constructor call, conversion function call, or some kind of type
 /// conversion.
-class CXXUnresolvedConstructExpr : public Expr {
+class CXXUnresolvedConstructExpr final
+    : public Expr,
+      private llvm::TrailingObjects<CXXUnresolvedConstructExpr, Expr *> {
   /// \brief The type being constructed.
   TypeSourceInfo *Type;
 
@@ -2976,6 +2947,7 @@ class CXXUnresolvedConstructExpr : public Expr {
   CXXUnresolvedConstructExpr(EmptyShell Empty, unsigned NumArgs)
     : Expr(CXXUnresolvedConstructExprClass, Empty), Type(), NumArgs(NumArgs) { }
 
+  friend TrailingObjects;
   friend class ASTStmtReader;
 
 public:
@@ -3010,13 +2982,11 @@ public:
   unsigned arg_size() const { return NumArgs; }
 
   typedef Expr** arg_iterator;
-  arg_iterator arg_begin() { return reinterpret_cast<Expr**>(this + 1); }
+  arg_iterator arg_begin() { return getTrailingObjects<Expr *>(); }
   arg_iterator arg_end() { return arg_begin() + NumArgs; }
 
   typedef const Expr* const * const_arg_iterator;
-  const_arg_iterator arg_begin() const {
-    return reinterpret_cast<const Expr* const *>(this + 1);
-  }
+  const_arg_iterator arg_begin() const { return getTrailingObjects<Expr *>(); }
   const_arg_iterator arg_end() const {
     return arg_begin() + NumArgs;
   }
@@ -3049,7 +3019,7 @@ public:
 
   // Iterators
   child_range children() {
-    Stmt **begin = reinterpret_cast<Stmt**>(this+1);
+    Stmt **begin = reinterpret_cast<Stmt **>(arg_begin());
     return child_range(begin, begin + NumArgs);
   }
 };
@@ -3582,7 +3552,9 @@ public:
 ///   static const unsigned value = sizeof...(Types);
 /// };
 /// \endcode
-class SizeOfPackExpr : public Expr {
+class SizeOfPackExpr final
+    : public Expr,
+      private llvm::TrailingObjects<SizeOfPackExpr, TemplateArgument> {
   /// \brief The location of the \c sizeof keyword.
   SourceLocation OperatorLoc;
 
@@ -3607,6 +3579,7 @@ class SizeOfPackExpr : public Expr {
   /// \brief The parameter pack.
   NamedDecl *Pack;
 
+  friend TrailingObjects;
   friend class ASTStmtReader;
   friend class ASTStmtWriter;
 
@@ -3623,7 +3596,7 @@ class SizeOfPackExpr : public Expr {
         Length(Length ? *Length : PartialArgs.size()), Pack(Pack) {
     assert((!Length || PartialArgs.empty()) &&
            "have partial args for non-dependent sizeof... expression");
-    TemplateArgument *Args = reinterpret_cast<TemplateArgument *>(this + 1);
+    TemplateArgument *Args = getTrailingObjects<TemplateArgument>();
     std::uninitialized_copy(PartialArgs.begin(), PartialArgs.end(), Args);
   }
 
@@ -3674,8 +3647,7 @@ public:
   /// \brief Get
   ArrayRef<TemplateArgument> getPartialArguments() const {
     assert(isPartiallySubstituted());
-    const TemplateArgument *Args =
-        reinterpret_cast<const TemplateArgument *>(this + 1);
+    const TemplateArgument *Args = getTrailingObjects<TemplateArgument>();
     return llvm::makeArrayRef(Args, Args + Length);
   }
 
@@ -3811,7 +3783,9 @@ public:
 /// };
 /// template struct S<int, int>;
 /// \endcode
-class FunctionParmPackExpr : public Expr {
+class FunctionParmPackExpr final
+    : public Expr,
+      private llvm::TrailingObjects<FunctionParmPackExpr, ParmVarDecl *> {
   /// \brief The function parameter pack which was referenced.
   ParmVarDecl *ParamPack;
 
@@ -3825,6 +3799,7 @@ class FunctionParmPackExpr : public Expr {
                        SourceLocation NameLoc, unsigned NumParams,
                        ParmVarDecl *const *Params);
 
+  friend TrailingObjects;
   friend class ASTReader;
   friend class ASTStmtReader;
 
@@ -3845,7 +3820,7 @@ public:
   /// \brief Iterators over the parameters which the parameter pack expanded
   /// into.
   typedef ParmVarDecl * const *iterator;
-  iterator begin() const { return reinterpret_cast<iterator>(this+1); }
+  iterator begin() const { return getTrailingObjects<ParmVarDecl *>(); }
   iterator end() const { return begin() + NumParameters; }
 
   /// \brief Get the number of parameters in this parameter pack.

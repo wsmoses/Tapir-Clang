@@ -910,6 +910,10 @@ def warn_pragma_expected_enable_disable : Warning<
 def warn_pragma_unknown_extension : Warning<
   "unknown OpenCL extension %0 - ignoring">, InGroup<IgnoredPragmas>;
 
+// OpenCL error
+def err_opencl_taking_function_address_parser : Error<
+  "taking address of function is not allowed">;
+
 // Cilk Plus
 def err_cilkplus_disable: Error<
   "Cilk Plus support disabled - compile with -fcilkplus">;

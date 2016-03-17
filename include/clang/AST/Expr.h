@@ -1292,6 +1292,7 @@ public:
   enum CharacterKind {
     Ascii,
     Wide,
+    UTF8,
     UTF16,
     UTF32
   };
@@ -2192,7 +2193,8 @@ public:
     return reinterpret_cast<Expr **>(SubExprs+getNumPreArgs()+PREARGS_START);
   }
   const Expr *const *getArgs() const {
-    return const_cast<CallExpr*>(this)->getArgs();
+    return reinterpret_cast<Expr **>(SubExprs + getNumPreArgs() +
+                                     PREARGS_START);
   }
 
   /// getArg - Return the specified argument.
@@ -2684,8 +2686,6 @@ public:
   path_const_iterator path_begin() const { return path_buffer(); }
   path_const_iterator path_end() const { return path_buffer() + path_size(); }
 
-  void setCastPath(const CXXCastPath &Path);
-
   static bool classof(const Stmt *T) {
     return T->getStmtClass() >= firstCastExprConstant &&
            T->getStmtClass() <= lastCastExprConstant;
@@ -2715,7 +2715,9 @@ public:
 ///                     // to an xvalue of type Base
 /// }
 /// @endcode
-class ImplicitCastExpr : public CastExpr {
+class ImplicitCastExpr final
+    : public CastExpr,
+      private llvm::TrailingObjects<ImplicitCastExpr, CXXBaseSpecifier *> {
 private:
   ImplicitCastExpr(QualType ty, CastKind kind, Expr *op,
                    unsigned BasePathLength, ExprValueKind VK)
@@ -2751,6 +2753,9 @@ public:
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == ImplicitCastExprClass;
   }
+
+  friend TrailingObjects;
+  friend class CastExpr;
 };
 
 inline Expr *Expr::IgnoreImpCasts() {
@@ -2810,7 +2815,9 @@ public:
 /// CStyleCastExpr - An explicit cast in C (C99 6.5.4) or a C-style
 /// cast in C++ (C++ [expr.cast]), which uses the syntax
 /// (Type)expr. For example: @c (int)f.
-class CStyleCastExpr : public ExplicitCastExpr {
+class CStyleCastExpr final
+    : public ExplicitCastExpr,
+      private llvm::TrailingObjects<CStyleCastExpr, CXXBaseSpecifier *> {
   SourceLocation LPLoc; // the location of the left paren
   SourceLocation RPLoc; // the location of the right paren
 
@@ -2848,6 +2855,9 @@ public:
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == CStyleCastExprClass;
   }
+
+  friend TrailingObjects;
+  friend class CastExpr;
 };
 
 /// \brief A builtin binary operation expression such as "x + y" or "x <= y".
@@ -3924,7 +3934,9 @@ public:
 /// which covers @c [2].y=1.0. This DesignatedInitExpr will have two
 /// designators, one array designator for @c [2] followed by one field
 /// designator for @c .y. The initialization expression will be 1.0.
-class DesignatedInitExpr : public Expr {
+class DesignatedInitExpr final
+    : public Expr,
+      private llvm::TrailingObjects<DesignatedInitExpr, Stmt *> {
 public:
   /// \brief Forward declaration of the Designator class.
   class Designator;
@@ -4204,12 +4216,12 @@ public:
 
   Expr *getSubExpr(unsigned Idx) const {
     assert(Idx < NumSubExprs && "Subscript out of range");
-    return cast<Expr>(reinterpret_cast<Stmt *const *>(this + 1)[Idx]);
+    return cast<Expr>(getTrailingObjects<Stmt *>()[Idx]);
   }
 
   void setSubExpr(unsigned Idx, Expr *E) {
     assert(Idx < NumSubExprs && "Subscript out of range");
-    reinterpret_cast<Stmt **>(this + 1)[Idx] = E;
+    getTrailingObjects<Stmt *>()[Idx] = E;
   }
 
   /// \brief Replaces the designator at index @p Idx with the series
@@ -4228,9 +4240,11 @@ public:
 
   // Iterators
   child_range children() {
-    Stmt **begin = reinterpret_cast<Stmt**>(this + 1);
+    Stmt **begin = getTrailingObjects<Stmt *>();
     return child_range(begin, begin + NumSubExprs);
   }
+
+  friend TrailingObjects;
 };
 
 /// \brief Represents a place-holder for an object not to be initialized by
@@ -4681,7 +4695,9 @@ public:
 /// equivalent to a particular message send, and this is very much
 /// part of the user model.  The name of this class encourages this
 /// modelling design.
-class PseudoObjectExpr : public Expr {
+class PseudoObjectExpr final
+    : public Expr,
+      private llvm::TrailingObjects<PseudoObjectExpr, Expr *> {
   // PseudoObjectExprBits.NumSubExprs - The number of sub-expressions.
   // Always at least two, because the first sub-expression is the
   // syntactic form.
@@ -4693,12 +4709,10 @@ class PseudoObjectExpr : public Expr {
   // in to Create, which is an index within the semantic forms.
   // Note also that ASTStmtWriter assumes this encoding.
 
-  Expr **getSubExprsBuffer() { return reinterpret_cast<Expr**>(this + 1); }
+  Expr **getSubExprsBuffer() { return getTrailingObjects<Expr *>(); }
   const Expr * const *getSubExprsBuffer() const {
-    return reinterpret_cast<const Expr * const *>(this + 1);
+    return getTrailingObjects<Expr *>();
   }
-
-  friend class ASTStmtReader;
 
   PseudoObjectExpr(QualType type, ExprValueKind VK,
                    Expr *syntactic, ArrayRef<Expr*> semantic,
@@ -4796,6 +4810,9 @@ public:
   static bool classof(const Stmt *T) {
     return T->getStmtClass() == PseudoObjectExprClass;
   }
+
+  friend TrailingObjects;
+  friend class ASTStmtReader;
 };
 
 /// AtomicExpr - Variadic atomic builtins: __atomic_exchange, __atomic_fetch_*,

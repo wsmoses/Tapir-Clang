@@ -32,14 +32,18 @@ using namespace clang;
 
 /// \brief Parse a standalone statement (for instance, as the body of an 'if',
 /// 'while', or 'for').
-StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc) {
+StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc,
+                                  bool AllowOpenMPStandalone) {
   StmtResult Res;
 
   // We may get back a null statement if we found a #pragma. Keep going until
   // we get an actual statement.
   do {
     StmtVector Stmts;
-    Res = ParseStatementOrDeclaration(Stmts, true, TrailingElseLoc);
+    Res = ParseStatementOrDeclaration(
+        Stmts, AllowOpenMPStandalone ? ACK_StatementsOpenMPAnyExecutable
+                                     : ACK_StatementsOpenMPNonStandalone,
+        TrailingElseLoc);
   } while (!Res.isInvalid() && !Res.get());
 
   return Res;
@@ -98,7 +102,8 @@ StmtResult Parser::ParseStatement(SourceLocation *TrailingElseLoc) {
 /// [OBC]   '@' 'throw' ';'
 ///
 StmtResult
-Parser::ParseStatementOrDeclaration(StmtVector &Stmts, bool OnlyStatement,
+Parser::ParseStatementOrDeclaration(StmtVector &Stmts,
+                                    AllowedContsructsKind Allowed,
                                     SourceLocation *TrailingElseLoc) {
 
   ParenBraceBracketBalancer BalancerRAIIObj(*this);
@@ -106,8 +111,8 @@ Parser::ParseStatementOrDeclaration(StmtVector &Stmts, bool OnlyStatement,
   ParsedAttributesWithRange Attrs(AttrFactory);
   MaybeParseCXX11Attributes(Attrs, nullptr, /*MightBeObjCMessageSend*/ true);
 
-  StmtResult Res = ParseStatementOrDeclarationAfterAttributes(Stmts,
-                                 OnlyStatement, TrailingElseLoc, Attrs);
+  StmtResult Res = ParseStatementOrDeclarationAfterAttributes(
+      Stmts, Allowed, TrailingElseLoc, Attrs);
 
   assert((Attrs.empty() || Res.isInvalid() || Res.isUsable()) &&
          "attributes on empty statement");
@@ -149,7 +154,7 @@ private:
 
 StmtResult
 Parser::ParseStatementOrDeclarationAfterAttributes(StmtVector &Stmts,
-          bool OnlyStatement, SourceLocation *TrailingElseLoc,
+          AllowedContsructsKind Allowed, SourceLocation *TrailingElseLoc,
           ParsedAttributesWithRange &Attrs) {
   const char *SemiError = nullptr;
   StmtResult Res;
@@ -205,7 +210,8 @@ Retry:
   }
 
   default: {
-    if ((getLangOpts().CPlusPlus || !OnlyStatement) && isDeclarationStatement()) {
+    if ((getLangOpts().CPlusPlus || Allowed == ACK_Any) &&
+        isDeclarationStatement()) {
       SourceLocation DeclStart = Tok.getLocation(), DeclEnd;
       DeclGroupPtrTy Decl = ParseDeclaration(Declarator::BlockContext,
                                              DeclEnd, Attrs);
@@ -375,7 +381,7 @@ Retry:
 
   case tok::annot_pragma_openmp:
     ProhibitAttributes(Attrs);
-    return ParseOpenMPDeclarativeOrExecutableDirective(!OnlyStatement);
+    return ParseOpenMPDeclarativeOrExecutableDirective(Allowed);
 
   case tok::annot_pragma_ms_pointers_to_members:
     ProhibitAttributes(Attrs);
@@ -394,7 +400,11 @@ Retry:
 
   case tok::annot_pragma_loop_hint:
     ProhibitAttributes(Attrs);
-    return ParsePragmaLoopHint(Stmts, OnlyStatement, TrailingElseLoc, Attrs);
+    return ParsePragmaLoopHint(Stmts, Allowed, TrailingElseLoc, Attrs);
+
+  case tok::annot_pragma_dump:
+    HandlePragmaDump();
+    return StmtEmpty();
   }
 
   // If we reached this code, the statement must end in a semicolon.
@@ -612,7 +622,8 @@ StmtResult Parser::ParseLabeledStatement(ParsedAttributesWithRange &attrs) {
       // can't handle GNU attributes), so only call it in the one case where
       // GNU attributes are allowed.
       SubStmt = ParseStatementOrDeclarationAfterAttributes(
-          Stmts, /*OnlyStmts*/ true, nullptr, TempAttrs);
+          Stmts, /*Allowed=*/ACK_StatementsOpenMPNonStandalone, nullptr,
+          TempAttrs);
       if (!TempAttrs.empty() && !SubStmt.isInvalid())
         SubStmt = Actions.ProcessStmtAttributes(
             SubStmt.get(), TempAttrs.getList(), TempAttrs.Range);
@@ -751,7 +762,8 @@ StmtResult Parser::ParseCaseStatement(bool MissingCase, ExprResult Expr) {
     // continue parsing the sub-stmt.
     if (Case.isInvalid()) {
       if (TopLevelCase.isInvalid())  // No parsed case stmts.
-        return ParseStatement();
+        return ParseStatement(/*TrailingElseLoc=*/nullptr,
+                              /*AllowOpenMPStandalone=*/true);
       // Otherwise, just don't add it as a nested case.
     } else {
       // If this is the first case statement we parsed, it becomes TopLevelCase.
@@ -771,7 +783,8 @@ StmtResult Parser::ParseCaseStatement(bool MissingCase, ExprResult Expr) {
   StmtResult SubStmt;
 
   if (Tok.isNot(tok::r_brace)) {
-    SubStmt = ParseStatement();
+    SubStmt = ParseStatement(/*TrailingElseLoc=*/nullptr,
+                             /*AllowOpenMPStandalone=*/true);
   } else {
     // Nicely diagnose the common error "switch (X) { case 4: }", which is
     // not valid.  If ColonLoc doesn't point to a valid text location, there was
@@ -823,7 +836,8 @@ StmtResult Parser::ParseDefaultStatement() {
   StmtResult SubStmt;
 
   if (Tok.isNot(tok::r_brace)) {
-    SubStmt = ParseStatement();
+    SubStmt = ParseStatement(/*TrailingElseLoc=*/nullptr,
+                             /*AllowOpenMPStandalone=*/true);
   } else {
     // Diagnose the common error "switch (X) {... default: }", which is
     // not valid.
@@ -922,6 +936,9 @@ void Parser::ParseCompoundStatementLeadingPragmas() {
     case tok::annot_pragma_ms_vtordisp:
       HandlePragmaMSVtorDisp();
       break;
+    case tok::annot_pragma_dump:
+      HandlePragmaDump();
+      break;
     default:
       checkForPragmas = false;
       break;
@@ -994,7 +1011,7 @@ StmtResult Parser::ParseCompoundStatementBody(bool isStmtExpr) {
 
     StmtResult R;
     if (Tok.isNot(tok::kw___extension__)) {
-      R = ParseStatementOrDeclaration(Stmts, false);
+      R = ParseStatementOrDeclaration(Stmts, ACK_Any);
     } else {
       // __extension__ can start declarations and it can also be a unary
       // operator for expressions.  Consume multiple __extension__ markers here
@@ -2178,7 +2195,8 @@ StmtResult Parser::ParseCilkForStatement(SourceLocation *TrailingElseLoc) {
   return Result;
 }
 
-StmtResult Parser::ParsePragmaLoopHint(StmtVector &Stmts, bool OnlyStatement,
+StmtResult Parser::ParsePragmaLoopHint(StmtVector &Stmts,
+                                       AllowedContsructsKind Allowed,
                                        SourceLocation *TrailingElseLoc,
                                        ParsedAttributesWithRange &Attrs) {
   // Create temporary attribute list.
@@ -2201,7 +2219,7 @@ StmtResult Parser::ParsePragmaLoopHint(StmtVector &Stmts, bool OnlyStatement,
   MaybeParseCXX11Attributes(Attrs);
 
   StmtResult S = ParseStatementOrDeclarationAfterAttributes(
-      Stmts, OnlyStatement, TrailingElseLoc, Attrs);
+      Stmts, Allowed, TrailingElseLoc, Attrs);
 
   Attrs.takeAllFrom(TempAttrs);
   return S;
@@ -2499,7 +2517,7 @@ void Parser::ParseMicrosoftIfExistsStatement(StmtVector &Stmts) {
 
   // Condition is true, parse the statements.
   while (Tok.isNot(tok::r_brace)) {
-    StmtResult R = ParseStatementOrDeclaration(Stmts, false);
+    StmtResult R = ParseStatementOrDeclaration(Stmts, ACK_Any);
     if (R.isUsable())
       Stmts.push_back(R.get());
   }
