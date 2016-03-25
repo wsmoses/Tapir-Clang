@@ -1050,10 +1050,10 @@ void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
   //   // Perform detach
   //   Builder.CreateSpawn(ContinueBlock, SpawnedBlock);
   //   EmitBlock(SpawnedBlock);
-    
+
   //   // Emit the call to the spawned function
   //   EmitCallOrInvoke(Callee, Args);
-    
+
   // } else {
 
   // Otherwise, we assume that the programmer dealt with races
