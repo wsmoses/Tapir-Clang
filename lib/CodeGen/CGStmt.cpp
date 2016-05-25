@@ -1059,6 +1059,13 @@ void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
   // Otherwise, we assume that the programmer dealt with races
   // correctly.
   Builder.CreateDetach(DetachedBlock, ContinueBlock);
+
+  auto temp = AllocaInsertPt;
+  llvm::Value *Undef = llvm::UndefValue::get(Int32Ty);
+  AllocaInsertPt = new llvm::BitCastInst(Undef, Int32Ty, "", DetachedBlock);
+//  if (Builder.isNamePreserving())
+//    AllocaInsertPt->setName("detallocapt");
+
   EmitBlock(DetachedBlock);
   // Emit the spawned statement
   EmitStmt(S.getSpawnedStmt());
@@ -1067,6 +1074,8 @@ void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
   // The CFG path into the spawned statement should terminate with a
   // `reattach'.
   Builder.CreateReattach(ContinueBlock);
+
+  AllocaInsertPt = temp;
 
   // Now emit the parent block
   EmitBlock(ContinueBlock);
@@ -1100,6 +1109,8 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
   // Create a cleanup scope for the condition variable cleanups.
   LexicalScope ConditionScope(*this, S.getSourceRange());
+
+  auto temp = AllocaInsertPt;
 
   const Expr *Cond = S.getCond();
   assert(Cond && "_Cilk_for loop has no condition");
@@ -1135,6 +1146,13 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
     EmitBlock(DetachBlock);
     Builder.CreateDetach(ForBody, Continue.getBlock());
 
+
+  llvm::Value *Undef = llvm::UndefValue::get(Int32Ty);
+  AllocaInsertPt = new llvm::BitCastInst(Undef, Int32Ty, "", ForBody);
+//  if (Builder.isNamePreserving())
+//    AllocaInsertPt->setName("detallocapt");
+
+
     EmitBlock(ForBody);
   }
 
@@ -1146,6 +1164,8 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
     RunCleanupsScope BodyScope(*this);
     EmitStmt(S.getBody());
     Builder.CreateReattach(Continue.getBlock());
+
+    AllocaInsertPt = temp;
   }
 
   // Emit the increment next.
