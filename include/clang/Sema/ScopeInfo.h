@@ -83,7 +83,7 @@ protected:
     SK_Function,
     SK_Block,
     SK_Lambda,
-    SK_CapturedRegion,
+    SK_CapturedRegion
   };
   
 public:

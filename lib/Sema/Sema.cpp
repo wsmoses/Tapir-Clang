@@ -1218,7 +1218,6 @@ LambdaScopeInfo *Sema::getCurLambda() {
 
   return CurLSI;
 }
-
 // We have a generic lambda if we parsed auto parameters, or we have 
 // an associated template parameter list.
 LambdaScopeInfo *Sema::getCurGenericLambda() {

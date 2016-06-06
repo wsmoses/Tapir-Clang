@@ -1039,22 +1039,37 @@ void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
 
   // Handle spawning of calls in a special manner, to evaluate
   // arguments before spawn.
-  // if (const auto *SpawnedCall = dyn_cast_or_null<CallExpr>(S.getSpawnedStmt())) {
-  //   CallArgList Args;
+  const CallExpr* callExpr = nullptr;
+  llvm::CallInst* finalInst = nullptr;
+  if ( callExpr = dyn_cast_or_null<CallExpr>(S.getSpawnedStmt())) {
+    // Remember the block we came in on.
+    llvm::BasicBlock *incoming = Builder.GetInsertBlock();
+    assert(incoming && "expression emission must have an insertion point");
 
-  //   // Emit argument evaluation
+    EmitIgnoredExpr(callExpr);
 
-  //   // Emit the callee
-  //   llvm::Value *Callee = EmitScalarExpr(SpawnedCall->getCallee());
+    llvm::BasicBlock *outgoing = Builder.GetInsertBlock();
+    assert(outgoing && "expression emission cleared block!");
 
-  //   // Perform detach
-  //   Builder.CreateSpawn(ContinueBlock, SpawnedBlock);
-  //   EmitBlock(SpawnedBlock);
-
-  //   // Emit the call to the spawned function
-  //   EmitCallOrInvoke(Callee, Args);
-
-  // } else {
+    // The expression emitters assume (reasonably!) that the insertion
+    // point is always set.  To maintain that, the call-emission code
+    // for noreturn functions has to enter a new block with no
+    // predecessors.  We want to kill that block and mark the current
+    // insertion point unreachable in the common case of a call like
+    // "exit();".  Since expression emission doesn't otherwise create
+    // blocks with no predecessors, we can just test for that.
+    // However, we must be careful not to do this to our incoming
+    // block, because *statement* emission does sometimes create
+    // reachable blocks which will have no predecessors until later in
+    // the function.  This occurs with, e.g., labels that are not
+    // reachable by fallthrough.
+    if (incoming != outgoing && outgoing->use_empty()) {
+      outgoing->eraseFromParent();
+      Builder.ClearInsertionPoint();
+    }
+    finalInst = dyn_cast<llvm::CallInst>(&outgoing->back());
+    assert(finalInst);
+  }
 
   // Otherwise, we assume that the programmer dealt with races
   // correctly.
@@ -1068,8 +1083,11 @@ void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
 
   EmitBlock(DetachedBlock);
   // Emit the spawned statement
-  EmitStmt(S.getSpawnedStmt());
-
+  if (finalInst) {
+    DetachedBlock->getInstList().splice(DetachedBlock->begin(), finalInst->getParent()->getInstList(), finalInst->getIterator());
+  } else {
+    EmitStmt(S.getSpawnedStmt());
+  }
   // }
   // The CFG path into the spawned statement should terminate with a
   // `reattach'.
