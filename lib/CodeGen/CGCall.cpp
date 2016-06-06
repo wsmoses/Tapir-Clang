@@ -2369,6 +2369,10 @@ void CodeGenFunction::EmitFunctionEpilog(const CGFunctionInfo &FI,
     return;
   }
 
+  llvm::BasicBlock* SyncBlock = createBasicBlock("preSyncL");
+  Builder.CreateSync(SyncBlock);
+  EmitBlock(SyncBlock);
+
   // Functions with no result always return void.
   if (!ReturnValue.isValid()) {
     Builder.CreateRetVoid();
