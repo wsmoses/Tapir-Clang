@@ -903,11 +903,6 @@ public:
     return const_cast<Decl *>(this)->getAsFunction();
   }
 
-  /// \brief Whether this declaration has Cilk spawns.
-  ///
-  /// Currently only FunctionDecl and CapturedDecl can have Cilk spawns.
-  bool isSpawning() const;
-
   /// \brief Changes the namespace of this declaration to reflect that it's
   /// a function-local extern declaration.
   ///

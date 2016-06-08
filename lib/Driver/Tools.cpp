@@ -4567,8 +4567,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_show_template_tree);
   Args.AddLastArg(CmdArgs, options::OPT_fno_elide_type);
   Args.AddLastArg(CmdArgs, options::OPT_fcilkplus);
+  Args.AddLastArg(CmdArgs, options::OPT_ftapir);
 
-  if (Args.hasArg(options::OPT_fcilkplus))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) )
     if (getToolChain().getTriple().getOS() != llvm::Triple::Linux &&
         getToolChain().getTriple().getOS() != llvm::Triple::UnknownOS &&
         !getToolChain().getTriple().isMacOSX())
@@ -7237,7 +7238,7 @@ void darwin::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
 
-  if (Args.hasArg(options::OPT_fcilkplus))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
     CmdArgs.push_back("-lcilkrts");
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);

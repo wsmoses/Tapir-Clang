@@ -1521,7 +1521,6 @@ private:
   unsigned HasImplicitReturnZero : 1;
   unsigned IsLateTemplateParsed : 1;
   unsigned IsConstexpr : 1;
-  // unsigned IsSpawning: 1;
 
   /// \brief Indicates if the function uses __try.
   unsigned UsesSEHTry : 1;
@@ -1798,10 +1797,6 @@ public:
   /// \brief Indicates the function uses __try.
   bool usesSEHTry() const { return UsesSEHTry; }
   void setUsesSEHTry(bool UST) { UsesSEHTry = UST; }
-
-  // /// \brief Whether this function is a Cilk spawning function.
-  // bool isSpawning() const { return IsSpawning; }
-  // void setSpawning() { IsSpawning = true; }
 
   /// \brief Whether this function has been deleted.
   ///
@@ -3578,8 +3573,6 @@ private:
   unsigned ContextParam;
   /// \brief The body of the outlined function.
   llvm::PointerIntPair<Stmt *, 1, bool> BodyAndNothrow;
-  // /// \brief Whether this CapturedDecl contains Cilk spawns.
-  // bool IsSpawning;
 
   explicit CapturedDecl(DeclContext *DC, unsigned NumParams);
 
