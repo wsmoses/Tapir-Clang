@@ -6870,6 +6870,9 @@ void cloudabi::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
 
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+    CmdArgs.push_back("-lcilkrts");
+
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     if (D.CCCIsCXX())
       ToolChain.AddCXXStdlibLibArgs(Args, CmdArgs);
@@ -7460,6 +7463,9 @@ void solaris::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                             options::OPT_e, options::OPT_r});
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+    CmdArgs.push_back("-lcilkrts");
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     if (getToolChain().getDriver().CCCIsCXX())
@@ -8906,6 +8912,9 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   // The profile runtime also needs access to system libraries.
   getToolChain().addProfileRTLibs(Args, CmdArgs);
 
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+    CmdArgs.push_back("-lcilkrts");
+
   if (D.CCCIsCXX() &&
       !Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     bool OnlyLibstdcxxStatic = Args.hasArg(options::OPT_static_libstdcxx) &&
@@ -9098,6 +9107,9 @@ void nacltools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
 
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+    CmdArgs.push_back("-lcilkrts");
+
   if (D.CCCIsCXX() &&
       !Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     bool OnlyLibstdcxxStatic =
@@ -9211,6 +9223,9 @@ void minix::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
   getToolChain().addProfileRTLibs(Args, CmdArgs);
+
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+    CmdArgs.push_back("-lcilkrts");
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     if (D.CCCIsCXX()) {
@@ -9330,6 +9345,9 @@ void dragonfly::Linker::ConstructJob(Compilation &C, const JobAction &JA,
                   {options::OPT_L, options::OPT_T_Group, options::OPT_e});
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
+
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+    CmdArgs.push_back("-lcilkrts");
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     CmdArgs.push_back("-L/usr/lib/gcc50");
@@ -9836,6 +9854,9 @@ void MinGW::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   TC.AddFilePathLibArgs(Args, CmdArgs);
   AddLinkerInputs(TC, Inputs, Args, CmdArgs);
 
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+    CmdArgs.push_back("-lcilkrts");
+
   // TODO: Add ASan stuff here
 
   // TODO: Add profile stuff here
@@ -10125,6 +10146,9 @@ void CrossWindows::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-Bdynamic");
   }
 
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+    CmdArgs.push_back("-lcilkrts");
+
   if (!Args.hasArg(options::OPT_nostdlib)) {
     if (!Args.hasArg(options::OPT_nodefaultlibs)) {
       // TODO handle /MT[d] /MD[d]
@@ -10292,6 +10316,9 @@ void tools::Myriad::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+    CmdArgs.push_back("-lcilkrts");
+
   if (UseDefaultLibs) {
     if (C.getDriver().CCCIsCXX())
       CmdArgs.push_back("-lstdc++");
@@ -10401,6 +10428,9 @@ static void ConstructPS4LinkJob(const Tool &T, Compilation &C,
 
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
 
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+    CmdArgs.push_back("-lcilkrts");
+
   if (Args.hasArg(options::OPT_pthread)) {
     CmdArgs.push_back("-lpthread");
   }
@@ -10496,6 +10526,9 @@ static void ConstructGoldLinkJob(const Tool &T, Compilation &C,
     CmdArgs.push_back("--no-demangle");
 
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
+
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+    CmdArgs.push_back("-lcilkrts");
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     // For PS4, we always want to pass libm, libstdc++ and libkernel
