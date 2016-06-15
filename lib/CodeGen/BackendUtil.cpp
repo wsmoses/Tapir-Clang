@@ -303,15 +303,20 @@ void EmitAssemblyHelper::CreatePasses(FunctionInfoIndex *FunctionIndex) {
   case CodeGenOptions::NormalInlining: {
     PMBuilder.Inliner =
         createFunctionInliningPass(OptLevel, CodeGenOpts.OptimizeSize);
+    PMBuilder.Inliner2 =
+        createFunctionInliningPass(OptLevel, CodeGenOpts.OptimizeSize);
     break;
   }
   case CodeGenOptions::OnlyAlwaysInlining:
     // Respect always_inline.
-    if (OptLevel == 0)
+    if (OptLevel == 0) {
       // Do not insert lifetime intrinsics at -O0.
       PMBuilder.Inliner = createAlwaysInlinerPass(false);
-    else
+      PMBuilder.Inliner2 = createAlwaysInlinerPass(false);
+    } else {
       PMBuilder.Inliner = createAlwaysInlinerPass();
+      PMBuilder.Inliner2 = createAlwaysInlinerPass();
+    }
     break;
   }
 
