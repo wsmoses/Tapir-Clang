@@ -799,6 +799,8 @@ def fno_implicit_modules :
 def fretain_comments_from_system_headers : Flag<["-"], "fretain-comments-from-system-headers">, Group<f_Group>, Flags<[CC1Option]>;
 def fcilkplus : Flag <["-"], "fcilkplus">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Enable Cilk Plus extensions">;
 def ftapir    : Flag <["-"], "ftapir">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Enable Tapir/Cilk Plus extensions">;
+def fraces    : Flag <["-"], "fraces">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Enable Race detector">;
+def fnomem    : Flag <["-"], "fnomem">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Disable memory optimizations">;
 
 def fmudflapth : Flag<["-"], "fmudflapth">, Group<f_Group>;
 def fmudflap : Flag<["-"], "fmudflap">, Group<f_Group>;

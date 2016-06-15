@@ -232,6 +232,8 @@ LANGOPT(ApplePragmaPack, 1, 0, "Apple gcc-compatible #pragma pack handling")
 
 LANGOPT(CilkPlus, 1, 0, "Intel Cilk Plus extensions to C/C++")
 LANGOPT(Tapir, 1, 0, "Tapir/Cilk Plus extensions to C/C++")
+LANGOPT(Races, 1, 0, "Enable Race Detector")
+LANGOPT(NoMem, 1, 0, "Disable Parallel Memory Opts")
 
 LANGOPT(RetainCommentsFromSystemHeaders, 1, 0, "retain documentation comments from system headers in the AST")
 

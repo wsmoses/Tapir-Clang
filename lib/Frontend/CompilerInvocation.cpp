@@ -1653,7 +1653,9 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.Borland = Args.hasArg(OPT_fborland_extensions);
 
   Opts.Tapir = Args.hasArg(OPT_ftapir);
-  Opts.CilkPlus = Args.hasArg(OPT_fcilkplus) || Args.hasArg(OPT_ftapir);
+  Opts.Races = Args.hasArg(OPT_fraces);
+  Opts.NoMem = Args.hasArg(OPT_fnomem);
+  Opts.CilkPlus = Args.hasArg(OPT_fcilkplus) || Args.hasArg(OPT_ftapir) || Args.hasArg(Opts.NoMem) || Args.hasArg(Opts.Races);
   if (Opts.CilkPlus && (Opts.ObjC1 || Opts.ObjC2))
     Diags.Report(diag::err_drv_cilk_objc);
 

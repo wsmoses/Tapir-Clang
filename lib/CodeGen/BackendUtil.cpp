@@ -323,6 +323,7 @@ void EmitAssemblyHelper::CreatePasses(FunctionInfoIndex *FunctionIndex) {
   PMBuilder.OptLevel = OptLevel;
   PMBuilder.ParallelLevel = 0;
   if(LangOpts.CilkPlus) PMBuilder.ParallelLevel = 1;
+  if(LangOpts.NoMem) PMBuilder.ParallelLevel = 3;
   if(LangOpts.Tapir) PMBuilder.ParallelLevel = 2;
   PMBuilder.SizeLevel = CodeGenOpts.OptimizeSize;
   PMBuilder.BBVectorize = CodeGenOpts.VectorizeBB;
