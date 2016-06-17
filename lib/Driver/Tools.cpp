@@ -4567,9 +4567,11 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_fdiagnostics_show_template_tree);
   Args.AddLastArg(CmdArgs, options::OPT_fno_elide_type);
   Args.AddLastArg(CmdArgs, options::OPT_fcilkplus);
+  Args.AddLastArg(CmdArgs, options::OPT_fdetach);
+  Args.AddLastArg(CmdArgs, options::OPT_fraces);
   Args.AddLastArg(CmdArgs, options::OPT_ftapir);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) )
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) || Args.hasArg(options::OPT_fraces) )
     if (getToolChain().getTriple().getOS() != llvm::Triple::Linux &&
         getToolChain().getTriple().getOS() != llvm::Triple::UnknownOS &&
         !getToolChain().getTriple().isMacOSX())
@@ -6870,7 +6872,7 @@ void cloudabi::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
     CmdArgs.push_back("-lcilkrts");
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
@@ -7241,7 +7243,8 @@ void darwin::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
+
     CmdArgs.push_back("-lcilkrts");
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
@@ -7464,7 +7467,8 @@ void solaris::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
+
     CmdArgs.push_back("-lcilkrts");
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
@@ -8912,7 +8916,8 @@ void gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   // The profile runtime also needs access to system libraries.
   getToolChain().addProfileRTLibs(Args, CmdArgs);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
+
     CmdArgs.push_back("-lcilkrts");
 
   if (D.CCCIsCXX() &&
@@ -9107,7 +9112,8 @@ void nacltools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
+
     CmdArgs.push_back("-lcilkrts");
 
   if (D.CCCIsCXX() &&
@@ -9224,7 +9230,8 @@ void minix::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   getToolChain().addProfileRTLibs(Args, CmdArgs);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
+
     CmdArgs.push_back("-lcilkrts");
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
@@ -9346,7 +9353,8 @@ void dragonfly::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
+
     CmdArgs.push_back("-lcilkrts");
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
@@ -9854,7 +9862,8 @@ void MinGW::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   TC.AddFilePathLibArgs(Args, CmdArgs);
   AddLinkerInputs(TC, Inputs, Args, CmdArgs);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
+
     CmdArgs.push_back("-lcilkrts");
 
   // TODO: Add ASan stuff here
@@ -10146,7 +10155,8 @@ void CrossWindows::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       CmdArgs.push_back("-Bdynamic");
   }
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
+
     CmdArgs.push_back("-lcilkrts");
 
   if (!Args.hasArg(options::OPT_nostdlib)) {
@@ -10316,7 +10326,8 @@ void tools::Myriad::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
+
     CmdArgs.push_back("-lcilkrts");
 
   if (UseDefaultLibs) {
@@ -10428,7 +10439,8 @@ static void ConstructPS4LinkJob(const Tool &T, Compilation &C,
 
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
+
     CmdArgs.push_back("-lcilkrts");
 
   if (Args.hasArg(options::OPT_pthread)) {
@@ -10527,7 +10539,8 @@ static void ConstructGoldLinkJob(const Tool &T, Compilation &C,
 
   AddLinkerInputs(ToolChain, Inputs, Args, CmdArgs);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir))
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
+
     CmdArgs.push_back("-lcilkrts");
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
