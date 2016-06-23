@@ -1132,6 +1132,9 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
   const Expr *Cond = S.getCond();
   assert(Cond && "_Cilk_for loop has no condition");
+
+  llvm::BasicBlock *SyncContinueBlock = createBasicBlock("pfor.end.continue");
+  bool madeSync = false;
   {
     // // If the for statement has a condition scope, emit the local variable
     // // declaration.
@@ -1158,6 +1161,9 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
     if (ExitBlock != LoopExit.getBlock()) {
       EmitBlock(ExitBlock);
+      Builder.CreateSync(SyncContinueBlock);
+      EmitBlock(SyncContinueBlock);
+      madeSync = true;
       EmitBranchThroughCleanup(LoopExit);
     }
 
@@ -1183,6 +1189,7 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
     EmitStmt(S.getBody());
     Builder.CreateReattach(Continue.getBlock());
 
+    //AllocaInsertPt->eraseFromParent();
     AllocaInsertPt = temp;
   }
 
@@ -1203,9 +1210,10 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
   // Emit the fall-through block.
   EmitBlock(LoopExit.getBlock(), true);
-  llvm::BasicBlock *SyncContinueBlock = createBasicBlock("pfor.end.continue");
-  Builder.CreateSync(SyncContinueBlock);
-  EmitBlock(SyncContinueBlock);
+  if (!madeSync) {
+    Builder.CreateSync(SyncContinueBlock);
+    EmitBlock(SyncContinueBlock);
+  }
 }
 
 void CodeGenFunction::EmitDeclStmt(const DeclStmt &S) {
