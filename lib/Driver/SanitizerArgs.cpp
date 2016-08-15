@@ -657,7 +657,6 @@ SanitizerMask parseArgValues(const Driver &D, const llvm::opt::Arg *A,
       Kind = 0;
     else
       Kind = parseSanitizerValue(Value, /*AllowGroups=*/true);
-
     if (Kind)
       Kinds |= Kind;
     else if (DiagnoseErrors)

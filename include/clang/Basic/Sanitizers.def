@@ -50,6 +50,9 @@ SANITIZER("memory", Memory)
 // ThreadSanitizer
 SANITIZER("thread", Thread)
 
+// ThreadSanitizer
+SANITIZER("cilk", Cilk)
+
 // LeakSanitizer
 SANITIZER("leak", Leak)
 

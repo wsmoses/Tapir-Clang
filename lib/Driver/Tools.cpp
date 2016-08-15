@@ -2753,7 +2753,10 @@ static void addSanitizerRuntime(const ToolChain &TC, const ArgList &Args,
   // Static runtimes must be forced into executable, so we wrap them in
   // whole-archive.
   if (!IsShared) CmdArgs.push_back("-whole-archive");
-  CmdArgs.push_back(TC.getCompilerRTArgString(Args, Sanitizer, IsShared));
+  if (Sanitizer=="cilk") 
+    CmdArgs.push_back("-lcilksan");
+  else
+    CmdArgs.push_back(TC.getCompilerRTArgString(Args, Sanitizer, IsShared));
   if (!IsShared) CmdArgs.push_back("-no-whole-archive");
 }
 
@@ -2821,6 +2824,9 @@ collectSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
     StaticRuntimes.push_back("tsan");
     if (SanArgs.linkCXXRuntimes())
       StaticRuntimes.push_back("tsan_cxx");
+  }
+  if (SanArgs.needsCilksanRt()) {
+    StaticRuntimes.push_back("cilk");
   }
   if (SanArgs.needsUbsanRt()) {
     StaticRuntimes.push_back("ubsan_standalone");

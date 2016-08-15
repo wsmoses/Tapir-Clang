@@ -397,11 +397,15 @@ void EmitAssemblyHelper::CreatePasses(FunctionInfoIndex *FunctionIndex) {
                            addMemorySanitizerPass);
   }
 
-  if (LangOpts.Sanitize.has(SanitizerKind::Thread)) {
+  if (LangOpts.Sanitize.has(SanitizerKind::Thread) || LangOpts.Sanitize.has(SanitizerKind::Cilk)) {
     PMBuilder.addExtension(PassManagerBuilder::EP_OptimizerLast,
                            addThreadSanitizerPass);
     PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,
                            addThreadSanitizerPass);
+  }
+
+  if (LangOpts.Sanitize.has(SanitizerKind::Cilk)) {
+    PMBuilder.InstrumentCilk = true;
   }
 
   if (LangOpts.Sanitize.has(SanitizerKind::DataFlow)) {

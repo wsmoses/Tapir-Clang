@@ -271,7 +271,7 @@ llvm::Function *CodeGenModule::CreateGlobalInitOrDestructFunction(
     if (getLangOpts().Sanitize.hasOneOf(SanitizerKind::Address |
                                         SanitizerKind::KernelAddress))
       Fn->addFnAttr(llvm::Attribute::SanitizeAddress);
-    if (getLangOpts().Sanitize.has(SanitizerKind::Thread))
+    if (getLangOpts().Sanitize.has(SanitizerKind::Thread) || getLangOpts().Sanitize.has(SanitizerKind::Cilk))
       Fn->addFnAttr(llvm::Attribute::SanitizeThread);
     if (getLangOpts().Sanitize.has(SanitizerKind::Memory))
       Fn->addFnAttr(llvm::Attribute::SanitizeMemory);

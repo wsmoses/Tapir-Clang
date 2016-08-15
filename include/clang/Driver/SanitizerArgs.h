@@ -43,7 +43,8 @@ class SanitizerArgs {
 
   bool needsAsanRt() const { return Sanitizers.has(SanitizerKind::Address); }
   bool needsSharedAsanRt() const { return AsanSharedRuntime; }
-  bool needsTsanRt() const { return Sanitizers.has(SanitizerKind::Thread); }
+  bool needsTsanRt() const { return Sanitizers.has(SanitizerKind::Thread) && !Sanitizers.has(SanitizerKind::Cilk); }
+  bool needsCilksanRt() const { return Sanitizers.has(SanitizerKind::Cilk); }
   bool needsMsanRt() const { return Sanitizers.has(SanitizerKind::Memory); }
   bool needsLsanRt() const {
     return Sanitizers.has(SanitizerKind::Leak) &&
