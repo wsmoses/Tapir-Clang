@@ -10,6 +10,7 @@
 // This file implements a diagnostic formatting hook for AST elements.
 //
 //===----------------------------------------------------------------------===//
+
 #include "clang/AST/ASTDiagnostic.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTLambda.h"
@@ -200,7 +201,7 @@ break; \
   return QC.apply(Context, QT);
 }
 
-/// \brief Convert the given type to a string suitable for printing as part of 
+/// \brief Convert the given type to a string suitable for printing as part of
 /// a diagnostic.
 ///
 /// There are four main criteria when determining whether we should have an
@@ -254,7 +255,7 @@ ConvertTypeToDiagnosticString(ASTContext &Context, QualType Ty,
                  // and the desugared comparison string.
     std::string CompareCanS =
         CompareCanTy.getAsString(Context.getPrintingPolicy());
-    
+
     if (CompareCanS == CanS)
       continue;  // No new info from canonical type
 
@@ -327,11 +328,11 @@ void clang::FormatASTNodeDiagnosticArgument(
     void *Cookie,
     ArrayRef<intptr_t> QualTypeVals) {
   ASTContext &Context = *static_cast<ASTContext*>(Cookie);
-  
+
   size_t OldEnd = Output.size();
   llvm::raw_svector_ostream OS(Output);
   bool NeedQuotes = true;
-  
+
   switch (Kind) {
     default: llvm_unreachable("unknown ArgumentKind");
     case DiagnosticsEngine::ak_qualtype_pair: {
@@ -364,7 +365,7 @@ void clang::FormatASTNodeDiagnosticArgument(
     case DiagnosticsEngine::ak_qualtype: {
       assert(Modifier.empty() && Argument.empty() &&
              "Invalid modifier for QualType argument");
-      
+
       QualType Ty(QualType::getFromOpaquePtr(reinterpret_cast<void*>(Val)));
       OS << ConvertTypeToDiagnosticString(Context, Ty, PrevArgs, QualTypeVals);
       NeedQuotes = false;
@@ -443,7 +444,6 @@ void clang::FormatASTNodeDiagnosticArgument(
       NeedQuotes = false;
       break;
     }
-
   }
 
   if (NeedQuotes) {
@@ -497,7 +497,7 @@ class TemplateDiff {
     enum DiffKind {
       /// Incomplete or invalid node.
       Invalid,
-      /// Another level of templates, requires that
+      /// Another level of templates
       Template,
       /// Type difference, all type differences except those falling under
       /// the Template difference.
@@ -990,19 +990,22 @@ class TemplateDiff {
       }
     };
 
+    bool UseDesugaredIterator;
     InternalIterator SugaredIterator;
     InternalIterator DesugaredIterator;
 
   public:
     TSTiterator(ASTContext &Context, const TemplateSpecializationType *TST)
-        : SugaredIterator(TST),
+        : UseDesugaredIterator(TST->isSugared() && !TST->isTypeAlias()),
+          SugaredIterator(TST),
           DesugaredIterator(
               GetTemplateSpecializationType(Context, TST->desugar())) {}
 
     /// &operator++ - Increment the iterator to the next template argument.
     TSTiterator &operator++() {
       ++SugaredIterator;
-      ++DesugaredIterator;
+      if (UseDesugaredIterator)
+        ++DesugaredIterator;
       return *this;
     }
 
@@ -1024,11 +1027,13 @@ class TemplateDiff {
     /// hasDesugaredTA - Returns true if there is another TemplateArgument
     /// available.
     bool hasDesugaredTA() const {
-      return !DesugaredIterator.isEnd();
+      return UseDesugaredIterator && !DesugaredIterator.isEnd();
     }
 
     /// getDesugaredTA - Returns the desugared TemplateArgument.
     reference getDesugaredTA() const {
+      assert(UseDesugaredIterator &&
+             "Desugared TemplateArgument should not be used.");
       return *DesugaredIterator;
     }
   };
@@ -1523,12 +1528,14 @@ class TemplateDiff {
         OS << FromTD->getNameAsString() << '<';
         Tree.MoveToChild();
         unsigned NumElideArgs = 0;
+        bool AllArgsElided = true;
         do {
           if (ElideType) {
             if (Tree.NodeIsSame()) {
               ++NumElideArgs;
               continue;
             }
+            AllArgsElided = false;
             if (NumElideArgs > 0) {
               PrintElideArgs(NumElideArgs, Indent);
               NumElideArgs = 0;
@@ -1539,8 +1546,12 @@ class TemplateDiff {
           if (Tree.HasNextSibling())
             OS << ", ";
         } while (Tree.AdvanceSibling());
-        if (NumElideArgs > 0)
-          PrintElideArgs(NumElideArgs, Indent);
+        if (NumElideArgs > 0) {
+          if (AllArgsElided)
+            OS << "...";
+          else
+            PrintElideArgs(NumElideArgs, Indent);
+        }
 
         Tree.Parent();
         OS << ">";
@@ -1622,7 +1633,6 @@ class TemplateDiff {
       Unbold();
       OS << "]";
     }
-    return;
   }
 
   /// PrintExpr - Prints out the expr template arguments, highlighting argument
@@ -1832,9 +1842,15 @@ class TemplateDiff {
       Bold();
       PrintValueDecl(ToValueDecl, ToAddressOf, ToExpr, ToNullPtr);
       Unbold();
+    } else {
+      OS << (DefaultDecl ? "[(default) " : "[");
+      Bold();
+      PrintValueDecl(VD, NeedAddressOf, VDExpr, IsNullPtr);
+      Unbold();
+      OS << " != " << (DefaultInt ? "(default) " : "");
+      PrintAPSInt(Val, IntExpr, true /*Valid*/, IntType, false /*PrintType*/);
       OS << ']';
     }
-
   }
 
   /// PrintValueDeclAndInteger - Uses the print functions for ValueDecl and
@@ -2016,14 +2032,14 @@ public:
     return true;
   }
 }; // end class TemplateDiff
-}  // end namespace
+}  // end anonymous namespace
 
 /// FormatTemplateTypeDiff - A helper static function to start the template
 /// diff and return the properly formatted string.  Returns true if the diff
 /// is successful.
 static bool FormatTemplateTypeDiff(ASTContext &Context, QualType FromType,
                                    QualType ToType, bool PrintTree,
-                                   bool PrintFromType, bool ElideType, 
+                                   bool PrintFromType, bool ElideType,
                                    bool ShowColors, raw_ostream &OS) {
   if (PrintTree)
     PrintFromType = true;

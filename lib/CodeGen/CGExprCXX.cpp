@@ -24,10 +24,11 @@
 using namespace clang;
 using namespace CodeGen;
 
-static RequiredArgs commonEmitCXXMemberOrOperatorCall(
-    CodeGenFunction &CGF, const CXXMethodDecl *MD, llvm::Value *Callee,
-    ReturnValueSlot ReturnValue, llvm::Value *This, llvm::Value *ImplicitParam,
-    QualType ImplicitParamTy, const CallExpr *CE, CallArgList &Args) {
+static RequiredArgs
+commonEmitCXXMemberOrOperatorCall(CodeGenFunction &CGF, const CXXMethodDecl *MD,
+                                  llvm::Value *This, llvm::Value *ImplicitParam,
+                                  QualType ImplicitParamTy, const CallExpr *CE,
+                                  CallArgList &Args) {
   assert(CE == nullptr || isa<CXXMemberCallExpr>(CE) ||
          isa<CXXOperatorCallExpr>(CE));
   assert(MD->isInstance() &&
@@ -76,21 +77,20 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorCall(
   const FunctionProtoType *FPT = MD->getType()->castAs<FunctionProtoType>();
   CallArgList Args;
   RequiredArgs required = commonEmitCXXMemberOrOperatorCall(
-      *this, MD, Callee, ReturnValue, This, ImplicitParam, ImplicitParamTy, CE,
-      Args);
+      *this, MD, This, ImplicitParam, ImplicitParamTy, CE, Args);
   return EmitCall(CGM.getTypes().arrangeCXXMethodCall(Args, FPT, required),
                   Callee, ReturnValue, Args, MD);
 }
 
-RValue CodeGenFunction::EmitCXXStructorCall(
-    const CXXMethodDecl *MD, llvm::Value *Callee, ReturnValueSlot ReturnValue,
-    llvm::Value *This, llvm::Value *ImplicitParam, QualType ImplicitParamTy,
-    const CallExpr *CE, StructorType Type) {
+RValue CodeGenFunction::EmitCXXDestructorCall(
+    const CXXDestructorDecl *DD, llvm::Value *Callee, llvm::Value *This,
+    llvm::Value *ImplicitParam, QualType ImplicitParamTy, const CallExpr *CE,
+    StructorType Type) {
   CallArgList Args;
-  commonEmitCXXMemberOrOperatorCall(*this, MD, Callee, ReturnValue, This,
-                                    ImplicitParam, ImplicitParamTy, CE, Args);
-  return EmitCall(CGM.getTypes().arrangeCXXStructorDeclaration(MD, Type),
-                  Callee, ReturnValue, Args, MD);
+  commonEmitCXXMemberOrOperatorCall(*this, DD, This, ImplicitParam,
+                                    ImplicitParamTy, CE, Args);
+  return EmitCall(CGM.getTypes().arrangeCXXStructorDeclaration(DD, Type),
+                  Callee, ReturnValueSlot(), Args, DD);
 }
 
 static CXXRecordDecl *getCXXRecord(const Expr *E) {
@@ -259,7 +259,8 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
     if (SanOpts.has(SanitizerKind::CFINVCall) &&
         MD->getParent()->isDynamicClass()) {
       llvm::Value *VTable = GetVTablePtr(This, Int8PtrTy, MD->getParent());
-      EmitVTablePtrCheckForCall(MD, VTable, CFITCK_NVCall, CE->getLocStart());
+      EmitVTablePtrCheckForCall(MD->getParent(), VTable, CFITCK_NVCall,
+                                CE->getLocStart());
     }
 
     if (getLangOpts().AppleKext && MD->isVirtual() && HasQualifier)
@@ -273,7 +274,7 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
 
   if (MD->isVirtual()) {
     This = CGM.getCXXABI().adjustThisArgumentForVirtualFunctionCall(
-        *this, MD, This, UseVirtualCall);
+        *this, CalleeDecl, This, UseVirtualCall);
   }
 
   return EmitCXXMemberOrOperatorCall(MD, Callee, ReturnValue, This.getPointer(),
@@ -369,6 +370,9 @@ static void EmitNullBaseClassInitialization(CodeGenFunction &CGF,
   std::vector<CharUnits> VBPtrOffsets =
       CGF.CGM.getCXXABI().getVBPtrOffsets(Base);
   for (CharUnits VBPtrOffset : VBPtrOffsets) {
+    // Stop before we hit any virtual base pointers located in virtual bases.
+    if (VBPtrOffset >= NVSize)
+      break;
     std::pair<CharUnits, CharUnits> LastStore = Stores.pop_back_val();
     CharUnits LastStoreOffset = LastStore.first;
     CharUnits LastStoreSize = LastStore.second;
@@ -471,8 +475,8 @@ CodeGenFunction::EmitCXXConstructExpr(const CXXConstructExpr *E,
     }
   }
   
-  if (const ConstantArrayType *arrayType 
-        = getContext().getAsConstantArrayType(E->getType())) {
+  if (const ArrayType *arrayType
+        = getContext().getAsArrayType(E->getType())) {
     EmitCXXAggrConstructorCall(CD, arrayType, Dest.getAddress(), E);
   } else {
     CXXCtorType Type = Ctor_Complete;
@@ -1010,15 +1014,18 @@ void CodeGenFunction::EmitNewArrayInitializer(
   if (auto *ILE = dyn_cast<InitListExpr>(Init)) {
     if (const RecordType *RType = ILE->getType()->getAs<RecordType>()) {
       if (RType->getDecl()->isStruct()) {
-        unsigned NumFields = 0;
+        unsigned NumElements = 0;
+        if (auto *CXXRD = dyn_cast<CXXRecordDecl>(RType->getDecl()))
+          NumElements = CXXRD->getNumBases();
         for (auto *Field : RType->getDecl()->fields())
           if (!Field->isUnnamedBitfield())
-            ++NumFields;
-        if (ILE->getNumInits() == NumFields)
+            ++NumElements;
+        // FIXME: Recurse into nested InitListExprs.
+        if (ILE->getNumInits() == NumElements)
           for (unsigned i = 0, e = ILE->getNumInits(); i != e; ++i)
             if (!isa<ImplicitValueInitExpr>(ILE->getInit(i)))
-              --NumFields;
-        if (ILE->getNumInits() == NumFields && TryMemsetInitialization())
+              --NumElements;
+        if (ILE->getNumInits() == NumElements && TryMemsetInitialization())
           return;
       }
     }

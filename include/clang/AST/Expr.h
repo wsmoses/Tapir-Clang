@@ -29,6 +29,7 @@
 #include "llvm/ADT/APSInt.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
+#include "llvm/Support/AtomicOrdering.h"
 #include "llvm/Support/Compiler.h"
 
 namespace clang {
@@ -593,6 +594,13 @@ public:
   bool EvaluateAsInt(llvm::APSInt &Result, const ASTContext &Ctx,
                      SideEffectsKind AllowSideEffects = SE_NoSideEffects) const;
 
+  /// EvaluateAsFloat - Return true if this is a constant which we can fold and
+  /// convert to a floating point value, using any crazy technique that we
+  /// want to.
+  bool
+  EvaluateAsFloat(llvm::APFloat &Result, const ASTContext &Ctx,
+                  SideEffectsKind AllowSideEffects = SE_NoSideEffects) const;
+
   /// isEvaluatable - Call EvaluateAsRValue to see if this expression can be
   /// constant folded without side-effects, but discard the result.
   bool isEvaluatable(const ASTContext &Ctx,
@@ -847,10 +855,12 @@ public:
                   ExprObjectKind OK = OK_Ordinary,
                   Expr *SourceExpr = nullptr)
     : Expr(OpaqueValueExprClass, T, VK, OK,
-           T->isDependentType(), 
+           T->isDependentType() ||
+           (SourceExpr && SourceExpr->isTypeDependent()),
            T->isDependentType() || 
            (SourceExpr && SourceExpr->isValueDependent()),
-           T->isInstantiationDependentType(),
+           T->isInstantiationDependentType() ||
+           (SourceExpr && SourceExpr->isInstantiationDependent()),
            false),
       SourceExpr(SourceExpr), Loc(Loc) {
   }
@@ -2137,11 +2147,15 @@ class CallExpr : public Expr {
   unsigned NumArgs;
   SourceLocation RParenLoc;
 
+  void updateDependenciesFromArg(Expr *Arg);
+
 protected:
   // These versions of the constructor are for derived classes.
-  CallExpr(const ASTContext& C, StmtClass SC, Expr *fn, unsigned NumPreArgs,
-           ArrayRef<Expr*> args, QualType t, ExprValueKind VK,
-           SourceLocation rparenloc);
+  CallExpr(const ASTContext &C, StmtClass SC, Expr *fn,
+           ArrayRef<Expr *> preargs, ArrayRef<Expr *> args, QualType t,
+           ExprValueKind VK, SourceLocation rparenloc);
+  CallExpr(const ASTContext &C, StmtClass SC, Expr *fn, ArrayRef<Expr *> args,
+           QualType t, ExprValueKind VK, SourceLocation rparenloc);
   CallExpr(const ASTContext &C, StmtClass SC, unsigned NumPreArgs,
            EmptyShell Empty);
 
@@ -4822,16 +4836,6 @@ public:
 #include "clang/Basic/Builtins.def"
     // Avoid trailing comma
     BI_First = 0
-  };
-
-  // The ABI values for various atomic memory orderings.
-  enum AtomicOrderingKind {
-    AO_ABI_memory_order_relaxed = 0,
-    AO_ABI_memory_order_consume = 1,
-    AO_ABI_memory_order_acquire = 2,
-    AO_ABI_memory_order_release = 3,
-    AO_ABI_memory_order_acq_rel = 4,
-    AO_ABI_memory_order_seq_cst = 5
   };
 
 private:

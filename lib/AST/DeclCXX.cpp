@@ -46,34 +46,33 @@ void LazyASTUnresolvedSet::getFromExternalSource(ASTContext &C) const {
 }
 
 CXXRecordDecl::DefinitionData::DefinitionData(CXXRecordDecl *D)
-  : UserDeclaredConstructor(false), UserDeclaredSpecialMembers(0),
-    Aggregate(true), PlainOldData(true), Empty(true), Polymorphic(false),
-    Abstract(false), IsStandardLayout(true), HasNoNonEmptyBases(true),
-    HasPrivateFields(false), HasProtectedFields(false), HasPublicFields(false),
-    HasMutableFields(false), HasVariantMembers(false), HasOnlyCMembers(true),
-    HasInClassInitializer(false), HasUninitializedReferenceMember(false),
-    NeedOverloadResolutionForMoveConstructor(false),
-    NeedOverloadResolutionForMoveAssignment(false),
-    NeedOverloadResolutionForDestructor(false),
-    DefaultedMoveConstructorIsDeleted(false),
-    DefaultedMoveAssignmentIsDeleted(false),
-    DefaultedDestructorIsDeleted(false),
-    HasTrivialSpecialMembers(SMF_All),
-    DeclaredNonTrivialSpecialMembers(0),
-    HasIrrelevantDestructor(true),
-    HasConstexprNonCopyMoveConstructor(false),
-    DefaultedDefaultConstructorIsConstexpr(true),
-    HasConstexprDefaultConstructor(false),
-    HasNonLiteralTypeFieldsOrBases(false), ComputedVisibleConversions(false),
-    UserProvidedDefaultConstructor(false), DeclaredSpecialMembers(0),
-    ImplicitCopyConstructorHasConstParam(true),
-    ImplicitCopyAssignmentHasConstParam(true),
-    HasDeclaredCopyConstructorWithConstParam(false),
-    HasDeclaredCopyAssignmentWithConstParam(false),
-    IsLambda(false), IsParsingBaseSpecifiers(false), NumBases(0), NumVBases(0),
-    Bases(), VBases(),
-    Definition(D), FirstFriend() {
-}
+    : UserDeclaredConstructor(false), UserDeclaredSpecialMembers(0),
+      Aggregate(true), PlainOldData(true), Empty(true), Polymorphic(false),
+      Abstract(false), IsStandardLayout(true), HasNoNonEmptyBases(true),
+      HasPrivateFields(false), HasProtectedFields(false),
+      HasPublicFields(false), HasMutableFields(false), HasVariantMembers(false),
+      HasOnlyCMembers(true), HasInClassInitializer(false),
+      HasUninitializedReferenceMember(false), HasUninitializedFields(false),
+      HasInheritedConstructor(false), HasInheritedAssignment(false),
+      NeedOverloadResolutionForMoveConstructor(false),
+      NeedOverloadResolutionForMoveAssignment(false),
+      NeedOverloadResolutionForDestructor(false),
+      DefaultedMoveConstructorIsDeleted(false),
+      DefaultedMoveAssignmentIsDeleted(false),
+      DefaultedDestructorIsDeleted(false), HasTrivialSpecialMembers(SMF_All),
+      DeclaredNonTrivialSpecialMembers(0), HasIrrelevantDestructor(true),
+      HasConstexprNonCopyMoveConstructor(false),
+      HasDefaultedDefaultConstructor(false),
+      DefaultedDefaultConstructorIsConstexpr(true),
+      HasConstexprDefaultConstructor(false),
+      HasNonLiteralTypeFieldsOrBases(false), ComputedVisibleConversions(false),
+      UserProvidedDefaultConstructor(false), DeclaredSpecialMembers(0),
+      ImplicitCopyConstructorHasConstParam(true),
+      ImplicitCopyAssignmentHasConstParam(true),
+      HasDeclaredCopyConstructorWithConstParam(false),
+      HasDeclaredCopyAssignmentWithConstParam(false), IsLambda(false),
+      IsParsingBaseSpecifiers(false), NumBases(0), NumVBases(0), Bases(),
+      VBases(), Definition(D), FirstFriend() {}
 
 CXXBaseSpecifier *CXXRecordDecl::DefinitionData::getBasesSlowCase() const {
   return Bases.get(Definition->getASTContext().getExternalSource());
@@ -89,7 +88,7 @@ CXXRecordDecl::CXXRecordDecl(Kind K, TagKind TK, const ASTContext &C,
                              CXXRecordDecl *PrevDecl)
     : RecordDecl(K, TK, C, DC, StartLoc, IdLoc, Id, PrevDecl),
       DefinitionData(PrevDecl ? PrevDecl->DefinitionData
-                              : DefinitionDataPtr(this)),
+                              : nullptr),
       TemplateOrInstantiation() {}
 
 CXXRecordDecl *CXXRecordDecl::Create(const ASTContext &C, TagKind TK,
@@ -143,9 +142,11 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
     C.Deallocate(data().getBases());
 
   if (NumBases) {
-    // C++ [dcl.init.aggr]p1:
-    //   An aggregate is [...] a class with [...] no base classes [...].
-    data().Aggregate = false;
+    if (!C.getLangOpts().CPlusPlus1z) {
+      // C++ [dcl.init.aggr]p1:
+      //   An aggregate is [...] a class with [...] no base classes [...].
+      data().Aggregate = false;
+    }
 
     // C++ [class]p4:
     //   A POD-struct is an aggregate class...
@@ -171,8 +172,6 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
     CXXRecordDecl *BaseClassDecl
       = cast<CXXRecordDecl>(BaseType->getAs<RecordType>()->getDecl());
 
-    // A class with a non-empty base class is not empty.
-    // FIXME: Standard ref?
     if (!BaseClassDecl->isEmpty()) {
       if (!data().Empty) {
         // C++0x [class]p7:
@@ -186,10 +185,18 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
         data().IsStandardLayout = false;
       }
 
+      // C++14 [meta.unary.prop]p4:
+      //   T is a class type [...] with [...] no base class B for which
+      //   is_empty<B>::value is false.
       data().Empty = false;
       data().HasNoNonEmptyBases = false;
     }
     
+    // C++1z [dcl.init.agg]p1:
+    //   An aggregate is a class with [...] no private or protected base classes
+    if (Base->getAccessSpecifier() != AS_public)
+      data().Aggregate = false;
+
     // C++ [class.virtual]p1:
     //   A class that declares or inherits a virtual function is called a 
     //   polymorphic class.
@@ -220,6 +227,10 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
         if (CXXRecordDecl *VBaseDecl = VBase.getType()->getAsCXXRecordDecl())
           if (!VBaseDecl->hasCopyConstructorWithConstParam())
             data().ImplicitCopyConstructorHasConstParam = false;
+
+        // C++1z [dcl.init.agg]p1:
+        //   An aggregate is a class with [...] no virtual base classes
+        data().Aggregate = false;
       }
     }
 
@@ -228,10 +239,14 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
       if (SeenVBaseTypes.insert(C.getCanonicalType(BaseType)).second)
         VBases.push_back(Base);
 
-      // C++0x [meta.unary.prop] is_empty:
-      //    T is a class type, but not a union type, with ... no virtual base
-      //    classes
+      // C++14 [meta.unary.prop] is_empty:
+      //   T is a class type, but not a union type, with ... no virtual base
+      //   classes
       data().Empty = false;
+
+      // C++1z [dcl.init.agg]p1:
+      //   An aggregate is a class with [...] no virtual base classes
+      data().Aggregate = false;
 
       // C++11 [class.ctor]p5, C++11 [class.copy]p12, C++11 [class.copy]p25:
       //   A [default constructor, copy/move constructor, or copy/move assignment
@@ -331,6 +346,9 @@ CXXRecordDecl::setBases(CXXBaseSpecifier const * const *Bases,
 
     if (BaseClassDecl->hasUninitializedReferenceMember())
       data().HasUninitializedReferenceMember = true;
+
+    if (!BaseClassDecl->allowConstDefaultInit())
+      data().HasUninitializedFields = true;
 
     addedClassSubobject(BaseClassDecl);
   }
@@ -441,8 +459,8 @@ void CXXRecordDecl::addedMember(Decl *D) {
       //   A POD-struct is an aggregate class...
       data().PlainOldData = false;
       
-      // Virtual functions make the class non-empty.
-      // FIXME: Standard ref?
+      // C++14 [meta.unary.prop]p4:
+      //   T is a class type [...] with [...] no virtual member functions...
       data().Empty = false;
 
       // C++ [class.virtual]p1:
@@ -497,6 +515,8 @@ void CXXRecordDecl::addedMember(Decl *D) {
         data().UserProvidedDefaultConstructor = true;
       if (Constructor->isConstexpr())
         data().HasConstexprDefaultConstructor = true;
+      if (Constructor->isDefaulted())
+        data().HasDefaultedDefaultConstructor = true;
     }
 
     if (!FunTmpl) {
@@ -702,6 +722,15 @@ void CXXRecordDecl::addedMember(Decl *D) {
       data().IsStandardLayout = false;
     }
 
+    if (!Field->hasInClassInitializer() && !Field->isMutable()) {
+      if (CXXRecordDecl *FieldType = Field->getType()->getAsCXXRecordDecl()) {
+        if (FieldType->hasDefinition() && !FieldType->allowConstDefaultInit())
+          data().HasUninitializedFields = true;
+      } else {
+        data().HasUninitializedFields = true;
+      }
+    }
+
     // Record if this field is the first non-literal or volatile field or base.
     if (!T->isLiteralType(Context) || T.isVolatileQualified())
       data().HasNonLiteralTypeFieldsOrBases = true;
@@ -720,7 +749,7 @@ void CXXRecordDecl::addedMember(Decl *D) {
       //   An aggregate is a [...] class with [...] no
       //   brace-or-equal-initializers for non-static data members.
       //
-      // This rule was removed in C++1y.
+      // This rule was removed in C++14.
       if (!getASTContext().getLangOpts().CPlusPlus14)
         data().Aggregate = false;
 
@@ -910,7 +939,9 @@ void CXXRecordDecl::addedMember(Decl *D) {
     if (!data().HasNoNonEmptyBases)
       data().IsStandardLayout = false;
 
-    // If this is not a zero-length bit-field, then the class is not empty.
+    // C++14 [meta.unary.prop]p4:
+    //   T is a class type [...] with [...] no non-static data members other
+    //   than bit-fields of length 0...
     if (data().Empty) {
       if (!Field->isBitField() ||
           (!Field->getBitWidth()->isTypeDependent() &&
@@ -927,6 +958,15 @@ void CXXRecordDecl::addedMember(Decl *D) {
       ASTContext &Ctx = getASTContext();
       data().Conversions.get(Ctx).addDecl(Ctx, Shadow, Shadow->getAccess());
     }
+  }
+
+  if (UsingDecl *Using = dyn_cast<UsingDecl>(D)) {
+    if (Using->getDeclName().getNameKind() ==
+        DeclarationName::CXXConstructorName)
+      data().HasInheritedConstructor = true;
+
+    if (Using->getDeclName().getCXXOverloadedOperator() == OO_Equal)
+      data().HasInheritedAssignment = true;
   }
 }
 
@@ -1606,7 +1646,7 @@ QualType CXXMethodDecl::getThisType(ASTContext &C) const {
 
   QualType ClassTy = C.getTypeDeclType(getParent());
   ClassTy = C.getQualifiedType(ClassTy,
-                               Qualifiers::fromCVRMask(getTypeQualifiers()));
+                               Qualifiers::fromCVRUMask(getTypeQualifiers()));
   return C.getPointerType(ClassTy);
 }
 

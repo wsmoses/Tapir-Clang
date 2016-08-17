@@ -1138,11 +1138,9 @@ bool ASTUnit::Parse(std::shared_ptr<PCHContainerOperations> PCHContainerOps,
   if (!Act->BeginSourceFile(*Clang.get(), Clang->getFrontendOpts().Inputs[0]))
     goto error;
 
-  if (SavedMainFileBuffer) {
-    std::string ModName = getPreambleFile(this);
+  if (SavedMainFileBuffer)
     TranslateStoredDiagnostics(getFileManager(), getSourceManager(),
                                PreambleDiagnostics, StoredDiagnostics);
-  }
 
   if (!Act->Execute())
     goto error;
@@ -1380,7 +1378,7 @@ ASTUnit::getMainBufferWithPrecompiledPreamble(
           
       // First, make a record of those files that have been overridden via
       // remapping or unsaved_files.
-      llvm::StringMap<PreambleFileHash> OverriddenFiles;
+      std::map<llvm::sys::fs::UniqueID, PreambleFileHash> OverriddenFiles;
       for (const auto &R : PreprocessorOpts.RemappedFiles) {
         if (AnyFileChanged)
           break;
@@ -1393,24 +1391,38 @@ ASTUnit::getMainBufferWithPrecompiledPreamble(
           break;
         }
 
-        OverriddenFiles[R.first] = PreambleFileHash::createForFile(
+        OverriddenFiles[Status.getUniqueID()] = PreambleFileHash::createForFile(
             Status.getSize(), Status.getLastModificationTime().toEpochTime());
       }
 
       for (const auto &RB : PreprocessorOpts.RemappedFileBuffers) {
         if (AnyFileChanged)
           break;
-        OverriddenFiles[RB.first] =
+
+        vfs::Status Status;
+        if (FileMgr->getNoncachedStatValue(RB.first, Status)) {
+          AnyFileChanged = true;
+          break;
+        }
+
+        OverriddenFiles[Status.getUniqueID()] =
             PreambleFileHash::createForMemoryBuffer(RB.second);
       }
        
       // Check whether anything has changed.
-      for (llvm::StringMap<PreambleFileHash>::iterator 
+      for (llvm::StringMap<PreambleFileHash>::iterator
              F = FilesInPreamble.begin(), FEnd = FilesInPreamble.end();
            !AnyFileChanged && F != FEnd; 
            ++F) {
-        llvm::StringMap<PreambleFileHash>::iterator Overridden
-          = OverriddenFiles.find(F->first());
+        vfs::Status Status;
+        if (FileMgr->getNoncachedStatValue(F->first(), Status)) {
+          // If we can't stat the file, assume that something horrible happened.
+          AnyFileChanged = true;
+          break;
+        }
+
+        std::map<llvm::sys::fs::UniqueID, PreambleFileHash>::iterator Overridden
+          = OverriddenFiles.find(Status.getUniqueID());
         if (Overridden != OverriddenFiles.end()) {
           // This file was remapped; check whether the newly-mapped file 
           // matches up with the previous mapping.
@@ -1420,13 +1432,9 @@ ASTUnit::getMainBufferWithPrecompiledPreamble(
         }
         
         // The file was not remapped; check whether it has changed on disk.
-        vfs::Status Status;
-        if (FileMgr->getNoncachedStatValue(F->first(), Status)) {
-          // If we can't stat the file, assume that something horrible happened.
-          AnyFileChanged = true;
-        } else if (Status.getSize() != uint64_t(F->second.Size) ||
-                   Status.getLastModificationTime().toEpochTime() !=
-                       uint64_t(F->second.ModTime))
+        if (Status.getSize() != uint64_t(F->second.Size) ||
+            Status.getLastModificationTime().toEpochTime() !=
+                uint64_t(F->second.ModTime))
           AnyFileChanged = true;
       }
           
@@ -1723,7 +1731,7 @@ ASTUnit *ASTUnit::create(CompilerInvocation *CI,
 ASTUnit *ASTUnit::LoadFromCompilerInvocationAction(
     CompilerInvocation *CI,
     std::shared_ptr<PCHContainerOperations> PCHContainerOps,
-    IntrusiveRefCntPtr<DiagnosticsEngine> Diags, ASTFrontendAction *Action,
+    IntrusiveRefCntPtr<DiagnosticsEngine> Diags, FrontendAction *Action,
     ASTUnit *Unit, bool Persistent, StringRef ResourceFilesPath,
     bool OnlyLocalDecls, bool CaptureDiagnostics,
     unsigned PrecompilePreambleAfterNParses, bool CacheCodeCompletionResults,
@@ -1812,7 +1820,7 @@ ASTUnit *ASTUnit::LoadFromCompilerInvocationAction(
   // Create the source manager.
   Clang->setSourceManager(&AST->getSourceManager());
 
-  ASTFrontendAction *Act = Action;
+  FrontendAction *Act = Action;
 
   std::unique_ptr<TopLevelDeclTrackerAction> TrackerAct;
   if (!Act) {
@@ -2814,7 +2822,7 @@ const FileEntry *ASTUnit::getPCHFile() {
 }
 
 bool ASTUnit::isModuleFile() {
-  return isMainFileAST() && !ASTFileLangOpts.CurrentModule.empty();
+  return isMainFileAST() && ASTFileLangOpts.CompilingModule;
 }
 
 void ASTUnit::PreambleData::countLines() const {

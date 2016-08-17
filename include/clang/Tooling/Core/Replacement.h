@@ -22,6 +22,7 @@
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/SourceLocation.h"
 #include "llvm/ADT/StringRef.h"
+#include <map>
 #include <set>
 #include <string>
 #include <vector>
@@ -219,6 +220,17 @@ bool applyAllReplacements(const std::vector<Replacement> &Replaces,
 /// This completely ignores the path stored in each replacement. If one or more
 /// replacements cannot be applied, this returns an empty \c string.
 std::string applyAllReplacements(StringRef Code, const Replacements &Replaces);
+
+/// \brief Calculates the ranges in a single file that are affected by the
+/// Replacements.
+///
+/// \pre Replacements must be for the same file.
+std::vector<Range> calculateChangedRanges(const Replacements &Replaces);
+
+/// \brief Groups a random set of replacements by file path. Replacements
+/// related to the same file entry are put into the same vector.
+std::map<std::string, Replacements>
+groupReplacementsByFile(const Replacements &Replaces);
 
 /// \brief Merges two sets of replacements with the second set referring to the
 /// code after applying the first set. Within both 'First' and 'Second',

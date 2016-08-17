@@ -257,30 +257,6 @@ public:
   TypeSourceInfo *getTypeSourceInfo() const { return BaseTypeInfo; }
 };
 
-/// \brief A lazy pointer to the definition data for a declaration.
-/// FIXME: This is a little CXXRecordDecl-specific that the moment.
-template<typename Decl, typename T> class LazyDefinitionDataPtr {
-  llvm::PointerUnion<T *, Decl *> DataOrCanonicalDecl;
-
-  LazyDefinitionDataPtr update() {
-    if (Decl *Canon = DataOrCanonicalDecl.template dyn_cast<Decl*>()) {
-      if (Canon->isCanonicalDecl())
-        Canon->getMostRecentDecl();
-      else
-        // Declaration isn't canonical any more;
-        // update it and perform path compression.
-        *this = Canon->getPreviousDecl()->DefinitionData.update();
-    }
-    return *this;
-  }
-
-public:
-  LazyDefinitionDataPtr(Decl *Canon) : DataOrCanonicalDecl(Canon) {}
-  LazyDefinitionDataPtr(T *Data) : DataOrCanonicalDecl(Data) {}
-  T *getNotUpdated() { return DataOrCanonicalDecl.template dyn_cast<T*>(); }
-  T *get() { return update().getNotUpdated(); }
-};
-
 /// \brief Represents a C++ struct/union/class.
 class CXXRecordDecl : public RecordDecl {
 
@@ -301,30 +277,30 @@ class CXXRecordDecl : public RecordDecl {
     DefinitionData(CXXRecordDecl *D);
 
     /// \brief True if this class has any user-declared constructors.
-    bool UserDeclaredConstructor : 1;
+    unsigned UserDeclaredConstructor : 1;
 
     /// \brief The user-declared special members which this class has.
     unsigned UserDeclaredSpecialMembers : 6;
 
     /// \brief True when this class is an aggregate.
-    bool Aggregate : 1;
+    unsigned Aggregate : 1;
 
     /// \brief True when this class is a POD-type.
-    bool PlainOldData : 1;
+    unsigned PlainOldData : 1;
 
     /// true when this class is empty for traits purposes,
     /// i.e. has no data members other than 0-width bit-fields, has no
     /// virtual function/base, and doesn't inherit from a non-empty
     /// class. Doesn't take union-ness into account.
-    bool Empty : 1;
+    unsigned Empty : 1;
 
     /// \brief True when this class is polymorphic, i.e., has at
     /// least one virtual member or derives from a polymorphic class.
-    bool Polymorphic : 1;
+    unsigned Polymorphic : 1;
 
     /// \brief True when this class is abstract, i.e., has at least
     /// one pure virtual function, (that can come from a base class).
-    bool Abstract : 1;
+    unsigned Abstract : 1;
 
     /// \brief True when this class has standard layout.
     ///
@@ -340,58 +316,70 @@ class CXXRecordDecl : public RecordDecl {
     ///   classes with non-static data members, and
     /// * has no base classes of the same type as the first non-static data
     ///   member.
-    bool IsStandardLayout : 1;
+    unsigned IsStandardLayout : 1;
 
     /// \brief True when there are no non-empty base classes.
     ///
     /// This is a helper bit of state used to implement IsStandardLayout more
     /// efficiently.
-    bool HasNoNonEmptyBases : 1;
+    unsigned HasNoNonEmptyBases : 1;
 
     /// \brief True when there are private non-static data members.
-    bool HasPrivateFields : 1;
+    unsigned HasPrivateFields : 1;
 
     /// \brief True when there are protected non-static data members.
-    bool HasProtectedFields : 1;
+    unsigned HasProtectedFields : 1;
 
     /// \brief True when there are private non-static data members.
-    bool HasPublicFields : 1;
+    unsigned HasPublicFields : 1;
 
     /// \brief True if this class (or any subobject) has mutable fields.
-    bool HasMutableFields : 1;
+    unsigned HasMutableFields : 1;
 
     /// \brief True if this class (or any nested anonymous struct or union)
     /// has variant members.
-    bool HasVariantMembers : 1;
+    unsigned HasVariantMembers : 1;
 
     /// \brief True if there no non-field members declared by the user.
-    bool HasOnlyCMembers : 1;
+    unsigned HasOnlyCMembers : 1;
 
     /// \brief True if any field has an in-class initializer, including those
     /// within anonymous unions or structs.
-    bool HasInClassInitializer : 1;
+    unsigned HasInClassInitializer : 1;
 
     /// \brief True if any field is of reference type, and does not have an
     /// in-class initializer.
     ///
     /// In this case, value-initialization of this class is illegal in C++98
     /// even if the class has a trivial default constructor.
-    bool HasUninitializedReferenceMember : 1;
+    unsigned HasUninitializedReferenceMember : 1;
+
+    /// \brief True if any non-mutable field whose type doesn't have a user-
+    /// provided default ctor also doesn't have an in-class initializer.
+    unsigned HasUninitializedFields : 1;
+
+    /// \brief True if there are any member using-declarations that inherit
+    /// constructors from a base class.
+    unsigned HasInheritedConstructor : 1;
+
+    /// \brief True if there are any member using-declarations named
+    /// 'operator='.
+    unsigned HasInheritedAssignment : 1;
 
     /// \brief These flags are \c true if a defaulted corresponding special
     /// member can't be fully analyzed without performing overload resolution.
     /// @{
-    bool NeedOverloadResolutionForMoveConstructor : 1;
-    bool NeedOverloadResolutionForMoveAssignment : 1;
-    bool NeedOverloadResolutionForDestructor : 1;
+    unsigned NeedOverloadResolutionForMoveConstructor : 1;
+    unsigned NeedOverloadResolutionForMoveAssignment : 1;
+    unsigned NeedOverloadResolutionForDestructor : 1;
     /// @}
 
     /// \brief These flags are \c true if an implicit defaulted corresponding
     /// special member would be defined as deleted.
     /// @{
-    bool DefaultedMoveConstructorIsDeleted : 1;
-    bool DefaultedMoveAssignmentIsDeleted : 1;
-    bool DefaultedDestructorIsDeleted : 1;
+    unsigned DefaultedMoveConstructorIsDeleted : 1;
+    unsigned DefaultedMoveAssignmentIsDeleted : 1;
+    unsigned DefaultedDestructorIsDeleted : 1;
     /// @}
 
     /// \brief The trivial special members which this class has, per
@@ -411,33 +399,37 @@ class CXXRecordDecl : public RecordDecl {
     unsigned DeclaredNonTrivialSpecialMembers : 6;
 
     /// \brief True when this class has a destructor with no semantic effect.
-    bool HasIrrelevantDestructor : 1;
+    unsigned HasIrrelevantDestructor : 1;
 
     /// \brief True when this class has at least one user-declared constexpr
     /// constructor which is neither the copy nor move constructor.
-    bool HasConstexprNonCopyMoveConstructor : 1;
+    unsigned HasConstexprNonCopyMoveConstructor : 1;
+
+    /// \brief True if this class has a (possibly implicit) defaulted default
+    /// constructor.
+    unsigned HasDefaultedDefaultConstructor : 1;
 
     /// \brief True if a defaulted default constructor for this class would
     /// be constexpr.
-    bool DefaultedDefaultConstructorIsConstexpr : 1;
+    unsigned DefaultedDefaultConstructorIsConstexpr : 1;
 
     /// \brief True if this class has a constexpr default constructor.
     ///
     /// This is true for either a user-declared constexpr default constructor
     /// or an implicitly declared constexpr default constructor.
-    bool HasConstexprDefaultConstructor : 1;
+    unsigned HasConstexprDefaultConstructor : 1;
 
     /// \brief True when this class contains at least one non-static data
     /// member or base class of non-literal or volatile type.
-    bool HasNonLiteralTypeFieldsOrBases : 1;
+    unsigned HasNonLiteralTypeFieldsOrBases : 1;
 
     /// \brief True when visible conversion functions are already computed
     /// and are available.
-    bool ComputedVisibleConversions : 1;
+    unsigned ComputedVisibleConversions : 1;
 
     /// \brief Whether we have a C++11 user-provided default constructor (not
     /// explicitly deleted or defaulted).
-    bool UserProvidedDefaultConstructor : 1;
+    unsigned UserProvidedDefaultConstructor : 1;
 
     /// \brief The special members which have been declared for this class,
     /// either by the user or implicitly.
@@ -445,25 +437,25 @@ class CXXRecordDecl : public RecordDecl {
 
     /// \brief Whether an implicit copy constructor would have a const-qualified
     /// parameter.
-    bool ImplicitCopyConstructorHasConstParam : 1;
+    unsigned ImplicitCopyConstructorHasConstParam : 1;
 
     /// \brief Whether an implicit copy assignment operator would have a
     /// const-qualified parameter.
-    bool ImplicitCopyAssignmentHasConstParam : 1;
+    unsigned ImplicitCopyAssignmentHasConstParam : 1;
 
     /// \brief Whether any declared copy constructor has a const-qualified
     /// parameter.
-    bool HasDeclaredCopyConstructorWithConstParam : 1;
+    unsigned HasDeclaredCopyConstructorWithConstParam : 1;
 
     /// \brief Whether any declared copy assignment operator has either a
     /// const-qualified reference parameter or a non-reference parameter.
-    bool HasDeclaredCopyAssignmentWithConstParam : 1;
+    unsigned HasDeclaredCopyAssignmentWithConstParam : 1;
 
     /// \brief Whether this class describes a C++ lambda.
-    bool IsLambda : 1;
+    unsigned IsLambda : 1;
 
     /// \brief Whether we are currently parsing base specifiers.
-    bool IsParsingBaseSpecifiers : 1;
+    unsigned IsParsingBaseSpecifiers : 1;
 
     /// \brief The number of base class specifiers in Bases.
     unsigned NumBases;
@@ -515,16 +507,19 @@ class CXXRecordDecl : public RecordDecl {
       return getVBasesSlowCase();
     }
 
+    ArrayRef<CXXBaseSpecifier> bases() const {
+      return llvm::makeArrayRef(getBases(), NumBases);
+    }
+    ArrayRef<CXXBaseSpecifier> vbases() const {
+      return llvm::makeArrayRef(getVBases(), NumVBases);
+    }
+
   private:
     CXXBaseSpecifier *getBasesSlowCase() const;
     CXXBaseSpecifier *getVBasesSlowCase() const;
   };
 
-  typedef LazyDefinitionDataPtr<CXXRecordDecl, struct DefinitionData>
-      DefinitionDataPtr;
-  friend class LazyDefinitionDataPtr<CXXRecordDecl, struct DefinitionData>;
-
-  mutable DefinitionDataPtr DefinitionData;
+  struct DefinitionData *DefinitionData;
 
   /// \brief Describes a C++ closure type (generated by a lambda expression).
   struct LambdaDefinitionData : public DefinitionData {
@@ -587,8 +582,14 @@ class CXXRecordDecl : public RecordDecl {
        
   };
 
+  struct DefinitionData *dataPtr() const {
+    // Complete the redecl chain (if necessary).
+    getMostRecentDecl();
+    return DefinitionData;
+  }
+
   struct DefinitionData &data() const {
-    auto *DD = DefinitionData.get();
+    auto *DD = dataPtr();
     assert(DD && "queried property of class with no definition");
     return *DD;
   }
@@ -596,7 +597,7 @@ class CXXRecordDecl : public RecordDecl {
   struct LambdaDefinitionData &getLambdaData() const {
     // No update required: a merged definition cannot change any lambda
     // properties.
-    auto *DD = DefinitionData.getNotUpdated();
+    auto *DD = DefinitionData;
     assert(DD && DD->IsLambda && "queried lambda property of non-lambda class");
     return static_cast<LambdaDefinitionData&>(*DD);
   }
@@ -673,11 +674,13 @@ public:
   }
 
   CXXRecordDecl *getDefinition() const {
-    auto *DD = DefinitionData.get();
+    // We only need an update if we don't already know which
+    // declaration is the definition.
+    auto *DD = DefinitionData ? DefinitionData : dataPtr();
     return DD ? DD->Definition : nullptr;
   }
 
-  bool hasDefinition() const { return DefinitionData.get(); }
+  bool hasDefinition() const { return DefinitionData || dataPtr(); }
 
   static CXXRecordDecl *Create(const ASTContext &C, TagKind TK, DeclContext *DC,
                                SourceLocation StartLoc, SourceLocation IdLoc,
@@ -1021,7 +1024,7 @@ public:
   /// \brief Determine whether this class describes a lambda function object.
   bool isLambda() const {
     // An update record can't turn a non-lambda into a lambda.
-    auto *DD = DefinitionData.getNotUpdated();
+    auto *DD = DefinitionData;
     return DD && DD->IsLambda;
   }
 
@@ -1136,9 +1139,10 @@ public:
   /// \brief Determine whether this is an empty class in the sense of
   /// (C++11 [meta.unary.prop]).
   ///
-  /// A non-union class is empty iff it has a virtual function, virtual base,
-  /// data member (other than 0-width bit-field) or inherits from a non-empty
-  /// class.
+  /// The CXXRecordDecl is a class type, but not a union type,
+  /// with no non-static data members other than bit-fields of length 0,
+  /// no virtual member functions, no virtual base classes,
+  /// and no base class B for which is_empty<B>::value is false.
   ///
   /// \note This does NOT include a check for union-ness.
   bool isEmpty() const { return data().Empty; }
@@ -1270,6 +1274,14 @@ public:
     return !(data().HasTrivialSpecialMembers & SMF_Destructor);
   }
 
+  /// \brief Determine whether declaring a const variable with this type is ok
+  /// per core issue 253.
+  bool allowConstDefaultInit() const {
+    return !data().HasUninitializedFields ||
+           !(data().HasDefaultedDefaultConstructor ||
+             needsImplicitDefaultConstructor());
+  }
+
   /// \brief Determine whether this class has a destructor which has no
   /// semantic effect.
   ///
@@ -1283,6 +1295,18 @@ public:
   /// non-static data member or base class.
   bool hasNonLiteralTypeFieldsOrBases() const {
     return data().HasNonLiteralTypeFieldsOrBases;
+  }
+
+  /// \brief Determine whether this class has a using-declaration that names
+  /// a base class constructor.
+  bool hasInheritedConstructor() const {
+    return data().HasInheritedConstructor;
+  }
+
+  /// \brief Determine whether this class has a using-declaration that names
+  /// a base class assignment operator.
+  bool hasInheritedAssignment() const {
+    return data().HasInheritedAssignment;
   }
 
   /// \brief Determine whether this class is considered trivially copyable per
@@ -1555,6 +1579,14 @@ public:
                                  CXXBasePath &Path, DeclarationName Name);
 
   /// \brief Base-class lookup callback that determines whether there exists
+  /// an OpenMP declare reduction member with the given name.
+  ///
+  /// This callback can be used with \c lookupInBases() to find members
+  /// of the given name within a C++ class hierarchy.
+  static bool FindOMPReductionMember(const CXXBaseSpecifier *Specifier,
+                                     CXXBasePath &Path, DeclarationName Name);
+
+  /// \brief Base-class lookup callback that determines whether there exists
   /// a member with the given name that can be used in a nested-name-specifier.
   ///
   /// This callback can be used with \c lookupInBases() to find members of
@@ -1690,6 +1722,7 @@ public:
 
   friend class ASTDeclReader;
   friend class ASTDeclWriter;
+  friend class ASTRecordWriter;
   friend class ASTReader;
   friend class ASTWriter;
 };
@@ -2109,8 +2142,7 @@ public:
     assert(I < getNumArrayIndices() && "Out of bounds member array index");
     getTrailingObjects<VarDecl *>()[I] = Index;
   }
-  ArrayRef<VarDecl *> getArrayIndexes() {
-    assert(getNumArrayIndices() != 0 && "Getting indexes for non-array init");
+  ArrayRef<VarDecl *> getArrayIndices() {
     return llvm::makeArrayRef(getTrailingObjects<VarDecl *>(),
                               getNumArrayIndices());
   }

@@ -6,9 +6,22 @@
 // MIPS-DEF: "-target-abi" "o32"
 //
 // RUN: %clang -target mips64-linux-gnu -### -c %s 2>&1 \
-// RUN:   | FileCheck -check-prefix=MIPS64-DEF %s
-// MIPS64-DEF: "-target-cpu" "mips64r2"
-// MIPS64-DEF: "-target-abi" "n64"
+// RUN:   | FileCheck -check-prefix=MIPS64R2-N64 %s
+// RUN: %clang -target mips-img-linux-gnu -mips64r2 -### -c %s 2>&1 \
+// RUN:   | FileCheck -check-prefix=MIPS64R2-N64 %s
+// RUN: %clang -target mips-mti-linux-gnu -mips64r2 -### -c %s 2>&1 \
+// RUN:   | FileCheck -check-prefix=MIPS64R2-N64 %s
+// MIPS64R2-N64: "-target-cpu" "mips64r2"
+// MIPS64R2-N64: "-target-abi" "n64"
+//
+// RUN: %clang -target mips64-linux-gnu -### -mips64r3 -c %s 2>&1 \
+// RUN:   | FileCheck -check-prefix=MIPS64R3-N64 %s
+// RUN: %clang -target mips-img-linux-gnu -mips64r3 -### -c %s 2>&1 \
+// RUN:   | FileCheck -check-prefix=MIPS64R3-N64 %s
+// RUN: %clang -target mips-mti-linux-gnu -mips64r3 -### -c %s 2>&1 \
+// RUN:   | FileCheck -check-prefix=MIPS64R3-N64 %s
+// MIPS64R3-N64: "-target-cpu" "mips64r3"
+// MIPS64R3-N64: "-target-abi" "n64"
 //
 // RUN: %clang -target mips-linux-gnu -### -c %s \
 // RUN:        -mabi=32 2>&1 \
@@ -44,12 +57,6 @@
 // RUN:        -mabi=o64 2>&1 \
 // RUN:   | FileCheck -check-prefix=MIPS-ABI-O64 %s
 // MIPS-ABI-O64: error: unknown target ABI 'o64'
-//
-// RUN: %clang -target mips-linux-gnu -### -c %s \
-// RUN:        -mabi=eabi 2>&1 \
-// RUN:   | FileCheck -check-prefix=MIPS-ABI-EABI %s
-// MIPS-ABI-EABI: "-target-cpu" "mips32r2"
-// MIPS-ABI-EABI: "-target-abi" "eabi"
 //
 // RUN: not %clang -target mips-linux-gnu -c %s \
 // RUN:        -mabi=unknown 2>&1 \
@@ -103,6 +110,11 @@
 // RUN:   | FileCheck -check-prefix=MIPS-ARCH-P5600 %s
 // MIPS-ARCH-P5600: "-target-cpu" "p5600"
 // MIPS-ARCH-P5600: "-target-abi" "o32"
+//
+// RUN: not %clang -target mips-linux-gnu -c %s \
+// RUN:        -march=p5600 -mabi=64 2>&1 \
+// RUN:   | FileCheck -check-prefix=MIPS-ARCH-P5600-N64 %s
+// MIPS-ARCH-P5600-N64: error: unknown target ABI 'n64'
 //
 // RUN: %clang -target mips-linux-gnu -### -c %s \
 // RUN:        -march=mips64 2>&1 \

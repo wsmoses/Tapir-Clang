@@ -23,6 +23,7 @@
 #include "clang/Basic/Linkage.h"
 #include "clang/Basic/Module.h"
 #include "clang/Basic/OperatorKinds.h"
+#include "clang/Basic/PragmaKinds.h"
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/Optional.h"
 #include "llvm/Support/Compiler.h"
@@ -101,6 +102,73 @@ public:
   static TranslationUnitDecl *castFromDeclContext(const DeclContext *DC) {
     return static_cast<TranslationUnitDecl *>(const_cast<DeclContext*>(DC));
   }
+};
+
+/// \brief Represents a `#pragma comment` line. Always a child of
+/// TranslationUnitDecl.
+class PragmaCommentDecl final
+    : public Decl,
+      private llvm::TrailingObjects<PragmaCommentDecl, char> {
+  virtual void anchor();
+
+  PragmaMSCommentKind CommentKind;
+
+  friend TrailingObjects;
+  friend class ASTDeclReader;
+  friend class ASTDeclWriter;
+
+  PragmaCommentDecl(TranslationUnitDecl *TU, SourceLocation CommentLoc,
+                    PragmaMSCommentKind CommentKind)
+      : Decl(PragmaComment, TU, CommentLoc), CommentKind(CommentKind) {}
+
+public:
+  static PragmaCommentDecl *Create(const ASTContext &C, TranslationUnitDecl *DC,
+                                   SourceLocation CommentLoc,
+                                   PragmaMSCommentKind CommentKind,
+                                   StringRef Arg);
+  static PragmaCommentDecl *CreateDeserialized(ASTContext &C, unsigned ID,
+                                               unsigned ArgSize);
+
+  PragmaMSCommentKind getCommentKind() const { return CommentKind; }
+
+  StringRef getArg() const { return getTrailingObjects<char>(); }
+
+  // Implement isa/cast/dyncast/etc.
+  static bool classof(const Decl *D) { return classofKind(D->getKind()); }
+  static bool classofKind(Kind K) { return K == PragmaComment; }
+};
+
+/// \brief Represents a `#pragma detect_mismatch` line. Always a child of
+/// TranslationUnitDecl.
+class PragmaDetectMismatchDecl final
+    : public Decl,
+      private llvm::TrailingObjects<PragmaDetectMismatchDecl, char> {
+  virtual void anchor();
+
+  size_t ValueStart;
+
+  friend TrailingObjects;
+  friend class ASTDeclReader;
+  friend class ASTDeclWriter;
+
+  PragmaDetectMismatchDecl(TranslationUnitDecl *TU, SourceLocation Loc,
+                           size_t ValueStart)
+      : Decl(PragmaDetectMismatch, TU, Loc), ValueStart(ValueStart) {}
+
+public:
+  static PragmaDetectMismatchDecl *Create(const ASTContext &C,
+                                          TranslationUnitDecl *DC,
+                                          SourceLocation Loc, StringRef Name,
+                                          StringRef Value);
+  static PragmaDetectMismatchDecl *
+  CreateDeserialized(ASTContext &C, unsigned ID, unsigned NameValueSize);
+
+  StringRef getName() const { return getTrailingObjects<char>(); }
+  StringRef getValue() const { return getTrailingObjects<char>() + ValueStart; }
+
+  // Implement isa/cast/dyncast/etc.
+  static bool classof(const Decl *D) { return classofKind(D->getKind()); }
+  static bool classofKind(Kind K) { return K == PragmaDetectMismatch; }
 };
 
 /// \brief Declaration context for names declared as extern "C" in C++. This
@@ -816,9 +884,6 @@ protected:
     /// \brief Whether this variable is (C++0x) constexpr.
     unsigned IsConstexpr : 1;
 
-    /// \brief Whether this variable is a (C++ Concepts TS) concept.
-    unsigned IsConcept : 1;
-
     /// \brief Whether this variable is the implicit variable for a lambda
     /// init-capture.
     unsigned IsInitCapture : 1;
@@ -1192,15 +1257,6 @@ public:
   void setConstexpr(bool IC) {
     assert(!isa<ParmVarDecl>(this));
     NonParmVarDeclBits.IsConstexpr = IC;
-  }
-
-  /// Whether this variable is (C++ Concepts TS) concept.
-  bool isConcept() const {
-    return isa<ParmVarDecl>(this) ? false : NonParmVarDeclBits.IsConcept;
-  }
-  void setConcept(bool IC) {
-    assert(!isa<ParmVarDecl>(this));
-    NonParmVarDeclBits.IsConcept = IC;
   }
 
   /// Whether this variable is the implicit variable for a lambda init-capture.
@@ -1954,6 +2010,7 @@ public:
   unsigned getMinRequiredArguments() const;
 
   QualType getReturnType() const {
+    assert(getType()->getAs<FunctionType>() && "Expected a FunctionType!");
     return getType()->getAs<FunctionType>()->getReturnType();
   }
 
@@ -1964,15 +2021,20 @@ public:
 
   /// \brief Determine the type of an expression that calls this function.
   QualType getCallResultType() const {
+    assert(getType()->getAs<FunctionType>() && "Expected a FunctionType!");
     return getType()->getAs<FunctionType>()->getCallResultType(getASTContext());
   }
+
+  /// \brief Returns the WarnUnusedResultAttr that is either declared on this
+  /// function, or its return type declaration.
+  const Attr *getUnusedResultAttr() const;
 
   /// \brief Returns true if this function or its return type has the
   /// warn_unused_result attribute. If the return type has the attribute and
   /// this function is a method of the return type's class, then false will be
   /// returned to avoid spurious warnings on member methods such as assignment
   /// operators.
-  bool hasUnusedResultAttr() const;
+  bool hasUnusedResultAttr() const { return getUnusedResultAttr() != nullptr; }
 
   /// \brief Returns the storage class as written in the source. For the
   /// computed linkage of symbol, see getLinkage.
@@ -3121,6 +3183,10 @@ public:
   bool isComplete() const {
     return isCompleteDefinition() || isFixed();
   }
+
+  /// \brief Retrieve the enum definition from which this enumeration could
+  /// be instantiated, if it is an instantiation (rather than a non-template).
+  EnumDecl *getTemplateInstantiationPattern() const;
 
   /// \brief Returns the enumeration (declared within the template)
   /// from which this enumeration type was instantiated, or NULL if

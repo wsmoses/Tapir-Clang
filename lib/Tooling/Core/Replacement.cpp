@@ -11,6 +11,8 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "clang/Tooling/Core/Replacement.h"
+
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/DiagnosticIDs.h"
 #include "clang/Basic/DiagnosticOptions.h"
@@ -18,7 +20,6 @@
 #include "clang/Basic/SourceManager.h"
 #include "clang/Lex/Lexer.h"
 #include "clang/Rewrite/Core/Rewriter.h"
-#include "clang/Tooling/Core/Replacement.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
 #include "llvm/Support/raw_os_ostream.h"
@@ -57,14 +58,8 @@ bool Replacement::apply(Rewriter &Rewrite) const {
   const FileEntry *Entry = SM.getFileManager().getFile(FilePath);
   if (!Entry)
     return false;
-  FileID ID;
-  // FIXME: Use SM.translateFile directly.
-  SourceLocation Location = SM.translateFileLineCol(Entry, 1, 1);
-  ID = Location.isValid() ?
-    SM.getFileID(Location) :
-    SM.createFileID(Entry, SourceLocation(), SrcMgr::C_User);
-  // FIXME: We cannot check whether Offset + Length is in the file, as
-  // the remapping API is not public in the RewriteBuffer.
+
+  FileID ID = SM.getOrCreateFileID(Entry, SrcMgr::C_User);
   const SourceLocation Start =
     SM.getLocForStartOfFile(ID).
     getLocWithOffset(ReplacementRange.getOffset());
@@ -255,6 +250,8 @@ bool applyAllReplacements(const std::vector<Replacement> &Replaces,
 }
 
 std::string applyAllReplacements(StringRef Code, const Replacements &Replaces) {
+  if (Replaces.empty()) return Code;
+
   IntrusiveRefCntPtr<vfs::InMemoryFileSystem> InMemoryFileSystem(
       new vfs::InMemoryFileSystem);
   FileManager Files(FileSystemOptions(), InMemoryFileSystem);
@@ -279,6 +276,18 @@ std::string applyAllReplacements(StringRef Code, const Replacements &Replaces) {
   Rewrite.getEditBuffer(ID).write(OS);
   OS.flush();
   return Result;
+}
+
+std::vector<Range> calculateChangedRanges(const Replacements &Replaces) {
+  std::vector<Range> ChangedRanges;
+  int Shift = 0;
+  for (const Replacement &R : Replaces) {
+    unsigned Offset = R.getOffset() + Shift;
+    unsigned Length = R.getReplacementText().size();
+    Shift += Length - R.getLength();
+    ChangedRanges.push_back(Range(Offset, Length));
+  }
+  return ChangedRanges;
 }
 
 namespace {
@@ -314,7 +323,7 @@ public:
 
   // Merges the next element 'R' into this merged element. As we always merge
   // from 'First' into 'Second' or vice versa, the MergedReplacement knows what
-  // set the next element is coming from. 
+  // set the next element is coming from.
   void merge(const Replacement &R) {
     if (MergeSecond) {
       unsigned REnd = R.getOffset() + Delta + R.getLength();
@@ -376,6 +385,15 @@ private:
   std::string Text;
 };
 } // namespace
+
+std::map<std::string, Replacements>
+groupReplacementsByFile(const Replacements &Replaces) {
+  std::map<std::string, Replacements> FileToReplaces;
+  for (const auto &Replace : Replaces) {
+    FileToReplaces[Replace.getFilePath()].insert(Replace);
+  }
+  return FileToReplaces;
+}
 
 Replacements mergeReplacements(const Replacements &First,
                                const Replacements &Second) {

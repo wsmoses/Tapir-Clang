@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 -triple x86_64-unknown-linux -fsanitize=cfi-vcall -fsanitize-cfi-cross-dso -emit-llvm -o - %s | FileCheck --check-prefix=CHECK --check-prefix=ITANIUM %s
-// RUN: %clang_cc1 -triple x86_64-pc-windows-msvc -fsanitize=cfi-vcall  -fsanitize-cfi-cross-dso -emit-llvm -o - %s | FileCheck --check-prefix=CHECK --check-prefix=MS %s
+// RUN: %clang_cc1 -flto -triple x86_64-unknown-linux -fsanitize=cfi-vcall -fsanitize-cfi-cross-dso -emit-llvm -o - %s | FileCheck --check-prefix=CHECK --check-prefix=ITANIUM %s
+// RUN: %clang_cc1 -flto -triple x86_64-pc-windows-msvc -fsanitize=cfi-vcall  -fsanitize-cfi-cross-dso -emit-llvm -o - %s | FileCheck --check-prefix=CHECK --check-prefix=MS %s
 
 struct A {
   A();
@@ -34,8 +34,8 @@ void g() {
 // MS:   %[[TEST:.*]] = call i1 @llvm.bitset.test(i8* %[[VT2]], metadata !"?AUA@@"), !nosanitize
 // CHECK:   br i1 %[[TEST]], label %[[CONT:.*]], label %[[SLOW:.*]], {{.*}} !nosanitize
 // CHECK: [[SLOW]]
-// ITANIUM:   call void @__cfi_slowpath(i64 7004155349499253778, i8* %[[VT2]]) {{.*}} !nosanitize
-// MS:   call void @__cfi_slowpath(i64 -8005289897957287421, i8* %[[VT2]]) {{.*}} !nosanitize
+// ITANIUM:   call void @__cfi_slowpath_diag(i64 7004155349499253778, i8* %[[VT2]], {{.*}}) {{.*}} !nosanitize
+// MS:   call void @__cfi_slowpath_diag(i64 -8005289897957287421, i8* %[[VT2]], {{.*}}) {{.*}} !nosanitize
 // CHECK:   br label %[[CONT]], !nosanitize
 // CHECK: [[CONT]]
 // CHECK:   call void %{{.*}}(%struct.A* %{{.*}})
