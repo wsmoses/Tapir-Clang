@@ -5075,7 +5075,7 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   Args.AddLastArg(CmdArgs, options::OPT_fdetach);
   Args.AddLastArg(CmdArgs, options::OPT_ftapir);
 
-  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) || Args.hasArg(options::OPT_fraces) )
+  if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_ftapir) || Args.hasArg(options::OPT_fdetach) )
     if (getToolChain().getTriple().getOS() != llvm::Triple::Linux &&
         getToolChain().getTriple().getOS() != llvm::Triple::UnknownOS &&
         !getToolChain().getTriple().isMacOSX())
