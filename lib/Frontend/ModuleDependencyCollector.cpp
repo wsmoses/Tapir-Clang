@@ -15,7 +15,6 @@
 #include "clang/Frontend/Utils.h"
 #include "clang/Lex/Preprocessor.h"
 #include "clang/Serialization/ASTReader.h"
-#include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/iterator_range.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
@@ -134,6 +133,10 @@ void ModuleDependencyCollector::writeFileMap() {
   // Default to use relative overlay directories in the VFS yaml file. This
   // allows crash reproducer scripts to work across machines.
   VFSWriter.setOverlayDir(VFSDir);
+
+  // Do not ignore non existent contents otherwise we might skip something
+  // that should have been collected here.
+  VFSWriter.setIgnoreNonExistentContents(false);
 
   // Explicitly set case sensitivity for the YAML writer. For that, find out
   // the sensitivity at the path where the headers all collected to.

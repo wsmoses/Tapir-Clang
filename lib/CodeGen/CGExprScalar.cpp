@@ -818,7 +818,7 @@ Value *ScalarExprEmitter::EmitScalarConversion(Value *Src, QualType SrcType,
            "Splatted expr doesn't match with vector element type?");
 
     // Splat the element across to all elements
-    unsigned NumElements = cast<llvm::VectorType>(DstTy)->getNumElements();
+    unsigned NumElements = DstTy->getVectorNumElements();
     return Builder.CreateVectorSplat(NumElements, Src, "splat");
   }
 
@@ -1529,7 +1529,7 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
     llvm::Type *DstTy = ConvertType(DestTy);
     Value *Elt = Visit(const_cast<Expr*>(E));
     // Splat the element across to all elements
-    unsigned NumElements = cast<llvm::VectorType>(DstTy)->getNumElements();
+    unsigned NumElements = DstTy->getVectorNumElements();
     return Builder.CreateVectorSplat(NumElements, Elt, "splat");
   }
 
@@ -1573,7 +1573,10 @@ Value *ScalarExprEmitter::VisitCastExpr(CastExpr *CE) {
     return llvm::Constant::getNullValue(ConvertType(DestTy));
   }
 
-  }
+  case CK_IntToOCLSampler:
+    return CGF.CGM.createOpenCLIntToSamplerConversion(E, CGF);
+
+  } // end of switch
 
   llvm_unreachable("unknown scalar cast");
 }
@@ -2273,8 +2276,13 @@ Value *ScalarExprEmitter::EmitDiv(const BinOpInfo &Ops) {
 
   if (Ops.LHS->getType()->isFPOrFPVectorTy()) {
     llvm::Value *Val = Builder.CreateFDiv(Ops.LHS, Ops.RHS, "div");
-    if (CGF.getLangOpts().OpenCL) {
-      // OpenCL 1.1 7.4: minimum accuracy of single precision / is 2.5ulp
+    if (CGF.getLangOpts().OpenCL &&
+        !CGF.CGM.getCodeGenOpts().CorrectlyRoundedDivSqrt) {
+      // OpenCL v1.1 s7.4: minimum accuracy of single precision / is 2.5ulp
+      // OpenCL v1.2 s5.6.4.2: The -cl-fp32-correctly-rounded-divide-sqrt
+      // build option allows an application to specify that single precision
+      // floating-point divide (x/y and 1/x) and sqrt used in the program
+      // source are correctly rounded.
       llvm::Type *ValTy = Val->getType();
       if (ValTy->isFloatTy() ||
           (isa<llvm::VectorType>(ValTy) &&
@@ -2363,9 +2371,8 @@ Value *ScalarExprEmitter::EmitOverflowCheckedBinOp(const BinOpInfo &Ops) {
 
   // Branch in case of overflow.
   llvm::BasicBlock *initialBB = Builder.GetInsertBlock();
-  llvm::Function::iterator insertPt = initialBB->getIterator();
-  llvm::BasicBlock *continueBB = CGF.createBasicBlock("nooverflow", CGF.CurFn,
-                                                      &*std::next(insertPt));
+  llvm::BasicBlock *continueBB =
+      CGF.createBasicBlock("nooverflow", CGF.CurFn, initialBB->getNextNode());
   llvm::BasicBlock *overflowBB = CGF.createBasicBlock("overflow", CGF.CurFn);
 
   Builder.CreateCondBr(overflow, overflowBB, continueBB);
@@ -2706,7 +2713,8 @@ Value *ScalarExprEmitter::EmitShl(const BinOpInfo &Ops) {
     RHS = Builder.CreateIntCast(RHS, Ops.LHS->getType(), false, "sh_prom");
 
   bool SanitizeBase = CGF.SanOpts.has(SanitizerKind::ShiftBase) &&
-                      Ops.Ty->hasSignedIntegerRepresentation();
+                      Ops.Ty->hasSignedIntegerRepresentation() &&
+                      !CGF.getLangOpts().isSignedOverflowDefined();
   bool SanitizeExponent = CGF.SanOpts.has(SanitizerKind::ShiftExponent);
   // OpenCL 6.3j: shift values are effectively % word size of LHS.
   if (CGF.getLangOpts().OpenCL)
@@ -3382,50 +3390,48 @@ Value *ScalarExprEmitter::VisitBlockExpr(const BlockExpr *block) {
   return CGF.EmitBlockLiteral(block);
 }
 
+// Convert a vec3 to vec4, or vice versa.
+static Value *ConvertVec3AndVec4(CGBuilderTy &Builder, CodeGenFunction &CGF,
+                                 Value *Src, unsigned NumElementsDst) {
+  llvm::Value *UnV = llvm::UndefValue::get(Src->getType());
+  SmallVector<llvm::Constant*, 4> Args;
+  Args.push_back(Builder.getInt32(0));
+  Args.push_back(Builder.getInt32(1));
+  Args.push_back(Builder.getInt32(2));
+  if (NumElementsDst == 4)
+    Args.push_back(llvm::UndefValue::get(CGF.Int32Ty));
+  llvm::Constant *Mask = llvm::ConstantVector::get(Args);
+  return Builder.CreateShuffleVector(Src, UnV, Mask);
+}
+
 Value *ScalarExprEmitter::VisitAsTypeExpr(AsTypeExpr *E) {
   Value *Src  = CGF.EmitScalarExpr(E->getSrcExpr());
   llvm::Type *DstTy = ConvertType(E->getType());
 
-  // Going from vec4->vec3 or vec3->vec4 is a special case and requires
-  // a shuffle vector instead of a bitcast.
   llvm::Type *SrcTy = Src->getType();
-  if (isa<llvm::VectorType>(DstTy) && isa<llvm::VectorType>(SrcTy)) {
-    unsigned numElementsDst = cast<llvm::VectorType>(DstTy)->getNumElements();
-    unsigned numElementsSrc = cast<llvm::VectorType>(SrcTy)->getNumElements();
-    if ((numElementsDst == 3 && numElementsSrc == 4)
-        || (numElementsDst == 4 && numElementsSrc == 3)) {
+  unsigned NumElementsSrc = isa<llvm::VectorType>(SrcTy) ?
+    cast<llvm::VectorType>(SrcTy)->getNumElements() : 0;
+  unsigned NumElementsDst = isa<llvm::VectorType>(DstTy) ?
+    cast<llvm::VectorType>(DstTy)->getNumElements() : 0;
 
+  // Going from vec3 to non-vec3 is a special case and requires a shuffle
+  // vector to get a vec4, then a bitcast if the target type is different.
+  if (NumElementsSrc == 3 && NumElementsDst != 3) {
+    Src = ConvertVec3AndVec4(Builder, CGF, Src, 4);
+    Src = Builder.CreateBitCast(Src, DstTy);
+    Src->setName("astype");
+    return Src;
+  }
 
-      // In the case of going from int4->float3, a bitcast is needed before
-      // doing a shuffle.
-      llvm::Type *srcElemTy =
-      cast<llvm::VectorType>(SrcTy)->getElementType();
-      llvm::Type *dstElemTy =
-      cast<llvm::VectorType>(DstTy)->getElementType();
-
-      if ((srcElemTy->isIntegerTy() && dstElemTy->isFloatTy())
-          || (srcElemTy->isFloatTy() && dstElemTy->isIntegerTy())) {
-        // Create a float type of the same size as the source or destination.
-        llvm::VectorType *newSrcTy = llvm::VectorType::get(dstElemTy,
-                                                                 numElementsSrc);
-
-        Src = Builder.CreateBitCast(Src, newSrcTy, "astypeCast");
-      }
-
-      llvm::Value *UnV = llvm::UndefValue::get(Src->getType());
-
-      SmallVector<llvm::Constant*, 3> Args;
-      Args.push_back(Builder.getInt32(0));
-      Args.push_back(Builder.getInt32(1));
-      Args.push_back(Builder.getInt32(2));
-
-      if (numElementsDst == 4)
-        Args.push_back(llvm::UndefValue::get(CGF.Int32Ty));
-
-      llvm::Constant *Mask = llvm::ConstantVector::get(Args);
-
-      return Builder.CreateShuffleVector(Src, UnV, Mask, "astype");
-    }
+  // Going from non-vec3 to vec3 is a special case and requires a bitcast
+  // to vec4 if the original type is not vec4, then a shuffle vector to
+  // get a vec3.
+  if (NumElementsSrc != 3 && NumElementsDst == 3) {
+    auto Vec4Ty = llvm::VectorType::get(DstTy->getVectorElementType(), 4);
+    Src = Builder.CreateBitCast(Src, Vec4Ty);
+    Src = ConvertVec3AndVec4(Builder, CGF, Src, 3);
+    Src->setName("astype");
+    return Src;
   }
 
   return Builder.CreateBitCast(Src, DstTy, "astype");

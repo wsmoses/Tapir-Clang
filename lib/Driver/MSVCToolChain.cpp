@@ -22,6 +22,7 @@
 #include "llvm/Support/ConvertUTF.h"
 #include "llvm/Support/ErrorHandling.h"
 #include "llvm/Support/FileSystem.h"
+#include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include <cstdio>
 
@@ -95,23 +96,34 @@ bool MSVCToolChain::isPICDefaultForced() const {
 #ifdef USE_WIN32
 static bool readFullStringValue(HKEY hkey, const char *valueName,
                                 std::string &value) {
-  // FIXME: We should be using the W versions of the registry functions, but
-  // doing so requires UTF8 / UTF16 conversions similar to how we handle command
-  // line arguments.  The UTF8 conversion functions are not exposed publicly
-  // from LLVM though, so in order to do this we will probably need to create
-  // a registry abstraction in LLVMSupport that is Windows only.
+  std::wstring WideValueName;
+  if (!llvm::ConvertUTF8toWide(valueName, WideValueName))
+    return false;
+
   DWORD result = 0;
   DWORD valueSize = 0;
   DWORD type = 0;
   // First just query for the required size.
-  result = RegQueryValueEx(hkey, valueName, NULL, &type, NULL, &valueSize);
-  if (result != ERROR_SUCCESS || type != REG_SZ)
+  result = RegQueryValueExW(hkey, WideValueName.c_str(), NULL, &type, NULL,
+                            &valueSize);
+  if (result != ERROR_SUCCESS || type != REG_SZ || !valueSize)
     return false;
   std::vector<BYTE> buffer(valueSize);
-  result = RegQueryValueEx(hkey, valueName, NULL, NULL, &buffer[0], &valueSize);
-  if (result == ERROR_SUCCESS)
-    value.assign(reinterpret_cast<const char *>(buffer.data()));
-  return result;
+  result = RegQueryValueExW(hkey, WideValueName.c_str(), NULL, NULL, &buffer[0],
+                            &valueSize);
+  if (result == ERROR_SUCCESS) {
+    std::wstring WideValue(reinterpret_cast<const wchar_t *>(buffer.data()),
+                           valueSize / sizeof(wchar_t));
+    if (valueSize && WideValue.back() == L'\0') {
+        WideValue.pop_back();
+    }
+    // The destination buffer must be empty as an invariant of the conversion
+    // function; but this function is sometimes called in a loop that passes in
+    // the same buffer, however. Simply clear it out so we can overwrite it.
+    value.clear();
+    return llvm::convertWideToUTF8(WideValue, value);
+  }
+  return false;
 }
 #endif
 
@@ -152,14 +164,15 @@ static bool getSystemRegistryString(const char *keyPath, const char *valueName,
     strncpy(partialKey, keyPath, partialKeyLength);
     partialKey[partialKeyLength] = '\0';
     HKEY hTopKey = NULL;
-    lResult = RegOpenKeyEx(hRootKey, partialKey, 0, KEY_READ | KEY_WOW64_32KEY,
-                           &hTopKey);
+    lResult = RegOpenKeyExA(hRootKey, partialKey, 0, KEY_READ | KEY_WOW64_32KEY,
+                            &hTopKey);
     if (lResult == ERROR_SUCCESS) {
       char keyName[256];
       double bestValue = 0.0;
       DWORD index, size = sizeof(keyName) - 1;
-      for (index = 0; RegEnumKeyEx(hTopKey, index, keyName, &size, NULL,
-          NULL, NULL, NULL) == ERROR_SUCCESS; index++) {
+      for (index = 0; RegEnumKeyExA(hTopKey, index, keyName, &size, NULL, NULL,
+                                    NULL, NULL) == ERROR_SUCCESS;
+           index++) {
         const char *sp = keyName;
         while (*sp && !isDigit(*sp))
           sp++;
@@ -178,11 +191,10 @@ static bool getSystemRegistryString(const char *keyPath, const char *valueName,
           bestName = keyName;
           // Append rest of key.
           bestName.append(nextKey);
-          lResult = RegOpenKeyEx(hTopKey, bestName.c_str(), 0,
-                                 KEY_READ | KEY_WOW64_32KEY, &hKey);
+          lResult = RegOpenKeyExA(hTopKey, bestName.c_str(), 0,
+                                  KEY_READ | KEY_WOW64_32KEY, &hKey);
           if (lResult == ERROR_SUCCESS) {
-            lResult = readFullStringValue(hKey, valueName, value);
-            if (lResult == ERROR_SUCCESS) {
+            if (readFullStringValue(hKey, valueName, value)) {
               bestValue = dvalue;
               if (phValue)
                 *phValue = bestName;
@@ -197,10 +209,9 @@ static bool getSystemRegistryString(const char *keyPath, const char *valueName,
     }
   } else {
     lResult =
-        RegOpenKeyEx(hRootKey, keyPath, 0, KEY_READ | KEY_WOW64_32KEY, &hKey);
+        RegOpenKeyExA(hRootKey, keyPath, 0, KEY_READ | KEY_WOW64_32KEY, &hKey);
     if (lResult == ERROR_SUCCESS) {
-      lResult = readFullStringValue(hKey, valueName, value);
-      if (lResult == ERROR_SUCCESS)
+      if (readFullStringValue(hKey, valueName, value))
         returnValue = true;
       if (phValue)
         phValue->clear();
@@ -503,9 +514,9 @@ VersionTuple MSVCToolChain::getMSVCVersionFromExe() const {
 // Get Visual Studio installation directory.
 bool MSVCToolChain::getVisualStudioInstallDir(std::string &path) const {
   // First check the environment variables that vsvars32.bat sets.
-  const char *vcinstalldir = getenv("VCINSTALLDIR");
-  if (vcinstalldir) {
-    path = vcinstalldir;
+  if (llvm::Optional<std::string> VcInstallDir =
+          llvm::sys::Process::GetEnv("VCINSTALLDIR")) {
+    path = std::move(*VcInstallDir);
     path = path.substr(0, path.find("\\VC"));
     return true;
   }
@@ -531,26 +542,26 @@ bool MSVCToolChain::getVisualStudioInstallDir(std::string &path) const {
   }
 
   // Try the environment.
-  const char *vs120comntools = getenv("VS120COMNTOOLS");
-  const char *vs100comntools = getenv("VS100COMNTOOLS");
-  const char *vs90comntools = getenv("VS90COMNTOOLS");
-  const char *vs80comntools = getenv("VS80COMNTOOLS");
+  std::string vcomntools;
+  if (llvm::Optional<std::string> vs120comntools =
+          llvm::sys::Process::GetEnv("VS120COMNTOOLS"))
+    vcomntools = std::move(*vs120comntools);
+  else if (llvm::Optional<std::string> vs100comntools =
+               llvm::sys::Process::GetEnv("VS100COMNTOOLS"))
+    vcomntools = std::move(*vs100comntools);
+  else if (llvm::Optional<std::string> vs90comntools =
+               llvm::sys::Process::GetEnv("VS90COMNTOOLS"))
+    vcomntools = std::move(*vs90comntools);
+  else if (llvm::Optional<std::string> vs80comntools =
+               llvm::sys::Process::GetEnv("VS80COMNTOOLS"))
+    vcomntools = std::move(*vs80comntools);
 
-  const char *vscomntools = nullptr;
-
-  // Find any version we can
-  if (vs120comntools)
-    vscomntools = vs120comntools;
-  else if (vs100comntools)
-    vscomntools = vs100comntools;
-  else if (vs90comntools)
-    vscomntools = vs90comntools;
-  else if (vs80comntools)
-    vscomntools = vs80comntools;
-
-  if (vscomntools && *vscomntools) {
-    const char *p = strstr(vscomntools, "\\Common7\\Tools");
-    path = p ? std::string(vscomntools, p) : vscomntools;
+  // Find any version we can.
+  if (!vcomntools.empty()) {
+    size_t p = vcomntools.find("\\Common7\\Tools");
+    if (p != std::string::npos)
+      vcomntools.resize(p);
+    path = std::move(vcomntools);
     return true;
   }
   return false;
@@ -583,9 +594,10 @@ void MSVCToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
     return;
 
   // Honor %INCLUDE%. It should know essential search paths with vcvarsall.bat.
-  if (const char *cl_include_dir = getenv("INCLUDE")) {
+  if (llvm::Optional<std::string> cl_include_dir =
+          llvm::sys::Process::GetEnv("INCLUDE")) {
     SmallVector<StringRef, 8> Dirs;
-    StringRef(cl_include_dir)
+    StringRef(*cl_include_dir)
         .split(Dirs, ";", /*MaxSplit=*/-1, /*KeepEmpty=*/false);
     for (StringRef Dir : Dirs)
       addSystemInclude(DriverArgs, CC1Args, Dir);
@@ -637,6 +649,7 @@ void MSVCToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
     return;
   }
 
+#if defined(LLVM_ON_WIN32)
   // As a fallback, select default install paths.
   // FIXME: Don't guess drives and paths like this on Windows.
   const StringRef Paths[] = {
@@ -647,6 +660,7 @@ void MSVCToolChain::AddClangSystemIncludeArgs(const ArgList &DriverArgs,
     "C:/Program Files/Microsoft Visual Studio 8/VC/PlatformSDK/Include"
   };
   addSystemIncludes(DriverArgs, CC1Args, Paths);
+#endif
 }
 
 void MSVCToolChain::AddClangCXXStdlibIncludeArgs(const ArgList &DriverArgs,
@@ -728,7 +742,7 @@ static void TranslateOptArg(Arg *A, llvm::opt::DerivedArgList &DAL,
           DAL.AddFlagArg(A, Opts.getOption(options::OPT_fno_inline));
           break;
         case '1':
-          // TODO: Inline calls to 'inline functions' only.
+          DAL.AddFlagArg(A, Opts.getOption(options::OPT_finline_hint_functions));
           break;
         case '2':
           DAL.AddFlagArg(A, Opts.getOption(options::OPT_finline_functions));

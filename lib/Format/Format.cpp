@@ -36,7 +36,6 @@
 #include "llvm/Support/YAMLTraits.h"
 #include <algorithm>
 #include <memory>
-#include <queue>
 #include <string>
 
 #define DEBUG_TYPE "format-formatter"
@@ -314,6 +313,8 @@ template <> struct MappingTraits<FormatStyle> {
     IO.mapOptional("IndentWidth", Style.IndentWidth);
     IO.mapOptional("IndentWrappedFunctionNames",
                    Style.IndentWrappedFunctionNames);
+    IO.mapOptional("JavaScriptQuotes", Style.JavaScriptQuotes);
+    IO.mapOptional("JavaScriptWrapImports", Style.JavaScriptWrapImports);
     IO.mapOptional("KeepEmptyLinesAtTheStartOfBlocks",
                    Style.KeepEmptyLinesAtTheStartOfBlocks);
     IO.mapOptional("MacroBlockBegin", Style.MacroBlockBegin);
@@ -337,6 +338,7 @@ template <> struct MappingTraits<FormatStyle> {
     IO.mapOptional("ReflowComments", Style.ReflowComments);
     IO.mapOptional("SortIncludes", Style.SortIncludes);
     IO.mapOptional("SpaceAfterCStyleCast", Style.SpaceAfterCStyleCast);
+    IO.mapOptional("SpaceAfterTemplateKeyword", Style.SpaceAfterTemplateKeyword);
     IO.mapOptional("SpaceBeforeAssignmentOperators",
                    Style.SpaceBeforeAssignmentOperators);
     IO.mapOptional("SpaceBeforeParens", Style.SpaceBeforeParens);
@@ -353,7 +355,6 @@ template <> struct MappingTraits<FormatStyle> {
     IO.mapOptional("Standard", Style.Standard);
     IO.mapOptional("TabWidth", Style.TabWidth);
     IO.mapOptional("UseTab", Style.UseTab);
-    IO.mapOptional("JavaScriptQuotes", Style.JavaScriptQuotes);
   }
 };
 
@@ -531,6 +532,8 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.IndentCaseLabels = false;
   LLVMStyle.IndentWrappedFunctionNames = false;
   LLVMStyle.IndentWidth = 2;
+  LLVMStyle.JavaScriptQuotes = FormatStyle::JSQS_Leave;
+  LLVMStyle.JavaScriptWrapImports = true;
   LLVMStyle.TabWidth = 8;
   LLVMStyle.MaxEmptyLinesToKeep = 1;
   LLVMStyle.KeepEmptyLinesAtTheStartOfBlocks = true;
@@ -550,6 +553,7 @@ FormatStyle getLLVMStyle() {
   LLVMStyle.SpacesInContainerLiterals = true;
   LLVMStyle.SpacesInCStyleCastParentheses = false;
   LLVMStyle.SpaceAfterCStyleCast = false;
+  LLVMStyle.SpaceAfterTemplateKeyword = true;
   LLVMStyle.SpaceBeforeParens = FormatStyle::SBPO_ControlStatements;
   LLVMStyle.SpaceBeforeAssignmentOperators = true;
   LLVMStyle.SpacesInAngles = false;
@@ -609,10 +613,12 @@ FormatStyle getGoogleStyle(FormatStyle::LanguageKind Language) {
     GoogleStyle.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_Inline;
     GoogleStyle.AlwaysBreakBeforeMultilineStrings = false;
     GoogleStyle.BreakBeforeTernaryOperators = false;
-    GoogleStyle.CommentPragmas = "@(export|return|see|visibility) ";
+    GoogleStyle.CommentPragmas = "@(export|requirecss|return|see|visibility) ";
     GoogleStyle.MaxEmptyLinesToKeep = 3;
+    GoogleStyle.NamespaceIndentation = FormatStyle::NI_All;
     GoogleStyle.SpacesInContainerLiterals = false;
     GoogleStyle.JavaScriptQuotes = FormatStyle::JSQS_Single;
+    GoogleStyle.JavaScriptWrapImports = false;
   } else if (Language == FormatStyle::LK_Proto) {
     GoogleStyle.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_None;
     GoogleStyle.SpacesInContainerLiterals = false;
@@ -659,6 +665,7 @@ FormatStyle getMozillaStyle() {
   MozillaStyle.ObjCSpaceBeforeProtocolList = false;
   MozillaStyle.PenaltyReturnTypeOnItsOwnLine = 200;
   MozillaStyle.PointerAlignment = FormatStyle::PAS_Left;
+  MozillaStyle.SpaceAfterTemplateKeyword = false;
   return MozillaStyle;
 }
 
@@ -850,8 +857,13 @@ private:
         SourceLocation Start = FormatTok->Tok.getLocation();
         auto Replace = [&](SourceLocation Start, unsigned Length,
                            StringRef ReplacementText) {
-          Result.insert(tooling::Replacement(Env.getSourceManager(), Start,
-                                             Length, ReplacementText));
+          auto Err = Result.add(tooling::Replacement(
+              Env.getSourceManager(), Start, Length, ReplacementText));
+          // FIXME: handle error. For now, print error message and skip the
+          // replacement for release version.
+          if (Err)
+            llvm::errs() << llvm::toString(std::move(Err)) << "\n";
+          assert(!Err);
         };
         Replace(Start, 1, IsSingle ? "'" : "\"");
         Replace(FormatTok->Tok.getEndLoc().getLocWithOffset(-1), 1,
@@ -1159,7 +1171,13 @@ private:
       }
       auto SR = CharSourceRange::getCharRange(Tokens[St]->Tok.getLocation(),
                                               Tokens[End]->Tok.getEndLoc());
-      Fixes.insert(tooling::Replacement(Env.getSourceManager(), SR, ""));
+      auto Err =
+          Fixes.add(tooling::Replacement(Env.getSourceManager(), SR, ""));
+      // FIXME: better error handling. for now just print error message and skip
+      // for the release version.
+      if (Err)
+        llvm::errs() << llvm::toString(std::move(Err)) << "\n";
+      assert(!Err && "Fixes must not conflict!");
       Idx = End + 1;
     }
 
@@ -1205,15 +1223,50 @@ static bool affectsRange(ArrayRef<tooling::Range> Ranges, unsigned Start,
   return false;
 }
 
-// Sorts a block of includes given by 'Includes' alphabetically adding the
-// necessary replacement to 'Replaces'. 'Includes' must be in strict source
-// order.
+// Returns a pair (Index, OffsetToEOL) describing the position of the cursor
+// before sorting/deduplicating. Index is the index of the include under the
+// cursor in the original set of includes. If this include has duplicates, it is
+// the index of the first of the duplicates as the others are going to be
+// removed. OffsetToEOL describes the cursor's position relative to the end of
+// its current line.
+// If `Cursor` is not on any #include, `Index` will be UINT_MAX.
+static std::pair<unsigned, unsigned>
+FindCursorIndex(const SmallVectorImpl<IncludeDirective> &Includes,
+                const SmallVectorImpl<unsigned> &Indices, unsigned Cursor) {
+  unsigned CursorIndex = UINT_MAX;
+  unsigned OffsetToEOL = 0;
+  for (int i = 0, e = Includes.size(); i != e; ++i) {
+    unsigned Start = Includes[Indices[i]].Offset;
+    unsigned End = Start + Includes[Indices[i]].Text.size();
+    if (!(Cursor >= Start && Cursor < End))
+      continue;
+    CursorIndex = Indices[i];
+    OffsetToEOL = End - Cursor;
+    // Put the cursor on the only remaining #include among the duplicate
+    // #includes.
+    while (--i >= 0 && Includes[CursorIndex].Text == Includes[Indices[i]].Text)
+      CursorIndex = i;
+    break;
+  }
+  return std::make_pair(CursorIndex, OffsetToEOL);
+}
+
+// Sorts and deduplicate a block of includes given by 'Includes' alphabetically
+// adding the necessary replacement to 'Replaces'. 'Includes' must be in strict
+// source order.
+// #include directives with the same text will be deduplicated, and only the
+// first #include in the duplicate #includes remains. If the `Cursor` is
+// provided and put on a deleted #include, it will be moved to the remaining
+// #include in the duplicate #includes.
 static void sortCppIncludes(const FormatStyle &Style,
-                         const SmallVectorImpl<IncludeDirective> &Includes,
-                         ArrayRef<tooling::Range> Ranges, StringRef FileName,
-                         tooling::Replacements &Replaces, unsigned *Cursor) {
-  if (!affectsRange(Ranges, Includes.front().Offset,
-                    Includes.back().Offset + Includes.back().Text.size()))
+                            const SmallVectorImpl<IncludeDirective> &Includes,
+                            ArrayRef<tooling::Range> Ranges, StringRef FileName,
+                            tooling::Replacements &Replaces, unsigned *Cursor) {
+  unsigned IncludesBeginOffset = Includes.front().Offset;
+  unsigned IncludesBlockSize = Includes.back().Offset +
+                               Includes.back().Text.size() -
+                               IncludesBeginOffset;
+  if (!affectsRange(Ranges, IncludesBeginOffset, IncludesBlockSize))
     return;
   SmallVector<unsigned, 16> Indices;
   for (unsigned i = 0, e = Includes.size(); i != e; ++i)
@@ -1223,37 +1276,44 @@ static void sortCppIncludes(const FormatStyle &Style,
         return std::tie(Includes[LHSI].Category, Includes[LHSI].Filename) <
                std::tie(Includes[RHSI].Category, Includes[RHSI].Filename);
       });
+  // The index of the include on which the cursor will be put after
+  // sorting/deduplicating.
+  unsigned CursorIndex;
+  // The offset from cursor to the end of line.
+  unsigned CursorToEOLOffset;
+  if (Cursor)
+    std::tie(CursorIndex, CursorToEOLOffset) =
+        FindCursorIndex(Includes, Indices, *Cursor);
+
+  // Deduplicate #includes.
+  Indices.erase(std::unique(Indices.begin(), Indices.end(),
+                            [&](unsigned LHSI, unsigned RHSI) {
+                              return Includes[LHSI].Text == Includes[RHSI].Text;
+                            }),
+                Indices.end());
 
   // If the #includes are out of order, we generate a single replacement fixing
   // the entire block. Otherwise, no replacement is generated.
-  if (std::is_sorted(Indices.begin(), Indices.end()))
+  if (Indices.size() == Includes.size() &&
+      std::is_sorted(Indices.begin(), Indices.end()))
     return;
 
   std::string result;
-  bool CursorMoved = false;
   for (unsigned Index : Indices) {
     if (!result.empty())
       result += "\n";
     result += Includes[Index].Text;
-
-    if (Cursor && !CursorMoved) {
-      unsigned Start = Includes[Index].Offset;
-      unsigned End = Start + Includes[Index].Text.size();
-      if (*Cursor >= Start && *Cursor < End) {
-        *Cursor = Includes.front().Offset + result.size() + *Cursor - End;
-        CursorMoved = true;
-      }
-    }
+    if (Cursor && CursorIndex == Index)
+      *Cursor = IncludesBeginOffset + result.size() - CursorToEOLOffset;
   }
 
-  // Sorting #includes shouldn't change their total number of characters.
-  // This would otherwise mess up 'Ranges'.
-  assert(result.size() ==
-         Includes.back().Offset + Includes.back().Text.size() -
-             Includes.front().Offset);
-
-  Replaces.insert(tooling::Replacement(FileName, Includes.front().Offset,
-                                       result.size(), result));
+  auto Err = Replaces.add(tooling::Replacement(
+      FileName, Includes.front().Offset, IncludesBlockSize, result));
+  // FIXME: better error handling. For now, just skip the replacement for the
+  // release version.
+  if (Err)
+    llvm::errs() << llvm::toString(std::move(Err)) << "\n";
+  assert(!Err);
 }
 
 namespace {
@@ -1388,27 +1448,28 @@ tooling::Replacements sortIncludes(const FormatStyle &Style, StringRef Code,
 }
 
 template <typename T>
-static tooling::Replacements
+static llvm::Expected<tooling::Replacements>
 processReplacements(T ProcessFunc, StringRef Code,
                     const tooling::Replacements &Replaces,
                     const FormatStyle &Style) {
   if (Replaces.empty())
     return tooling::Replacements();
 
-  std::string NewCode = applyAllReplacements(Code, Replaces);
-  std::vector<tooling::Range> ChangedRanges =
-      tooling::calculateChangedRanges(Replaces);
+  auto NewCode = applyAllReplacements(Code, Replaces);
+  if (!NewCode)
+    return NewCode.takeError();
+  std::vector<tooling::Range> ChangedRanges = Replaces.getAffectedRanges();
   StringRef FileName = Replaces.begin()->getFilePath();
 
   tooling::Replacements FormatReplaces =
-      ProcessFunc(Style, NewCode, ChangedRanges, FileName);
+      ProcessFunc(Style, *NewCode, ChangedRanges, FileName);
 
-  return mergeReplacements(Replaces, FormatReplaces);
+  return Replaces.merge(FormatReplaces);
 }
 
-tooling::Replacements formatReplacements(StringRef Code,
-                                         const tooling::Replacements &Replaces,
-                                         const FormatStyle &Style) {
+llvm::Expected<tooling::Replacements>
+formatReplacements(StringRef Code, const tooling::Replacements &Replaces,
+                   const FormatStyle &Style) {
   // We need to use lambda function here since there are two versions of
   // `sortIncludes`.
   auto SortIncludes = [](const FormatStyle &Style, StringRef Code,
@@ -1416,8 +1477,10 @@ tooling::Replacements formatReplacements(StringRef Code,
                          StringRef FileName) -> tooling::Replacements {
     return sortIncludes(Style, Code, Ranges, FileName);
   };
-  tooling::Replacements SortedReplaces =
+  auto SortedReplaces =
       processReplacements(SortIncludes, Code, Replaces, Style);
+  if (!SortedReplaces)
+    return SortedReplaces.takeError();
 
   // We need to use lambda function here since there are two versions of
   // `reformat`.
@@ -1426,7 +1489,7 @@ tooling::Replacements formatReplacements(StringRef Code,
                      StringRef FileName) -> tooling::Replacements {
     return reformat(Style, Code, Ranges, FileName);
   };
-  return processReplacements(Reformat, Code, SortedReplaces, Style);
+  return processReplacements(Reformat, Code, *SortedReplaces, Style);
 }
 
 namespace {
@@ -1457,7 +1520,7 @@ bool checkAndConsumeDirectiveWithName(Lexer &Lex, StringRef Name, Token &Tok) {
 
 unsigned getOffsetAfterHeaderGuardsAndComments(StringRef FileName,
                                                StringRef Code,
-                                               FormatStyle Style) {
+                                               const FormatStyle &Style) {
   std::unique_ptr<Environment> Env =
       Environment::CreateVirtualEnvironment(Code, FileName, /*Ranges=*/{});
   const SourceManager &SourceMgr = Env->getSourceManager();
@@ -1481,7 +1544,6 @@ unsigned getOffsetAfterHeaderGuardsAndComments(StringRef FileName,
 // code.
 // FIXME: do not insert headers into conditional #include blocks, e.g. #includes
 // surrounded by compile condition "#if...".
-// FIXME: do not insert existing headers.
 // FIXME: insert empty lines between newly created blocks.
 tooling::Replacements
 fixCppIncludeInsertions(StringRef Code, const tooling::Replacements &Replaces,
@@ -1490,20 +1552,22 @@ fixCppIncludeInsertions(StringRef Code, const tooling::Replacements &Replaces,
     return Replaces;
 
   tooling::Replacements HeaderInsertions;
+  tooling::Replacements Result;
   for (const auto &R : Replaces) {
-    if (isHeaderInsertion(R))
-      HeaderInsertions.insert(R);
-    else if (R.getOffset() == UINT_MAX)
+    if (isHeaderInsertion(R)) {
+      // Replacements from \p Replaces must be conflict-free already, so we can
+      // simply consume the error.
+      llvm::consumeError(HeaderInsertions.add(R));
+    } else if (R.getOffset() == UINT_MAX) {
       llvm::errs() << "Insertions other than header #include insertion are "
                       "not supported! "
                    << R.getReplacementText() << "\n";
+    } else {
+      llvm::consumeError(Result.add(R));
+    }
   }
   if (HeaderInsertions.empty())
     return Replaces;
-  tooling::Replacements Result;
-  std::set_difference(Replaces.begin(), Replaces.end(),
-                      HeaderInsertions.begin(), HeaderInsertions.end(),
-                      std::inserter(Result, Result.begin()));
 
   llvm::Regex IncludeRegex(IncludeRegexPattern);
   llvm::Regex DefineRegex(R"(^[\t\ ]*#[\t\ ]*define[\t\ ]*[^\\]*$)");
@@ -1528,10 +1592,12 @@ fixCppIncludeInsertions(StringRef Code, const tooling::Replacements &Replaces,
   TrimmedCode.split(Lines, '\n');
   unsigned Offset = MinInsertOffset;
   unsigned NextLineOffset;
+  std::set<StringRef> ExistingIncludes;
   for (auto Line : Lines) {
     NextLineOffset = std::min(Code.size(), Offset + Line.size() + 1);
     if (IncludeRegex.match(Line, &Matches)) {
       StringRef IncludeName = Matches[2];
+      ExistingIncludes.insert(IncludeName);
       int Category = Categories.getIncludePriority(
           IncludeName, /*CheckMainHeader=*/FirstIncludeOffset < 0);
       CategoryEndOffsets[Category] = NextLineOffset;
@@ -1567,20 +1633,30 @@ fixCppIncludeInsertions(StringRef Code, const tooling::Replacements &Replaces,
                       "'#include ...'");
     (void)Matched;
     auto IncludeName = Matches[2];
+    if (ExistingIncludes.find(IncludeName) != ExistingIncludes.end()) {
+      DEBUG(llvm::dbgs() << "Skip adding existing include : " << IncludeName
+                         << "\n");
+      continue;
+    }
     int Category =
         Categories.getIncludePriority(IncludeName, /*CheckMainHeader=*/true);
     Offset = CategoryEndOffsets[Category];
     std::string NewInclude = !IncludeDirective.endswith("\n")
                                  ? (IncludeDirective + "\n").str()
                                  : IncludeDirective.str();
-    Result.insert(tooling::Replacement(FileName, Offset, 0, NewInclude));
+    auto NewReplace = tooling::Replacement(FileName, Offset, 0, NewInclude);
+    auto Err = Result.add(NewReplace);
+    if (Err) {
+      llvm::consumeError(std::move(Err));
+      Result = Result.merge(tooling::Replacements(NewReplace));
+    }
   }
   return Result;
 }
 
 } // anonymous namespace
 
-tooling::Replacements
+llvm::Expected<tooling::Replacements>
 cleanupAroundReplacements(StringRef Code, const tooling::Replacements &Replaces,
                           const FormatStyle &Style) {
   // We need to use lambda function here since there are two versions of

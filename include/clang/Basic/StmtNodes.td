@@ -126,6 +126,7 @@ def ArrayTypeTraitExpr : DStmt<Expr>;
 def ExpressionTraitExpr : DStmt<Expr>;
 def DependentScopeDeclRefExpr : DStmt<Expr>;
 def CXXConstructExpr : DStmt<Expr>;
+def CXXInheritedCtorInitExpr : DStmt<Expr>;
 def CXXBindTemporaryExpr : DStmt<Expr>;
 def ExprWithCleanups : DStmt<Expr>;
 def CXXTemporaryObjectExpr : DStmt<CXXConstructExpr>;
@@ -164,6 +165,7 @@ def ObjCIsaExpr : DStmt<Expr>;
 def ObjCIndirectCopyRestoreExpr : DStmt<Expr>;
 def ObjCBoolLiteralExpr : DStmt<Expr>;
 def ObjCSubscriptRefExpr : DStmt<Expr>;
+def ObjCAvailabilityCheckExpr : DStmt<Expr>;
 
 // Obj-C ARC Expressions.
 def ObjCBridgedCastExpr : DStmt<ExplicitCastExpr>;
@@ -232,3 +234,9 @@ def OMPCancelDirective : DStmt<OMPExecutableDirective>;
 def OMPTaskLoopDirective : DStmt<OMPLoopDirective>;
 def OMPTaskLoopSimdDirective : DStmt<OMPLoopDirective>;
 def OMPDistributeDirective : DStmt<OMPLoopDirective>;
+def OMPDistributeParallelForDirective : DStmt<OMPLoopDirective>;
+def OMPDistributeParallelForSimdDirective : DStmt<OMPLoopDirective>;
+def OMPDistributeSimdDirective : DStmt<OMPLoopDirective>;
+def OMPTargetParallelForSimdDirective : DStmt<OMPLoopDirective>;
+def OMPTargetSimdDirective : DStmt<OMPLoopDirective>;
+def OMPTeamsDistributeDirective : DStmt<OMPLoopDirective>;

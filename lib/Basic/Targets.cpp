@@ -12,14 +12,16 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/Builtins.h"
+#include "clang/Basic/Cuda.h"
 #include "clang/Basic/Diagnostic.h"
 #include "clang/Basic/LangOptions.h"
 #include "clang/Basic/MacroBuilder.h"
 #include "clang/Basic/TargetBuiltins.h"
+#include "clang/Basic/TargetInfo.h"
 #include "clang/Basic/TargetOptions.h"
 #include "clang/Basic/Version.h"
+#include "clang/Frontend/CodeGenOptions.h"
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -141,7 +143,7 @@ static void getDarwinDefines(MacroBuilder &Builder, const LangOptions &Opts,
   unsigned Maj, Min, Rev;
   if (Triple.isMacOSX()) {
     Triple.getMacOSXVersion(Maj, Min, Rev);
-    PlatformName = "macosx";
+    PlatformName = "macos";
   } else {
     Triple.getOSVersion(Maj, Min, Rev);
     PlatformName = llvm::Triple::getOSTypeName(Triple.getOS());
@@ -157,14 +159,25 @@ static void getDarwinDefines(MacroBuilder &Builder, const LangOptions &Opts,
 
   // Set the appropriate OS version define.
   if (Triple.isiOS()) {
-    assert(Maj < 10 && Min < 100 && Rev < 100 && "Invalid version!");
-    char Str[6];
-    Str[0] = '0' + Maj;
-    Str[1] = '0' + (Min / 10);
-    Str[2] = '0' + (Min % 10);
-    Str[3] = '0' + (Rev / 10);
-    Str[4] = '0' + (Rev % 10);
-    Str[5] = '\0';
+    assert(Maj < 100 && Min < 100 && Rev < 100 && "Invalid version!");
+    char Str[7];
+    if (Maj < 10) {
+      Str[0] = '0' + Maj;
+      Str[1] = '0' + (Min / 10);
+      Str[2] = '0' + (Min % 10);
+      Str[3] = '0' + (Rev / 10);
+      Str[4] = '0' + (Rev % 10);
+      Str[5] = '\0';
+    } else {
+      // Handle versions >= 10.
+      Str[0] = '0' + (Maj / 10);
+      Str[1] = '0' + (Maj % 10);
+      Str[2] = '0' + (Min / 10);
+      Str[3] = '0' + (Min % 10);
+      Str[4] = '0' + (Rev / 10);
+      Str[5] = '0' + (Rev % 10);
+      Str[6] = '\0';
+    }
     if (Triple.isTvOS())
       Builder.defineMacro("__ENVIRONMENT_TV_OS_VERSION_MIN_REQUIRED__", Str);
     else
@@ -734,6 +747,13 @@ protected:
 
       if (Opts.CPlusPlus11 && Opts.isCompatibleWithMSVC(LangOptions::MSVC2015))
         Builder.defineMacro("_HAS_CHAR16_T_LANGUAGE_SUPPORT", Twine(1));
+
+      if (Opts.isCompatibleWithMSVC(LangOptions::MSVC2015)) {
+        if (Opts.CPlusPlus1z)
+          Builder.defineMacro("_MSVC_LANG", "201403L");
+        else if (Opts.CPlusPlus14)
+          Builder.defineMacro("_MSVC_LANG", "201402L");
+      }
     }
 
     if (Opts.MicrosoftExt) {
@@ -1687,19 +1707,7 @@ static const unsigned NVPTXAddrSpaceMap[] = {
 class NVPTXTargetInfo : public TargetInfo {
   static const char *const GCCRegNames[];
   static const Builtin::Info BuiltinInfo[];
-
-  // The GPU profiles supported by the NVPTX backend
-  enum GPUKind {
-    GK_NONE,
-    GK_SM20,
-    GK_SM21,
-    GK_SM30,
-    GK_SM35,
-    GK_SM37,
-    GK_SM50,
-    GK_SM52,
-    GK_SM53,
-  } GPU;
+  CudaArch GPU;
 
 public:
   NVPTXTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
@@ -1712,8 +1720,7 @@ public:
     // Define available target features
     // These must be defined in sorted order!
     NoAsmVariants = true;
-    // Set the default GPU to sm20
-    GPU = GK_SM20;
+    GPU = CudaArch::SM_20;
 
     // If possible, get a TargetInfo for our host triple, so we can match its
     // types.
@@ -1780,35 +1787,38 @@ public:
     Builder.defineMacro("__NVPTX__");
     if (Opts.CUDAIsDevice) {
       // Set __CUDA_ARCH__ for the GPU specified.
-      std::string CUDAArchCode;
-      switch (GPU) {
-      case GK_SM20:
-        CUDAArchCode = "200";
-        break;
-      case GK_SM21:
-        CUDAArchCode = "210";
-        break;
-      case GK_SM30:
-        CUDAArchCode = "300";
-        break;
-      case GK_SM35:
-        CUDAArchCode = "350";
-        break;
-      case GK_SM37:
-        CUDAArchCode = "370";
-        break;
-      case GK_SM50:
-        CUDAArchCode = "500";
-        break;
-      case GK_SM52:
-        CUDAArchCode = "520";
-        break;
-      case GK_SM53:
-        CUDAArchCode = "530";
-        break;
-      default:
-        llvm_unreachable("Unhandled target CPU");
-      }
+      std::string CUDAArchCode = [this] {
+        switch (GPU) {
+        case CudaArch::UNKNOWN:
+          assert(false && "No GPU arch when compiling CUDA device code.");
+          return "";
+        case CudaArch::SM_20:
+          return "200";
+        case CudaArch::SM_21:
+          return "210";
+        case CudaArch::SM_30:
+          return "300";
+        case CudaArch::SM_32:
+          return "320";
+        case CudaArch::SM_35:
+          return "350";
+        case CudaArch::SM_37:
+          return "370";
+        case CudaArch::SM_50:
+          return "500";
+        case CudaArch::SM_52:
+          return "520";
+        case CudaArch::SM_53:
+          return "530";
+        case CudaArch::SM_60:
+          return "600";
+        case CudaArch::SM_61:
+          return "610";
+        case CudaArch::SM_62:
+          return "620";
+        }
+        llvm_unreachable("unhandled CudaArch");
+      }();
       Builder.defineMacro("__CUDA_ARCH__", CUDAArchCode);
     }
   }
@@ -1849,18 +1859,21 @@ public:
     return TargetInfo::CharPtrBuiltinVaList;
   }
   bool setCPU(const std::string &Name) override {
-    GPU = llvm::StringSwitch<GPUKind>(Name)
-              .Case("sm_20", GK_SM20)
-              .Case("sm_21", GK_SM21)
-              .Case("sm_30", GK_SM30)
-              .Case("sm_35", GK_SM35)
-              .Case("sm_37", GK_SM37)
-              .Case("sm_50", GK_SM50)
-              .Case("sm_52", GK_SM52)
-              .Case("sm_53", GK_SM53)
-              .Default(GK_NONE);
+    GPU = StringToCudaArch(Name);
+    return GPU != CudaArch::UNKNOWN;
+  }
+  void setSupportedOpenCLOpts() override {
+    auto &Opts = getSupportedOpenCLOpts();
+    Opts.cl_clang_storage_class_specifiers = 1;
+    Opts.cl_khr_gl_sharing = 1;
+    Opts.cl_khr_icd = 1;
 
-    return GPU != GK_NONE;
+    Opts.cl_khr_fp64 = 1;
+    Opts.cl_khr_byte_addressable_store = 1;
+    Opts.cl_khr_global_int32_base_atomics = 1;
+    Opts.cl_khr_global_int32_extended_atomics = 1;
+    Opts.cl_khr_local_int32_base_atomics = 1;
+    Opts.cl_khr_local_int32_extended_atomics = 1;
   }
 };
 
@@ -1925,7 +1938,7 @@ static const char *const DataLayoutStringSI =
   "-i64:64-v16:16-v24:32-v32:32-v48:64-v96:128"
   "-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:64";
 
-class AMDGPUTargetInfo : public TargetInfo {
+class AMDGPUTargetInfo final : public TargetInfo {
   static const Builtin::Info BuiltinInfo[];
   static const char * const GCCRegNames[];
 
@@ -1948,23 +1961,31 @@ class AMDGPUTargetInfo : public TargetInfo {
   bool hasFP64:1;
   bool hasFMAF:1;
   bool hasLDEXPF:1;
+  bool hasDenormSupport:1;
+
+  static bool isAMDGCN(const llvm::Triple &TT) {
+    return TT.getArch() == llvm::Triple::amdgcn;
+  }
 
 public:
-  AMDGPUTargetInfo(const llvm::Triple &Triple, const TargetOptions &)
-      : TargetInfo(Triple) {
-    if (Triple.getArch() == llvm::Triple::amdgcn) {
-      resetDataLayout(DataLayoutStringSI);
-      GPU = GK_SOUTHERN_ISLANDS;
+  AMDGPUTargetInfo(const llvm::Triple &Triple, const TargetOptions &Opts)
+    : TargetInfo(Triple) ,
+      GPU(isAMDGCN(Triple) ? GK_SOUTHERN_ISLANDS : GK_R600),
+      hasFP64(false),
+      hasFMAF(false),
+      hasLDEXPF(false),
+      hasDenormSupport(false){
+    if (getTriple().getArch() == llvm::Triple::amdgcn) {
       hasFP64 = true;
       hasFMAF = true;
       hasLDEXPF = true;
-    } else {
-      resetDataLayout(DataLayoutStringR600);
-      GPU = GK_R600;
-      hasFP64 = false;
-      hasFMAF = false;
-      hasLDEXPF = false;
     }
+    if (Opts.CPU == "fiji")
+      hasDenormSupport = true;
+
+    resetDataLayout(getTriple().getArch() == llvm::Triple::amdgcn ?
+                    DataLayoutStringSI : DataLayoutStringR600);
+
     AddrSpaceMap = &AMDGPUAddrSpaceMap;
     UseAddrSpaceMapMangling = true;
   }
@@ -2005,6 +2026,30 @@ public:
     return false;
   }
 
+  bool initFeatureMap(llvm::StringMap<bool> &Features,
+                      DiagnosticsEngine &Diags, StringRef CPU,
+                      const std::vector<std::string> &FeatureVec) const override;
+
+  void adjustTargetOptions(const CodeGenOptions &CGOpts,
+                           TargetOptions &TargetOpts) const override {
+    if (!hasDenormSupport)
+      return;
+    bool hasFP32Denormals = false;
+    bool hasFP64Denormals = false;
+    for (auto &I : TargetOpts.FeaturesAsWritten) {
+      if (I == "+fp32-denormals" || I == "-fp32-denormals")
+        hasFP32Denormals = true;
+      if (I == "+fp64-denormals" || I == "-fp64-denormals")
+        hasFP64Denormals = true;
+    }
+    if (!hasFP32Denormals)
+      TargetOpts.Features.push_back((Twine(CGOpts.FlushDenorm ? '-' : '+') +
+                                     Twine("fp32-denormals")).str());
+    if (!hasFP64Denormals && hasFP64)
+      TargetOpts.Features.push_back((Twine(CGOpts.FlushDenorm ? '-' : '+') +
+                                     Twine("fp64-denormals")).str());
+  }
+
   ArrayRef<Builtin::Info> getTargetBuiltins() const override {
     return llvm::makeArrayRef(BuiltinInfo,
                         clang::AMDGPU::LastTSBuiltin - Builtin::FirstTSBuiltin);
@@ -2021,14 +2066,16 @@ public:
       Builder.defineMacro("__HAS_FMAF__");
     if (hasLDEXPF)
       Builder.defineMacro("__HAS_LDEXPF__");
+    if (hasFP64)
+      Builder.defineMacro("__HAS_FP64__");
   }
 
   BuiltinVaListKind getBuiltinVaListKind() const override {
     return TargetInfo::CharPtrBuiltinVaList;
   }
 
-  bool setCPU(const std::string &Name) override {
-    GPU = llvm::StringSwitch<GPUKind>(Name)
+  static GPUKind parseR600Name(StringRef Name) {
+    return llvm::StringSwitch<GPUKind>(Name)
       .Case("r600" ,    GK_R600)
       .Case("rv610",    GK_R600)
       .Case("rv620",    GK_R600)
@@ -2054,6 +2101,11 @@ public:
       .Case("caicos",   GK_NORTHERN_ISLANDS)
       .Case("cayman",   GK_CAYMAN)
       .Case("aruba",    GK_CAYMAN)
+      .Default(GK_NONE);
+  }
+
+  static GPUKind parseAMDGCNName(StringRef Name) {
+    return llvm::StringSwitch<GPUKind>(Name)
       .Case("tahiti",   GK_SOUTHERN_ISLANDS)
       .Case("pitcairn", GK_SOUTHERN_ISLANDS)
       .Case("verde",    GK_SOUTHERN_ISLANDS)
@@ -2070,74 +2122,62 @@ public:
       .Case("fiji",     GK_VOLCANIC_ISLANDS)
       .Case("stoney",   GK_VOLCANIC_ISLANDS)
       .Default(GK_NONE);
-
-    if (GPU == GK_NONE) {
-      return false;
-    }
-
-    // Set the correct data layout
-    switch (GPU) {
-    case GK_NONE:
-    case GK_R600:
-    case GK_R700:
-    case GK_EVERGREEN:
-    case GK_NORTHERN_ISLANDS:
-      resetDataLayout(DataLayoutStringR600);
-      hasFP64 = false;
-      hasFMAF = false;
-      hasLDEXPF = false;
-      break;
-    case GK_R600_DOUBLE_OPS:
-    case GK_R700_DOUBLE_OPS:
-    case GK_EVERGREEN_DOUBLE_OPS:
-    case GK_CAYMAN:
-      resetDataLayout(DataLayoutStringR600);
-      hasFP64 = true;
-      hasFMAF = true;
-      hasLDEXPF = false;
-      break;
-    case GK_SOUTHERN_ISLANDS:
-    case GK_SEA_ISLANDS:
-    case GK_VOLCANIC_ISLANDS:
-      resetDataLayout(DataLayoutStringSI);
-      hasFP64 = true;
-      hasFMAF = true;
-      hasLDEXPF = true;
-      break;
-    }
-
-    return true;
   }
 
-   void setSupportedOpenCLOpts() override {
-     auto &Opts = getSupportedOpenCLOpts();
-     Opts.cl_clang_storage_class_specifiers = 1;
-     Opts.cl_khr_gl_sharing = 1;
-     Opts.cl_khr_gl_event = 1;
-     Opts.cl_khr_d3d10_sharing = 1;
-     Opts.cl_khr_subgroups = 1;
+  bool setCPU(const std::string &Name) override {
+    if (getTriple().getArch() == llvm::Triple::amdgcn)
+      GPU = parseAMDGCNName(Name);
+    else
+      GPU = parseR600Name(Name);
 
-     if (hasFP64)
-       Opts.cl_khr_fp64 = 1;
-     if (GPU >= GK_NORTHERN_ISLANDS) {
-       Opts.cl_khr_byte_addressable_store = 1;
-       Opts.cl_khr_global_int32_base_atomics = 1;
-       Opts.cl_khr_global_int32_extended_atomics = 1;
-       Opts.cl_khr_local_int32_base_atomics = 1;
-       Opts.cl_khr_local_int32_extended_atomics = 1;
-     }
-     if (GPU >= GK_SOUTHERN_ISLANDS)
-       Opts.cl_khr_fp16 = 1;
-       Opts.cl_khr_int64_base_atomics = 1;
-       Opts.cl_khr_int64_extended_atomics = 1;
-       Opts.cl_khr_3d_image_writes = 1;
-       Opts.cl_khr_gl_msaa_sharing = 1;
+    return GPU != GK_NONE;
+  }
+
+  void setSupportedOpenCLOpts() override {
+    auto &Opts = getSupportedOpenCLOpts();
+    Opts.cl_clang_storage_class_specifiers = 1;
+    Opts.cl_khr_icd = 1;
+
+    if (hasFP64)
+      Opts.cl_khr_fp64 = 1;
+    if (GPU >= GK_EVERGREEN) {
+      Opts.cl_khr_byte_addressable_store = 1;
+      Opts.cl_khr_global_int32_base_atomics = 1;
+      Opts.cl_khr_global_int32_extended_atomics = 1;
+      Opts.cl_khr_local_int32_base_atomics = 1;
+      Opts.cl_khr_local_int32_extended_atomics = 1;
+    }
+    if (GPU >= GK_SOUTHERN_ISLANDS) {
+      Opts.cl_khr_fp16 = 1;
+      Opts.cl_khr_int64_base_atomics = 1;
+      Opts.cl_khr_int64_extended_atomics = 1;
+      Opts.cl_khr_mipmap_image = 1;
+      Opts.cl_khr_3d_image_writes = 1;
+      Opts.cl_amd_media_ops = 1;
+      Opts.cl_amd_media_ops2 = 1;
+    }
+  }
+
+  LangAS::ID getOpenCLImageAddrSpace() const override {
+    return LangAS::opencl_constant;
+  }
+
+  CallingConvCheckResult checkCallingConvention(CallingConv CC) const override {
+    switch (CC) {
+      default:
+        return CCCR_Warning;
+      case CC_C:
+      case CC_OpenCLKernel:
+        return CCCR_OK;
+    }
   }
 };
 
 const Builtin::Info AMDGPUTargetInfo::BuiltinInfo[] = {
 #define BUILTIN(ID, TYPE, ATTRS)                \
   { #ID, TYPE, ATTRS, nullptr, ALL_LANGUAGES, nullptr },
+#define TARGET_BUILTIN(ID, TYPE, ATTRS, FEATURE)                               \
+  { #ID, TYPE, ATTRS, nullptr, ALL_LANGUAGES, FEATURE },
 #include "clang/Basic/BuiltinsAMDGPU.def"
 };
 const char * const AMDGPUTargetInfo::GCCRegNames[] = {
@@ -2195,6 +2235,57 @@ const char * const AMDGPUTargetInfo::GCCRegNames[] = {
 
 ArrayRef<const char *> AMDGPUTargetInfo::getGCCRegNames() const {
   return llvm::makeArrayRef(GCCRegNames);
+}
+
+bool AMDGPUTargetInfo::initFeatureMap(
+  llvm::StringMap<bool> &Features,
+  DiagnosticsEngine &Diags, StringRef CPU,
+  const std::vector<std::string> &FeatureVec) const {
+
+  // XXX - What does the member GPU mean if device name string passed here?
+  if (getTriple().getArch() == llvm::Triple::amdgcn) {
+    if (CPU.empty())
+      CPU = "tahiti";
+
+    switch (parseAMDGCNName(CPU)) {
+    case GK_SOUTHERN_ISLANDS:
+    case GK_SEA_ISLANDS:
+      break;
+
+    case GK_VOLCANIC_ISLANDS:
+      Features["s-memrealtime"] = true;
+      Features["16-bit-insts"] = true;
+      break;
+
+    case GK_NONE:
+      return false;
+    default:
+      llvm_unreachable("unhandled subtarget");
+    }
+  } else {
+    if (CPU.empty())
+      CPU = "r600";
+
+    switch (parseR600Name(CPU)) {
+    case GK_R600:
+    case GK_R700:
+    case GK_EVERGREEN:
+    case GK_NORTHERN_ISLANDS:
+      break;
+    case GK_R600_DOUBLE_OPS:
+    case GK_R700_DOUBLE_OPS:
+    case GK_EVERGREEN_DOUBLE_OPS:
+    case GK_CAYMAN:
+      Features["fp64"] = true;
+      break;
+    case GK_NONE:
+      return false;
+    default:
+      llvm_unreachable("unhandled subtarget");
+    }
+  }
+
+  return TargetInfo::initFeatureMap(Features, Diags, CPU, FeatureVec);
 }
 
 // Namespace for x86 abstract base class
@@ -4810,7 +4901,7 @@ public:
       // the frontend matches that.
       if (Triple.getEnvironment() == llvm::Triple::EABI ||
           Triple.getOS() == llvm::Triple::UnknownOS ||
-          StringRef(CPU).startswith("cortex-m")) {
+          ArchProfile == llvm::ARM::PK_M) {
         setABI("aapcs");
       } else if (Triple.isWatchABI()) {
         setABI("aapcs16");
@@ -4826,6 +4917,8 @@ public:
       case llvm::Triple::Android:
       case llvm::Triple::GNUEABI:
       case llvm::Triple::GNUEABIHF:
+      case llvm::Triple::MuslEABI:
+      case llvm::Triple::MuslEABIHF:
         setABI("aapcs-linux");
         break;
       case llvm::Triple::EABIHF:
@@ -4950,7 +5043,7 @@ public:
       } else if (Feature == "+dsp") {
         DSP = 1;
       } else if (Feature == "+fp-only-sp") {
-        HW_FP_remove |= HW_FP_DP; 
+        HW_FP_remove |= HW_FP_DP;
       } else if (Feature == "+strict-align") {
         Unaligned = 0;
       } else if (Feature == "+fp16") {
@@ -5137,7 +5230,7 @@ public:
     if (SoftFloat)
       Builder.defineMacro("__SOFTFP__");
 
-    if (CPU == "xscale")
+    if (ArchKind == llvm::ARM::AK_XSCALE)
       Builder.defineMacro("__XSCALE__");
 
     if (isThumb()) {
@@ -5665,15 +5758,9 @@ public:
   }
 
   bool setCPU(const std::string &Name) override {
-    bool CPUKnown = llvm::StringSwitch<bool>(Name)
-                        .Case("generic", true)
-                        .Cases("cortex-a53", "cortex-a57", "cortex-a72",
-                               "cortex-a35", "exynos-m1", true)
-                        .Case("cortex-a73", true)
-                        .Case("cyclone", true)
-                        .Case("kryo", true)
-                        .Default(false);
-    return CPUKnown;
+    return Name == "generic" ||
+           llvm::AArch64::parseCPUArch(Name) !=
+           static_cast<unsigned>(llvm::AArch64::ArchKind::AK_INVALID);
   }
 
   void getTargetDefines(const LangOptions &Opts,
@@ -5944,7 +6031,7 @@ class AArch64leTargetInfo : public AArch64TargetInfo {
     if (getTriple().isOSBinFormatMachO())
       resetDataLayout("e-m:o-i64:64-i128:128-n32:64-S128");
     else
-      resetDataLayout("e-m:e-i64:64-i128:128-n32:64-S128");
+      resetDataLayout("e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128");
   }
 
 public:
@@ -5962,7 +6049,7 @@ public:
 class AArch64beTargetInfo : public AArch64TargetInfo {
   void setDataLayout() override {
     assert(!getTriple().isOSBinFormatMachO());
-    resetDataLayout("E-m:e-i64:64-i128:128-n32:64-S128");
+    resetDataLayout("E-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128");
   }
 
 public:
@@ -6357,6 +6444,10 @@ public:
              .Default(false);
   }
 
+  bool hasSjLjLowering() const override {
+    return true;
+  }
+
   ArrayRef<Builtin::Info> getTargetBuiltins() const override {
     // FIXME: Implement!
     return None;
@@ -6404,8 +6495,17 @@ public:
     CK_NIAGARA2,
     CK_NIAGARA3,
     CK_NIAGARA4,
-    CK_MYRIAD2_1,
-    CK_MYRIAD2_2
+    CK_MYRIAD2100,
+    CK_MYRIAD2150,
+    CK_MYRIAD2450,
+    CK_LEON2,
+    CK_LEON2_AT697E,
+    CK_LEON2_AT697F,
+    CK_LEON3,
+    CK_LEON3_UT699,
+    CK_LEON3_GR712RC,
+    CK_LEON4,
+    CK_LEON4_GR740
   } CPU = CK_GENERIC;
 
   enum CPUGeneration {
@@ -6424,8 +6524,17 @@ public:
     case CK_SPARCLITE86X:
     case CK_SPARCLET:
     case CK_TSC701:
-    case CK_MYRIAD2_1:
-    case CK_MYRIAD2_2:
+    case CK_MYRIAD2100:
+    case CK_MYRIAD2150:
+    case CK_MYRIAD2450:
+    case CK_LEON2:
+    case CK_LEON2_AT697E:
+    case CK_LEON2_AT697F:
+    case CK_LEON3:
+    case CK_LEON3_UT699:
+    case CK_LEON3_GR712RC:
+    case CK_LEON4:
+    case CK_LEON4_GR740:
       return CG_V8;
     case CK_V9:
     case CK_ULTRASPARC:
@@ -6456,9 +6565,22 @@ public:
         .Case("niagara2", CK_NIAGARA2)
         .Case("niagara3", CK_NIAGARA3)
         .Case("niagara4", CK_NIAGARA4)
-        .Case("myriad2", CK_MYRIAD2_1)
-        .Case("myriad2.1", CK_MYRIAD2_1)
-        .Case("myriad2.2", CK_MYRIAD2_2)
+        .Case("ma2100", CK_MYRIAD2100)
+        .Case("ma2150", CK_MYRIAD2150)
+        .Case("ma2450", CK_MYRIAD2450)
+        // FIXME: the myriad2[.n] spellings are obsolete,
+        // but a grace period is needed to allow updating dependent builds.
+        .Case("myriad2", CK_MYRIAD2100)
+        .Case("myriad2.1", CK_MYRIAD2100)
+        .Case("myriad2.2", CK_MYRIAD2150)
+        .Case("leon2", CK_LEON2)
+        .Case("at697e", CK_LEON2_AT697E)
+        .Case("at697f", CK_LEON2_AT697F)
+        .Case("leon3", CK_LEON3)
+        .Case("ut699", CK_LEON3_UT699)
+        .Case("gr712rc", CK_LEON3_GR712RC)
+        .Case("leon4", CK_LEON4)
+        .Case("gr740", CK_LEON4_GR740)
         .Default(CK_GENERIC);
   }
 
@@ -6538,6 +6660,7 @@ public:
       PtrDiffType = SignedLong;
       break;
     }
+    MaxAtomicPromoteWidth = MaxAtomicInlineWidth = 64;
   }
 
   void getTargetDefines(const LangOptions &Opts,
@@ -6558,18 +6681,27 @@ public:
       break;
     }
     if (getTriple().getVendor() == llvm::Triple::Myriad) {
+      std::string MyriadArchValue, Myriad2Value;
+      Builder.defineMacro("__sparc_v8__");
+      Builder.defineMacro("__leon__");
       switch (CPU) {
-      case CK_MYRIAD2_1:
-        Builder.defineMacro("__myriad2", "1");
-        Builder.defineMacro("__myriad2__", "1");
+      case CK_MYRIAD2150:
+        MyriadArchValue = "__ma2150";
+        Myriad2Value = "2";
         break;
-      case CK_MYRIAD2_2:
-        Builder.defineMacro("__myriad2", "2");
-        Builder.defineMacro("__myriad2__", "2");
+      case CK_MYRIAD2450:
+        MyriadArchValue = "__ma2450";
+        Myriad2Value = "2";
         break;
       default:
+        MyriadArchValue = "__ma2100";
+        Myriad2Value = "1";
         break;
       }
+      Builder.defineMacro(MyriadArchValue, "1");
+      Builder.defineMacro(MyriadArchValue+"__", "1");
+      Builder.defineMacro("__myriad2__", Myriad2Value);
+      Builder.defineMacro("__myriad2", Myriad2Value);
     }
   }
 
@@ -7014,9 +7146,9 @@ class MipsTargetInfo : public TargetInfo {
     if (ABI == "o32")
       Layout = "m:m-p:32:32-i8:8:32-i16:16:32-i64:64-n32-S64";
     else if (ABI == "n32")
-      Layout = "m:m-p:32:32-i8:8:32-i16:16:32-i64:64-n32:64-S128";
+      Layout = "m:e-p:32:32-i8:8:32-i16:16:32-i64:64-n32:64-S128";
     else if (ABI == "n64")
-      Layout = "m:m-i8:8:32-i16:16:32-i64:64-n32:64-S128";
+      Layout = "m:e-i8:8:32-i16:16:32-i64:64-n32:64-S128";
     else
       llvm_unreachable("Invalid ABI");
 
@@ -7074,34 +7206,38 @@ public:
     return IsNan2008;
   }
 
+  bool processorSupportsGPR64() const {
+    return llvm::StringSwitch<bool>(CPU)
+        .Case("mips3", true)
+        .Case("mips4", true)
+        .Case("mips5", true)
+        .Case("mips64", true)
+        .Case("mips64r2", true)
+        .Case("mips64r3", true)
+        .Case("mips64r5", true)
+        .Case("mips64r6", true)
+        .Case("octeon", true)
+        .Default(false);
+    return false;
+  }
+
   StringRef getABI() const override { return ABI; }
   bool setABI(const std::string &Name) override {
-    // FIXME: The Arch component on the triple actually has no bearing on
-    //        whether the ABI is valid or not. It's features of the CPU that
-    //        matters and the size of the GPR's in particular.
-    //        However, we can't allow O32 on 64-bit processors just yet because
-    //        the backend still checks the Arch component instead of the ABI in
-    //        a few places.
-    if (getTriple().getArch() == llvm::Triple::mips ||
-        getTriple().getArch() == llvm::Triple::mipsel) {
-      if (Name == "o32") {
-        setO32ABITypes();
-        ABI = Name;
-        return true;
-      }
+    if (Name == "o32") {
+      setO32ABITypes();
+      ABI = Name;
+      return true;
     }
-    if (getTriple().getArch() == llvm::Triple::mips64 ||
-        getTriple().getArch() == llvm::Triple::mips64el) {
-      if (Name == "n32") {
-        setN32ABITypes();
-        ABI = Name;
-        return true;
-      }
-      if (Name == "n64") {
-        setN64ABITypes();
-        ABI = Name;
-        return true;
-      }
+
+    if (Name == "n32") {
+      setN32ABITypes();
+      ABI = Name;
+      return true;
+    }
+    if (Name == "n64") {
+      setN64ABITypes();
+      ABI = Name;
+      return true;
     }
     return false;
   }
@@ -7151,26 +7287,25 @@ public:
   }
 
   bool setCPU(const std::string &Name) override {
-    bool GPR64Required = ABI == "n32" || ABI == "n64";
     CPU = Name;
     return llvm::StringSwitch<bool>(Name)
-        .Case("mips1", !GPR64Required)
-        .Case("mips2", !GPR64Required)
+        .Case("mips1", true)
+        .Case("mips2", true)
         .Case("mips3", true)
         .Case("mips4", true)
         .Case("mips5", true)
-        .Case("mips32", !GPR64Required)
-        .Case("mips32r2", !GPR64Required)
-        .Case("mips32r3", !GPR64Required)
-        .Case("mips32r5", !GPR64Required)
-        .Case("mips32r6", !GPR64Required)
+        .Case("mips32", true)
+        .Case("mips32r2", true)
+        .Case("mips32r3", true)
+        .Case("mips32r5", true)
+        .Case("mips32r6", true)
         .Case("mips64", true)
         .Case("mips64r2", true)
         .Case("mips64r3", true)
         .Case("mips64r5", true)
         .Case("mips64r6", true)
         .Case("octeon", true)
-        .Case("p5600", !GPR64Required)
+        .Case("p5600", true)
         .Default(false);
   }
   const std::string& getCPU() const { return CPU; }
@@ -7499,6 +7634,45 @@ public:
   bool hasInt128Type() const override {
     return ABI == "n32" || ABI == "n64";
   }
+
+  bool validateTarget(DiagnosticsEngine &Diags) const override {
+    // FIXME: It's valid to use O32 on a 64-bit CPU but the backend can't handle
+    //        this yet. It's better to fail here than on the backend assertion.
+    if (processorSupportsGPR64() && ABI == "o32") {
+      Diags.Report(diag::err_target_unsupported_abi) << ABI << CPU;
+      return false;
+    }
+
+    // 64-bit ABI's require 64-bit CPU's.
+    if (!processorSupportsGPR64() && (ABI == "n32" || ABI == "n64")) {
+      Diags.Report(diag::err_target_unsupported_abi) << ABI << CPU;
+      return false;
+    }
+
+    // FIXME: It's valid to use O32 on a mips64/mips64el triple but the backend
+    //        can't handle this yet. It's better to fail here than on the
+    //        backend assertion.
+    if ((getTriple().getArch() == llvm::Triple::mips64 ||
+         getTriple().getArch() == llvm::Triple::mips64el) &&
+        ABI == "o32") {
+      Diags.Report(diag::err_target_unsupported_abi_for_triple)
+          << ABI << getTriple().str();
+      return false;
+    }
+
+    // FIXME: It's valid to use N32/N64 on a mips/mipsel triple but the backend
+    //        can't handle this yet. It's better to fail here than on the
+    //        backend assertion.
+    if ((getTriple().getArch() == llvm::Triple::mips ||
+         getTriple().getArch() == llvm::Triple::mipsel) &&
+        (ABI == "n32" || ABI == "n64")) {
+      Diags.Report(diag::err_target_unsupported_abi_for_triple)
+          << ABI << getTriple().str();
+      return false;
+    }
+
+    return true;
+  }
 };
 
 const Builtin::Info MipsTargetInfo::BuiltinInfo[] = {
@@ -7820,8 +7994,8 @@ public:
   }
 
   CallingConvCheckResult checkCallingConvention(CallingConv CC) const override {
-    return (CC == CC_SpirFunction || CC == CC_SpirKernel) ? CCCR_OK
-                                                          : CCCR_Warning;
+    return (CC == CC_SpirFunction || CC == CC_OpenCLKernel) ? CCCR_OK
+                                                            : CCCR_Warning;
   }
 
   CallingConv getDefaultCallingConv(CallingConvMethodType MT) const override {
@@ -7954,6 +8128,45 @@ public:
     return true;
   }
 };
+
+// 32-bit RenderScript is armv7 with width and align of 'long' set to 8-bytes
+class RenderScript32TargetInfo : public ARMleTargetInfo {
+public:
+  RenderScript32TargetInfo(const llvm::Triple &Triple,
+                           const TargetOptions &Opts)
+      : ARMleTargetInfo(llvm::Triple("armv7", Triple.getVendorName(),
+                                     Triple.getOSName(),
+                                     Triple.getEnvironmentName()),
+                        Opts) {
+    IsRenderScriptTarget = true;
+    LongWidth = LongAlign = 64;
+  }
+  void getTargetDefines(const LangOptions &Opts,
+                        MacroBuilder &Builder) const override {
+    Builder.defineMacro("__RENDERSCRIPT__");
+    ARMleTargetInfo::getTargetDefines(Opts, Builder);
+  }
+};
+
+// 64-bit RenderScript is aarch64
+class RenderScript64TargetInfo : public AArch64leTargetInfo {
+public:
+  RenderScript64TargetInfo(const llvm::Triple &Triple,
+                           const TargetOptions &Opts)
+      : AArch64leTargetInfo(llvm::Triple("aarch64", Triple.getVendorName(),
+                                         Triple.getOSName(),
+                                         Triple.getEnvironmentName()),
+                            Opts) {
+    IsRenderScriptTarget = true;
+  }
+
+  void getTargetDefines(const LangOptions &Opts,
+                        MacroBuilder &Builder) const override {
+    Builder.defineMacro("__RENDERSCRIPT__");
+    AArch64leTargetInfo::getTargetDefines(Opts, Builder);
+  }
+};
+
 } // end anonymous namespace
 
 //===----------------------------------------------------------------------===//
@@ -8382,6 +8595,11 @@ static TargetInfo *AllocateTarget(const llvm::Triple &Triple,
     if (!(Triple == llvm::Triple("wasm64-unknown-unknown")))
       return nullptr;
     return new WebAssemblyOSTargetInfo<WebAssembly64TargetInfo>(Triple, Opts);
+
+  case llvm::Triple::renderscript32:
+    return new LinuxTargetInfo<RenderScript32TargetInfo>(Triple, Opts);
+  case llvm::Triple::renderscript64:
+    return new LinuxTargetInfo<RenderScript64TargetInfo>(Triple, Opts);
   }
 }
 
@@ -8434,6 +8652,9 @@ TargetInfo::CreateTargetInfo(DiagnosticsEngine &Diags,
     return nullptr;
 
   Target->setSupportedOpenCLOpts();
+
+  if (!Target->validateTarget(Diags))
+    return nullptr;
 
   return Target.release();
 }

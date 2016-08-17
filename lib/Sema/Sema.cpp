@@ -12,7 +12,6 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "clang/Sema/SemaInternal.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/ASTDiagnostic.h"
 #include "clang/AST/DeclCXX.h"
@@ -22,7 +21,6 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/Basic/DiagnosticOptions.h"
-#include "clang/Basic/FileManager.h"
 #include "clang/Basic/PartialDiagnostic.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Lex/HeaderSearch.h"
@@ -30,14 +28,15 @@
 #include "clang/Sema/CXXFieldCollector.h"
 #include "clang/Sema/DelayedDiagnostic.h"
 #include "clang/Sema/ExternalSemaSource.h"
+#include "clang/Sema/Initialization.h"
 #include "clang/Sema/MultiplexExternalSemaSource.h"
 #include "clang/Sema/ObjCMethodList.h"
 #include "clang/Sema/PrettyDeclStackTrace.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/ScopeInfo.h"
 #include "clang/Sema/SemaConsumer.h"
+#include "clang/Sema/SemaInternal.h"
 #include "clang/Sema/TemplateDeduction.h"
-#include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallSet.h"
 using namespace clang;
@@ -88,7 +87,7 @@ Sema::Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
     ConstSegStack(nullptr), CodeSegStack(nullptr), CurInitSeg(nullptr),
     VisContext(nullptr),
     IsBuildingRecoveryCallExpr(false),
-    ExprNeedsCleanups(false), LateTemplateParser(nullptr),
+    Cleanup{}, LateTemplateParser(nullptr),
     LateTemplateParserCleanup(nullptr),
     OpaqueParser(nullptr), IdResolver(pp), StdInitializerList(nullptr),
     CXXTypeInfoDecl(nullptr), MSVCGuidDecl(nullptr),
@@ -124,7 +123,8 @@ Sema::Sema(Preprocessor &pp, ASTContext &ctxt, ASTConsumer &consumer,
   // Tell diagnostics how to render things from the AST library.
   Diags.SetArgToStringFn(&FormatASTNodeDiagnosticArgument, &Context);
 
-  ExprEvalContexts.emplace_back(PotentiallyEvaluated, 0, false, nullptr, false);
+  ExprEvalContexts.emplace_back(PotentiallyEvaluated, 0, CleanupInfo{}, nullptr,
+                                false);
 
   FunctionScopes.push_back(new FunctionScopeInfo(Diags));
 
@@ -468,7 +468,8 @@ static bool ShouldRemoveFromUnused(Sema *SemaRef, const DeclaratorDecl *D) {
   return false;
 }
 
-/// Obtains a sorted list of functions that are undefined but ODR-used.
+/// Obtains a sorted list of functions and variables that are undefined but
+/// ODR-used.
 void Sema::getUndefinedButUsed(
     SmallVectorImpl<std::pair<NamedDecl *, SourceLocation> > &Undefined) {
   for (const auto &UndefinedUse : UndefinedButUsed) {
@@ -487,9 +488,10 @@ void Sema::getUndefinedButUsed(
           !FD->getMostRecentDecl()->isInlined())
         continue;
     } else {
-      if (cast<VarDecl>(ND)->hasDefinition() != VarDecl::DeclarationOnly)
+      auto *VD = cast<VarDecl>(ND);
+      if (VD->hasDefinition() != VarDecl::DeclarationOnly)
         continue;
-      if (ND->isExternallyVisible())
+      if (VD->isExternallyVisible() && !VD->getMostRecentDecl()->isInline())
         continue;
     }
 
@@ -521,10 +523,16 @@ static void checkUndefinedButUsed(Sema &S) {
     if (!ND->isExternallyVisible()) {
       S.Diag(ND->getLocation(), diag::warn_undefined_internal)
         << isa<VarDecl>(ND) << ND;
-    } else {
-      assert(cast<FunctionDecl>(ND)->getMostRecentDecl()->isInlined() &&
+    } else if (auto *FD = dyn_cast<FunctionDecl>(ND)) {
+      (void)FD;
+      assert(FD->getMostRecentDecl()->isInlined() &&
              "used object requires definition but isn't inline or internal?");
+      // FIXME: This is ill-formed; we should reject.
       S.Diag(ND->getLocation(), diag::warn_undefined_inline) << ND;
+    } else {
+      assert(cast<VarDecl>(ND)->getMostRecentDecl()->isInline() &&
+             "used var requires definition but isn't inline or internal?");
+      S.Diag(ND->getLocation(), diag::err_undefined_inline_var) << ND;
     }
     if (I->second.isValid())
       S.Diag(I->second, diag::note_used_here);
@@ -802,6 +810,7 @@ void Sema::ActOnEndOfTranslationUnit() {
                                    diag::err_tentative_def_incomplete_type))
       VD->setInvalidDecl();
 
+    // No initialization is performed for a tentative definition.
     CheckCompleteVariableDeclaration(VD);
 
     // Notify the consumer that we've completed a tentative definition.

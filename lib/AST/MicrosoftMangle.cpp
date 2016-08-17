@@ -153,7 +153,8 @@ public:
                                        const CXXRecordDecl *DstRD,
                                        raw_ostream &Out) override;
   void mangleCXXThrowInfo(QualType T, bool IsConst, bool IsVolatile,
-                          uint32_t NumEntries, raw_ostream &Out) override;
+                          bool IsUnaligned, uint32_t NumEntries,
+                          raw_ostream &Out) override;
   void mangleCXXCatchableTypeArray(QualType T, uint32_t NumEntries,
                                    raw_ostream &Out) override;
   void mangleCXXCatchableType(QualType T, const CXXConstructorDecl *CD,
@@ -393,7 +394,8 @@ bool MicrosoftMangleContextImpl::shouldMangleCXXName(const NamedDecl *D) {
   if (!getASTContext().getLangOpts().CPlusPlus)
     return false;
 
-  if (const VarDecl *VD = dyn_cast<VarDecl>(D)) {
+  const VarDecl *VD = dyn_cast<VarDecl>(D);
+  if (VD && !isa<DecompositionDecl>(D)) {
     // C variables are not mangled.
     if (VD->isExternC())
       return false;
@@ -777,6 +779,21 @@ void MicrosoftCXXNameMangler::mangleUnqualifiedName(const NamedDecl *ND,
           Out << "?A@";
           break;
         }
+      }
+
+      if (const DecompositionDecl *DD = dyn_cast<DecompositionDecl>(ND)) {
+        // FIXME: Invented mangling for decomposition declarations:
+        //   [X,Y,Z]
+        // where X,Y,Z are the names of the bindings.
+        llvm::SmallString<128> Name("[");
+        for (auto *BD : DD->bindings()) {
+          if (Name.size() > 1)
+            Name += ',';
+          Name += BD->getDeclName().getAsIdentifierInfo()->getName();
+        }
+        Name += ']';
+        mangleSourceName(Name);
+        break;
       }
 
       if (const VarDecl *VD = dyn_cast<VarDecl>(ND)) {
@@ -2654,9 +2671,9 @@ void MicrosoftMangleContextImpl::mangleCXXVirtualDisplacementMap(
   Mangler.mangleName(DstRD);
 }
 
-void MicrosoftMangleContextImpl::mangleCXXThrowInfo(QualType T,
-                                                    bool IsConst,
+void MicrosoftMangleContextImpl::mangleCXXThrowInfo(QualType T, bool IsConst,
                                                     bool IsVolatile,
+                                                    bool IsUnaligned,
                                                     uint32_t NumEntries,
                                                     raw_ostream &Out) {
   msvc_hashing_ostream MHO(Out);
@@ -2666,6 +2683,8 @@ void MicrosoftMangleContextImpl::mangleCXXThrowInfo(QualType T,
     Mangler.getStream() << 'C';
   if (IsVolatile)
     Mangler.getStream() << 'V';
+  if (IsUnaligned)
+    Mangler.getStream() << 'U';
   Mangler.getStream() << NumEntries;
   Mangler.mangleType(T, SourceRange(), MicrosoftCXXNameMangler::QMM_Result);
 }

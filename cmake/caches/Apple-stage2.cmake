@@ -3,6 +3,7 @@
 
 set(LLVM_TARGETS_TO_BUILD X86 ARM AArch64 CACHE STRING "") 
 set(PACKAGE_VENDOR Apple CACHE STRING "")
+set(CLANG_VENDOR_UTI com.apple.clang CACHE STRING "")
 set(LLVM_INCLUDE_EXAMPLES OFF CACHE BOOL "")
 set(LLVM_INCLUDE_DOCS OFF CACHE BOOL "")
 set(LLVM_TOOL_CLANG_TOOLS_EXTRA_BUILD OFF CACHE BOOL "")
@@ -21,8 +22,6 @@ set(COMPILER_RT_ENABLE_IOS ON CACHE BOOL "Build iOS Compiler-RT libraries")
 
 # Make unit tests (if present) part of the ALL target
 set(LLVM_BUILD_TESTS ON CACHE BOOL "")
-# Don't build or run the compiler-rt tests
-set(COMPILER_RT_INCLUDE_TESTS OFF CACHE BOOL "")
 
 set(LLVM_ENABLE_LTO ON CACHE BOOL "")
 set(CMAKE_C_FLAGS "-fno-stack-protector -fno-common -Wno-profile-instr-unprofiled" CACHE STRING "")

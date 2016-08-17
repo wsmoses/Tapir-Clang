@@ -14,6 +14,7 @@
 #ifndef LLVM_CLANG_PARSE_PARSER_H
 #define LLVM_CLANG_PARSE_PARSER_H
 
+#include "clang/AST/Availability.h"
 #include "clang/Basic/OpenMPKinds.h"
 #include "clang/Basic/OperatorPrecedence.h"
 #include "clang/Basic/Specifiers.h"
@@ -142,6 +143,7 @@ class Parser : public CodeCompletionHandler {
 
   /// C++0x contextual keywords.
   mutable IdentifierInfo *Ident_final;
+  mutable IdentifierInfo *Ident_GNU_final;
   mutable IdentifierInfo *Ident_override;
 
   // C++ type trait keywords that can be reverted to identifiers and still be
@@ -311,6 +313,10 @@ public:
       return false;
     Loc = PrevTokLocation;
     return true;
+  }
+
+  SourceLocation getEndOfPreviousToken() {
+    return PP.getLocForEndOfToken(PrevTokLocation);
   }
 
   /// Retrieve the underscored keyword (_Nonnull, _Nullable) that corresponds
@@ -715,6 +721,16 @@ private:
       assert(!isActive && "Forgot to call Commit or Revert!");
     }
   };
+  /// A TentativeParsingAction that automatically reverts in its destructor.
+  /// Useful for disambiguation parses that will always be reverted.
+  class RevertingTentativeParsingAction
+      : private Parser::TentativeParsingAction {
+  public:
+    RevertingTentativeParsingAction(Parser &P)
+        : Parser::TentativeParsingAction(P) {}
+    ~RevertingTentativeParsingAction() { Revert(); }
+  };
+
   class UnannotatedTentativeParsingAction;
 
   /// ObjCDeclContextSwitch - An object used to switch context from
@@ -1588,8 +1604,9 @@ private:
 
   //===--------------------------------------------------------------------===//
   // C++ if/switch/while condition expression.
-  bool ParseCXXCondition(ExprResult &ExprResult, Decl *&DeclResult,
-                         SourceLocation Loc, bool ConvertToBoolean);
+  Sema::ConditionResult ParseCXXCondition(StmtResult *InitStmt,
+                                          SourceLocation Loc,
+                                          Sema::ConditionKind CK);
 
   //===--------------------------------------------------------------------===//
   // C++ Coroutines
@@ -1680,10 +1697,10 @@ private:
                                     unsigned ScopeFlags);
   void ParseCompoundStatementLeadingPragmas();
   StmtResult ParseCompoundStatementBody(bool isStmtExpr = false);
-  bool ParseParenExprOrCondition(ExprResult &ExprResult,
-                                 Decl *&DeclResult,
+  bool ParseParenExprOrCondition(StmtResult *InitStmt,
+                                 Sema::ConditionResult &CondResult,
                                  SourceLocation Loc,
-                                 bool ConvertToBoolean);
+                                 Sema::ConditionKind CK);
   StmtResult ParseIfStatement(SourceLocation *TrailingElseLoc);
   StmtResult ParseSwitchStatement(SourceLocation *TrailingElseLoc);
   StmtResult ParseWhileStatement(SourceLocation *TrailingElseLoc);
@@ -1978,11 +1995,18 @@ private:
   /// the function returns true to let the declaration parsing code handle it.
   bool isCXXFunctionDeclarator(bool *IsAmbiguous = nullptr);
 
-  /// isCXXConditionDeclaration - Disambiguates between a declaration or an
-  /// expression for a condition of a if/switch/while/for statement.
-  /// If during the disambiguation process a parsing error is encountered,
-  /// the function returns true to let the declaration parsing code handle it.
-  bool isCXXConditionDeclaration();
+  struct ConditionDeclarationOrInitStatementState;
+  enum class ConditionOrInitStatement {
+    Expression,    ///< Disambiguated as an expression (either kind).
+    ConditionDecl, ///< Disambiguated as the declaration form of condition.
+    InitStmtDecl,  ///< Disambiguated as a simple-declaration init-statement.
+    Error          ///< Can't be any of the above!
+  };
+  /// \brief Disambiguates between the different kinds of things that can happen
+  /// after 'if (' or 'switch ('. This could be one of two different kinds of
+  /// declaration (depending on whether there is a ';' later) or an expression.
+  ConditionOrInitStatement
+  isCXXConditionDeclarationOrInitStatement(bool CanBeInitStmt);
 
   bool isCXXTypeId(TentativeCXXTypeIdContext Context, bool &isAmbiguous);
   bool isCXXTypeId(TentativeCXXTypeIdContext Context) {
@@ -2229,6 +2253,9 @@ private:
                                   SourceLocation ScopeLoc,
                                   AttributeList::Syntax Syntax);
 
+  Optional<AvailabilitySpec> ParseAvailabilitySpec();
+  ExprResult ParseAvailabilityCheckExpr(SourceLocation StartLoc);
+
   void ParseObjCBridgeRelatedAttribute(IdentifierInfo &ObjCBridgeRelated,
                                        SourceLocation ObjCBridgeRelatedLoc,
                                        ParsedAttributes &attrs,
@@ -2333,6 +2360,7 @@ private:
                                  bool AtomicAllowed = true,
                                  bool IdentifierRequired = false);
   void ParseDirectDeclarator(Declarator &D);
+  void ParseDecompositionDeclarator(Declarator &D);
   void ParseParenDeclarator(Declarator &D);
   void ParseFunctionDeclarator(Declarator &D,
                                ParsedAttributes &attrs,

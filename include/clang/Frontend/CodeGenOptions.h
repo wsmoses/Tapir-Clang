@@ -46,13 +46,16 @@ public:
   enum InliningMethod {
     NoInlining,         // Perform no inlining whatsoever.
     NormalInlining,     // Use the standard function inlining pass.
+    OnlyHintInlining,   // Inline only (implicitly) hinted functions.
     OnlyAlwaysInlining  // Only run the always inlining pass.
   };
 
   enum VectorLibrary {
-    NoLibrary, // Don't use any vector library.
-    Accelerate // Use the Accelerate framework.
+    NoLibrary,  // Don't use any vector library.
+    Accelerate, // Use the Accelerate framework.
+    SVML        // Intel short vector math library.
   };
+
 
   enum ObjCDispatchMethodKind {
     Legacy = 0,

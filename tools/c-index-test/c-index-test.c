@@ -838,8 +838,11 @@ static void PrintCursor(CXCursor Cursor, const char *CommentSchemaFile) {
 
       if (Cursor.kind == CXCursor_FunctionDecl) {
         /* Collect the template parameter kinds from the base template. */
-        unsigned NumTemplateArgs = clang_Cursor_getNumTemplateArguments(Cursor);
-        unsigned I;
+        int NumTemplateArgs = clang_Cursor_getNumTemplateArguments(Cursor);
+        int I;
+        if (NumTemplateArgs < 0) {
+          printf(" [no template arg info]");
+        }
         for (I = 0; I < NumTemplateArgs; I++) {
           enum CXTemplateArgumentKind TAK =
               clang_Cursor_getTemplateArgumentKind(Cursor, I);
@@ -4440,11 +4443,8 @@ int main(int argc, const char **argv) {
   client_data.argc = argc;
   client_data.argv = argv;
 
-  if (argc > 1 && strcmp(argv[1], "core") == 0) {
+  if (argc > 1 && strcmp(argv[1], "core") == 0)
     client_data.main_func = indextest_core_main;
-    --client_data.argc;
-    ++client_data.argv;
-  }
 
   if (getenv("CINDEXTEST_NOTHREADS"))
     return client_data.main_func(client_data.argc, client_data.argv);

@@ -763,11 +763,13 @@ void MSAsmStmt::initialize(const ASTContext &C, StringRef asmstr,
                  });
 }
 
-IfStmt::IfStmt(const ASTContext &C, SourceLocation IL, VarDecl *var, Expr *cond,
-               Stmt *then, SourceLocation EL, Stmt *elsev)
-  : Stmt(IfStmtClass), IfLoc(IL), ElseLoc(EL)
-{
+IfStmt::IfStmt(const ASTContext &C, SourceLocation IL, bool IsConstexpr,
+               Stmt *init, VarDecl *var, Expr *cond, Stmt *then,
+               SourceLocation EL, Stmt *elsev)
+    : Stmt(IfStmtClass), IfLoc(IL), ElseLoc(EL) {
+  setConstexpr(IsConstexpr);
   setConditionVariable(C, var);
+  SubExprs[INIT] = init;
   SubExprs[COND] = cond;
   SubExprs[THEN] = then;
   SubExprs[ELSE] = elsev;
@@ -790,6 +792,10 @@ void IfStmt::setConditionVariable(const ASTContext &C, VarDecl *V) {
   SourceRange VarRange = V->getSourceRange();
   SubExprs[VAR] = new (C) DeclStmt(DeclGroupRef(V), VarRange.getBegin(),
                                    VarRange.getEnd());
+}
+
+bool IfStmt::isObjCAvailabilityCheck() const {
+  return isa<ObjCAvailabilityCheckExpr>(SubExprs[COND]);
 }
 
 ForStmt::ForStmt(const ASTContext &C, Stmt *Init, Expr *Cond, VarDecl *condVar,
@@ -823,9 +829,11 @@ void ForStmt::setConditionVariable(const ASTContext &C, VarDecl *V) {
                                        VarRange.getEnd());
 }
 
-SwitchStmt::SwitchStmt(const ASTContext &C, VarDecl *Var, Expr *cond)
+SwitchStmt::SwitchStmt(const ASTContext &C, Stmt *init, VarDecl *Var,
+                       Expr *cond)
     : Stmt(SwitchStmtClass), FirstCase(nullptr, false) {
   setConditionVariable(C, Var);
+  SubExprs[INIT] = init;
   SubExprs[COND] = cond;
   SubExprs[BODY] = nullptr;
 }

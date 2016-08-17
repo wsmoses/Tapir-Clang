@@ -431,6 +431,23 @@ struct FormatStyle {
   /// type.
   bool IndentWrappedFunctionNames;
 
+  /// \brief Quotation styles for JavaScript strings. Does not affect template
+  /// strings.
+  enum JavaScriptQuoteStyle {
+    /// Leave string quotes as they are.
+    JSQS_Leave,
+    /// Always use single quotes.
+    JSQS_Single,
+    /// Always use double quotes.
+    JSQS_Double
+  };
+
+  /// \brief The JavaScriptQuoteStyle to use for JavaScript strings.
+  JavaScriptQuoteStyle JavaScriptQuotes;
+
+  /// \brief Whether to wrap JavaScript import/export statements.
+  bool JavaScriptWrapImports;
+
   /// \brief If true, empty lines at the start of blocks are kept.
   bool KeepEmptyLinesAtTheStartOfBlocks;
 
@@ -532,6 +549,9 @@ struct FormatStyle {
   /// \brief If ``true``, a space may be inserted after C style casts.
   bool SpaceAfterCStyleCast;
 
+  /// \brief If \c true, a space will be inserted after the 'template' keyword.
+  bool SpaceAfterTemplateKeyword;
+
   /// \brief If ``false``, spaces will be removed before assignment operators.
   bool SpaceBeforeAssignmentOperators;
 
@@ -613,20 +633,6 @@ struct FormatStyle {
   /// \brief The way to use tab characters in the resulting file.
   UseTabStyle UseTab;
 
-  /// \brief Quotation styles for JavaScript strings. Does not affect template
-  /// strings.
-  enum JavaScriptQuoteStyle {
-    /// Leave string quotes as they are.
-    JSQS_Leave,
-    /// Always use single quotes.
-    JSQS_Single,
-    /// Always use double quotes.
-    JSQS_Double
-  };
-
-  /// \brief The JavaScriptQuoteStyle to use for JavaScript strings.
-  JavaScriptQuoteStyle JavaScriptQuotes;
-
   bool operator==(const FormatStyle &R) const {
     return AccessModifierOffset == R.AccessModifierOffset &&
            AlignAfterOpenBracket == R.AlignAfterOpenBracket &&
@@ -675,6 +681,8 @@ struct FormatStyle {
            IndentCaseLabels == R.IndentCaseLabels &&
            IndentWidth == R.IndentWidth && Language == R.Language &&
            IndentWrappedFunctionNames == R.IndentWrappedFunctionNames &&
+           JavaScriptQuotes == R.JavaScriptQuotes &&
+           JavaScriptWrapImports == R.JavaScriptWrapImports &&
            KeepEmptyLinesAtTheStartOfBlocks ==
                R.KeepEmptyLinesAtTheStartOfBlocks &&
            MacroBlockBegin == R.MacroBlockBegin &&
@@ -693,6 +701,7 @@ struct FormatStyle {
            PenaltyReturnTypeOnItsOwnLine == R.PenaltyReturnTypeOnItsOwnLine &&
            PointerAlignment == R.PointerAlignment &&
            SpaceAfterCStyleCast == R.SpaceAfterCStyleCast &&
+           SpaceAfterTemplateKeyword == R.SpaceAfterTemplateKeyword &&
            SpaceBeforeAssignmentOperators == R.SpaceBeforeAssignmentOperators &&
            SpaceBeforeParens == R.SpaceBeforeParens &&
            SpaceInEmptyParentheses == R.SpaceInEmptyParentheses &&
@@ -703,8 +712,7 @@ struct FormatStyle {
            SpacesInParentheses == R.SpacesInParentheses &&
            SpacesInSquareBrackets == R.SpacesInSquareBrackets &&
            Standard == R.Standard && TabWidth == R.TabWidth &&
-           UseTab == R.UseTab &&
-           JavaScriptQuotes == R.JavaScriptQuotes;
+           UseTab == R.UseTab;
   }
 };
 
@@ -766,16 +774,18 @@ tooling::Replacements sortIncludes(const FormatStyle &Style, StringRef Code,
                                    unsigned *Cursor = nullptr);
 
 /// \brief Returns the replacements corresponding to applying and formatting
-/// \p Replaces.
-tooling::Replacements formatReplacements(StringRef Code,
-                                         const tooling::Replacements &Replaces,
-                                         const FormatStyle &Style);
+/// \p Replaces on success; otheriwse, return an llvm::Error carrying
+/// llvm::StringError.
+llvm::Expected<tooling::Replacements>
+formatReplacements(StringRef Code, const tooling::Replacements &Replaces,
+                   const FormatStyle &Style);
 
 /// \brief Returns the replacements corresponding to applying \p Replaces and
-/// cleaning up the code after that.
+/// cleaning up the code after that on success; otherwise, return an llvm::Error
+/// carrying llvm::StringError.
 /// This also inserts a C++ #include directive into the correct block if the
 /// replacement corresponding to the header insertion has offset UINT_MAX.
-tooling::Replacements
+llvm::Expected<tooling::Replacements>
 cleanupAroundReplacements(StringRef Code, const tooling::Replacements &Replaces,
                           const FormatStyle &Style);
 

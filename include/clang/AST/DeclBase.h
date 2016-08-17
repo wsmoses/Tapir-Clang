@@ -17,6 +17,7 @@
 #include "clang/AST/AttrIterator.h"
 #include "clang/AST/DeclarationName.h"
 #include "clang/Basic/Specifiers.h"
+#include "clang/Basic/VersionTuple.h"
 #include "llvm/ADT/PointerUnion.h"
 #include "llvm/ADT/iterator.h"
 #include "llvm/ADT/iterator_range.h"
@@ -73,13 +74,10 @@ namespace clang {
 ///
 /// Note: There are objects tacked on before the *beginning* of Decl
 /// (and its subclasses) in its Decl::operator new(). Proper alignment
-/// of all subclasses (not requiring more than DeclObjAlignment) is
+/// of all subclasses (not requiring more than the alignment of Decl) is
 /// asserted in DeclBase.cpp.
-class Decl {
+class LLVM_ALIGNAS(/*alignof(uint64_t)*/ 8) Decl {
 public:
-  /// \brief Alignment guaranteed when allocating Decl and any subtypes.
-  enum { DeclObjAlignment = llvm::AlignOf<uint64_t>::Alignment };
-
   /// \brief Lists the kind of concrete classes of Decl.
   enum Kind {
 #define DECL(DERIVED, BASE) DERIVED,
@@ -606,7 +604,12 @@ public:
   /// AR_Available, will be set to a (possibly empty) message
   /// describing why the declaration has not been introduced, is
   /// deprecated, or is unavailable.
-  AvailabilityResult getAvailability(std::string *Message = nullptr) const;
+  ///
+  /// \param EnclosingVersion The version to compare with. If empty, assume the
+  /// deployment target version.
+  AvailabilityResult
+  getAvailability(std::string *Message = nullptr,
+                  VersionTuple EnclosingVersion = VersionTuple()) const;
 
   /// \brief Determine whether this declaration is marked 'deprecated'.
   ///

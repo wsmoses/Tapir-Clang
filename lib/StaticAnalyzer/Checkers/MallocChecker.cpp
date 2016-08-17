@@ -26,7 +26,6 @@
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramState.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/ProgramStateTrait.h"
 #include "clang/StaticAnalyzer/Core/PathSensitive/SymbolManager.h"
-#include "llvm/ADT/ImmutableMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
@@ -944,7 +943,7 @@ static bool treatUnusedNewEscaped(const CXXNewExpr *NE) {
   const CXXConstructorDecl *CtorD = ConstructE->getConstructor();
 
   // Iterate over the constructor parameters.
-  for (const auto *CtorParam : CtorD->params()) {
+  for (const auto *CtorParam : CtorD->parameters()) {
 
     QualType CtorParamPointeeT = CtorParam->getType()->getPointeeType();
     if (CtorParamPointeeT.isNull())

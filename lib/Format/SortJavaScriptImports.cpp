@@ -105,8 +105,8 @@ bool operator<(const JsModuleReference &LHS, const JsModuleReference &RHS) {
   // Empty URLs sort *last* (for export {...};).
   if (LHS.URL.empty() != RHS.URL.empty())
     return LHS.URL.empty() < RHS.URL.empty();
-  if (LHS.URL != RHS.URL)
-    return LHS.URL < RHS.URL;
+  if (int Res = LHS.URL.compare_lower(RHS.URL))
+    return Res < 0;
   // '*' imports (with prefix) sort before {a, b, ...} imports.
   if (LHS.Prefix.empty() != RHS.Prefix.empty())
     return LHS.Prefix.empty() < RHS.Prefix.empty();
@@ -127,7 +127,8 @@ public:
   tooling::Replacements
   analyze(TokenAnnotator &Annotator,
           SmallVectorImpl<AnnotatedLine *> &AnnotatedLines,
-          FormatTokenLexer &Tokens, tooling::Replacements &Result) override {
+          FormatTokenLexer &Tokens, tooling::Replacements &) override {
+    tooling::Replacements Result;
     AffectedRangeMgr.computeAffectedLines(AnnotatedLines.begin(),
                                           AnnotatedLines.end());
 
@@ -170,18 +171,36 @@ public:
     if (ReferencesInOrder && SymbolsInOrder)
       return Result;
 
+    SourceRange InsertionPoint = References[0].Range;
+    InsertionPoint.setEnd(References[References.size() - 1].Range.getEnd());
+
+    // The loop above might collapse previously existing line breaks between
+    // import blocks, and thus shrink the file. SortIncludes must not shrink
+    // overall source length as there is currently no re-calculation of ranges
+    // after applying source sorting.
+    // This loop just backfills trailing spaces after the imports, which are
+    // harmless and will be stripped by the subsequent formatting pass.
+    // FIXME: A better long term fix is to re-calculate Ranges after sorting.
+    unsigned PreviousSize = getSourceText(InsertionPoint).size();
+    while (ReferencesText.size() < PreviousSize) {
+      ReferencesText += " ";
+    }
+
     // Separate references from the main code body of the file.
     if (FirstNonImportLine && FirstNonImportLine->First->NewlinesBefore < 2)
       ReferencesText += "\n";
 
-    SourceRange InsertionPoint = References[0].Range;
-    InsertionPoint.setEnd(References[References.size() - 1].Range.getEnd());
     DEBUG(llvm::dbgs() << "Replacing imports:\n"
                        << getSourceText(InsertionPoint) << "\nwith:\n"
                        << ReferencesText << "\n");
-    Result.insert(tooling::Replacement(
+    auto Err = Result.add(tooling::Replacement(
         Env.getSourceManager(), CharSourceRange::getCharRange(InsertionPoint),
         ReferencesText));
+    // FIXME: better error handling. For now, just print error message and skip
+    // the replacement for the release version.
+    if (Err)
+      llvm::errs() << llvm::toString(std::move(Err)) << "\n";
+    assert(!Err);
 
     return Result;
   }
@@ -232,7 +251,7 @@ private:
     std::stable_sort(
         Symbols.begin(), Symbols.end(),
         [&](const JsImportedSymbol &LHS, const JsImportedSymbol &RHS) {
-          return LHS.Symbol < RHS.Symbol;
+          return LHS.Symbol.compare_lower(RHS.Symbol) < 0;
         });
     if (Symbols == Reference.Symbols) {
       // No change in symbol order.
@@ -383,6 +402,8 @@ private:
     // {sym as alias, sym2 as ...} from '...';
     nextToken();
     while (true) {
+      if (Current->is(tok::r_brace))
+        return true;
       if (Current->isNot(tok::identifier))
         return false;
 

@@ -140,16 +140,19 @@ namespace {
 class RealFile : public File {
   int FD;
   Status S;
+  std::string RealName;
   friend class RealFileSystem;
-  RealFile(int FD, StringRef NewName)
+  RealFile(int FD, StringRef NewName, StringRef NewRealPathName)
       : FD(FD), S(NewName, {}, {}, {}, {}, {},
-                  llvm::sys::fs::file_type::status_error, {}) {
+                  llvm::sys::fs::file_type::status_error, {}),
+        RealName(NewRealPathName.str()) {
     assert(FD >= 0 && "Invalid or inactive file descriptor");
   }
 
 public:
   ~RealFile() override;
   ErrorOr<Status> status() override;
+  ErrorOr<std::string> getName() override;
   ErrorOr<std::unique_ptr<MemoryBuffer>> getBuffer(const Twine &Name,
                                                    int64_t FileSize,
                                                    bool RequiresNullTerminator,
@@ -168,6 +171,10 @@ ErrorOr<Status> RealFile::status() {
     S = Status::copyWithNewName(RealStatus, S.getName());
   }
   return S;
+}
+
+ErrorOr<std::string> RealFile::getName() {
+  return RealName.empty() ? S.getName().str() : RealName;
 }
 
 ErrorOr<std::unique_ptr<MemoryBuffer>>
@@ -207,9 +214,10 @@ ErrorOr<Status> RealFileSystem::status(const Twine &Path) {
 ErrorOr<std::unique_ptr<File>>
 RealFileSystem::openFileForRead(const Twine &Name) {
   int FD;
-  if (std::error_code EC = sys::fs::openFileForRead(Name, FD))
+  SmallString<256> RealName;
+  if (std::error_code EC = sys::fs::openFileForRead(Name, FD, &RealName))
     return EC;
-  return std::unique_ptr<File>(new RealFile(FD, Name.str()));
+  return std::unique_ptr<File>(new RealFile(FD, Name.str(), RealName.str()));
 }
 
 llvm::ErrorOr<std::string> RealFileSystem::getCurrentWorkingDirectory() const {
@@ -280,7 +288,7 @@ directory_iterator RealFileSystem::dir_begin(const Twine &Dir,
 // OverlayFileSystem implementation
 //===-----------------------------------------------------------------------===/
 OverlayFileSystem::OverlayFileSystem(IntrusiveRefCntPtr<FileSystem> BaseFS) {
-  FSList.push_back(BaseFS);
+  FSList.push_back(std::move(BaseFS));
 }
 
 void OverlayFileSystem::pushOverlay(IntrusiveRefCntPtr<FileSystem> FS) {
@@ -793,6 +801,7 @@ public:
 ///   'case-sensitive': <boolean, default=true>
 ///   'use-external-names': <boolean, default=true>
 ///   'overlay-relative': <boolean, default=false>
+///   'ignore-non-existent-contents': <boolean, default=true>
 ///
 /// Virtual directories are represented as
 /// \verbatim
@@ -852,6 +861,14 @@ class RedirectingFileSystem : public vfs::FileSystem {
   /// \brief Whether to use to use the value of 'external-contents' for the
   /// names of files.  This global value is overridable on a per-file basis.
   bool UseExternalNames = true;
+
+  /// \brief Whether an invalid path obtained via 'external-contents' should
+  /// cause iteration on the VFS to stop. If 'true', the VFS should ignore
+  /// the entry and continue with the next. Allows YAML files to be shared
+  /// across multiple compiler invocations regardless of prior existent
+  /// paths in 'external-contents'. This global value is overridable on a
+  /// per-file basis.
+  bool IgnoreNonExistentContents = true;
   /// @}
 
   /// Virtual file paths and external files could be canonicalized without "..",
@@ -927,6 +944,10 @@ public:
 
   StringRef getExternalContentsPrefixDir() const {
     return ExternalContentsPrefixDir;
+  }
+
+  bool ignoreNonExistentContents() const {
+    return IgnoreNonExistentContents;
   }
 
 #if !defined(NDEBUG) || defined(LLVM_ENABLE_DUMP)
@@ -1293,6 +1314,7 @@ public:
       KeyStatusPair("case-sensitive", false),
       KeyStatusPair("use-external-names", false),
       KeyStatusPair("overlay-relative", false),
+      KeyStatusPair("ignore-non-existent-contents", false),
       KeyStatusPair("roots", true),
     };
 
@@ -1351,6 +1373,9 @@ public:
       } else if (Key == "use-external-names") {
         if (!parseScalarBool(I->getValue(), FS->UseExternalNames))
           return false;
+      } else if (Key == "ignore-non-existent-contents") {
+        if (!parseScalarBool(I->getValue(), FS->IgnoreNonExistentContents))
+          return false;
       } else {
         llvm_unreachable("key missing from Keys");
       }
@@ -1395,7 +1420,7 @@ RedirectingFileSystem::create(std::unique_ptr<MemoryBuffer> Buffer,
   RedirectingFileSystemParser P(Stream);
 
   std::unique_ptr<RedirectingFileSystem> FS(
-      new RedirectingFileSystem(ExternalFS));
+      new RedirectingFileSystem(std::move(ExternalFS)));
 
   if (!YAMLFilePath.empty()) {
     // Use the YAML path from -ivfsoverlay to compute the dir to be prefixed
@@ -1576,7 +1601,8 @@ vfs::getVFSFromYAML(std::unique_ptr<MemoryBuffer> Buffer,
                     void *DiagContext,
                     IntrusiveRefCntPtr<FileSystem> ExternalFS) {
   return RedirectingFileSystem::create(std::move(Buffer), DiagHandler,
-                                       YAMLFilePath, DiagContext, ExternalFS);
+                                       YAMLFilePath, DiagContext,
+                                       std::move(ExternalFS));
 }
 
 UniqueID vfs::getNextVirtualUniqueID() {
@@ -1610,7 +1636,7 @@ public:
   JSONWriter(llvm::raw_ostream &OS) : OS(OS) {}
   void write(ArrayRef<YAMLVFSEntry> Entries, Optional<bool> UseExternalNames,
              Optional<bool> IsCaseSensitive, Optional<bool> IsOverlayRelative,
-             StringRef OverlayDir);
+             Optional<bool> IgnoreNonExistentContents, StringRef OverlayDir);
 };
 }
 
@@ -1666,6 +1692,7 @@ void JSONWriter::write(ArrayRef<YAMLVFSEntry> Entries,
                        Optional<bool> UseExternalNames,
                        Optional<bool> IsCaseSensitive,
                        Optional<bool> IsOverlayRelative,
+                       Optional<bool> IgnoreNonExistentContents,
                        StringRef OverlayDir) {
   using namespace llvm::sys;
 
@@ -1683,6 +1710,9 @@ void JSONWriter::write(ArrayRef<YAMLVFSEntry> Entries,
     OS << "  'overlay-relative': '"
        << (UseOverlayRelative ? "true" : "false") << "',\n";
   }
+  if (IgnoreNonExistentContents.hasValue())
+    OS << "  'ignore-non-existent-contents': '"
+       << (IgnoreNonExistentContents.getValue() ? "true" : "false") << "',\n";
   OS << "  'roots': [\n";
 
   if (!Entries.empty()) {
@@ -1739,7 +1769,8 @@ void YAMLVFSWriter::write(llvm::raw_ostream &OS) {
   });
 
   JSONWriter(OS).write(Mappings, UseExternalNames, IsCaseSensitive,
-                       IsOverlayRelative, OverlayDir);
+                       IsOverlayRelative, IgnoreNonExistentContents,
+                       OverlayDir);
 }
 
 VFSFromYamlDirIterImpl::VFSFromYamlDirIterImpl(
@@ -1747,29 +1778,47 @@ VFSFromYamlDirIterImpl::VFSFromYamlDirIterImpl(
     RedirectingDirectoryEntry::iterator Begin,
     RedirectingDirectoryEntry::iterator End, std::error_code &EC)
     : Dir(_Path.str()), FS(FS), Current(Begin), End(End) {
-  if (Current != End) {
+  while (Current != End) {
     SmallString<128> PathStr(Dir);
     llvm::sys::path::append(PathStr, (*Current)->getName());
     llvm::ErrorOr<vfs::Status> S = FS.status(PathStr);
-    if (S)
+    if (S) {
       CurrentEntry = *S;
-    else
+      return;
+    }
+    // Skip entries which do not map to a reliable external content.
+    if (FS.ignoreNonExistentContents() &&
+        S.getError() == llvm::errc::no_such_file_or_directory) {
+      ++Current;
+      continue;
+    } else {
       EC = S.getError();
+      break;
+    }
   }
 }
 
 std::error_code VFSFromYamlDirIterImpl::increment() {
   assert(Current != End && "cannot iterate past end");
-  if (++Current != End) {
+  while (++Current != End) {
     SmallString<128> PathStr(Dir);
     llvm::sys::path::append(PathStr, (*Current)->getName());
     llvm::ErrorOr<vfs::Status> S = FS.status(PathStr);
-    if (!S)
-      return S.getError();
+    if (!S) {
+      // Skip entries which do not map to a reliable external content.
+      if (FS.ignoreNonExistentContents() &&
+          S.getError() == llvm::errc::no_such_file_or_directory) {
+        continue;
+      } else {
+        return S.getError();
+      }
+    }
     CurrentEntry = *S;
-  } else {
-    CurrentEntry = Status();
+    break;
   }
+
+  if (Current == End)
+    CurrentEntry = Status();
   return std::error_code();
 }
 

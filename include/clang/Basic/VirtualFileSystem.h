@@ -91,6 +91,13 @@ public:
   virtual ~File();
   /// \brief Get the status of the file.
   virtual llvm::ErrorOr<Status> status() = 0;
+  /// \brief Get the name of the file
+  virtual llvm::ErrorOr<std::string> getName() {
+    if (auto Status = status())
+      return Status->getName().str();
+    else
+      return Status.getError();
+  }
   /// \brief Get the contents of the file as a \p MemoryBuffer.
   virtual llvm::ErrorOr<std::unique_ptr<llvm::MemoryBuffer>>
   getBuffer(const Twine &Name, int64_t FileSize = -1,
@@ -333,6 +340,7 @@ class YAMLVFSWriter {
   Optional<bool> IsCaseSensitive;
   Optional<bool> IsOverlayRelative;
   Optional<bool> UseExternalNames;
+  Optional<bool> IgnoreNonExistentContents;
   std::string OverlayDir;
 
 public:
@@ -343,6 +351,9 @@ public:
   }
   void setUseExternalNames(bool UseExtNames) {
     UseExternalNames = UseExtNames;
+  }
+  void setIgnoreNonExistentContents(bool IgnoreContents) {
+    IgnoreNonExistentContents = IgnoreContents;
   }
   void setOverlayDir(StringRef OverlayDirectory) {
     IsOverlayRelative = true;

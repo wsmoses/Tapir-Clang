@@ -114,6 +114,9 @@ def analyzer_disable_all_checks : Flag<["-"], "analyzer-disable-all-checks">,
 def analyzer_checker_help : Flag<["-"], "analyzer-checker-help">,
   HelpText<"Display the list of analyzer checkers that are available">;
 
+def analyzer_list_enabled_checkers : Flag<["-"], "analyzer-list-enabled-checkers">,
+  HelpText<"Display the list of enabled analyzer checkers">;
+
 def analyzer_config : Separate<["-"], "analyzer-config">,
   HelpText<"Choose analyzer options to enable">;
 
@@ -388,6 +391,8 @@ def ast_dump_filter : Separate<["-"], "ast-dump-filter">,
   HelpText<"Use with -ast-dump or -ast-print to dump/print only AST declaration"
            " nodes having a certain substring in a qualified name. Use"
            " -ast-list to list all filterable declaration node names.">;
+def fmodules_ts : Flag <["-"], "fmodules-ts">, Group<f_Group>,
+  HelpText<"Enable support for the C++ Modules TS">;
 def fno_modules_global_index : Flag<["-"], "fno-modules-global-index">,
   HelpText<"Do not automatically generate or update the global module index">;
 def fno_modules_error_recovery : Flag<["-"], "fno-modules-error-recovery">,
@@ -509,6 +514,8 @@ def find_pch_source_EQ : Joined<["-"], "find-pch-source=">,
   HelpText<"When building a pch, try to find the input file in include "
            "directories, as if it had been included by the argument passed "
            "to this flag.">;
+def fno_pch_timestamp : Flag<["-"], "fno-pch-timestamp">,
+  HelpText<"Disable inclusion of timestamp in precompiled headers">;
   
 //===----------------------------------------------------------------------===//
 // Language Options
@@ -527,8 +534,6 @@ def fblocks_runtime_optional : Flag<["-"], "fblocks-runtime-optional">,
   HelpText<"Weakly link in the blocks runtime">;
 def fexternc_nounwind : Flag<["-"], "fexternc-nounwind">,
   HelpText<"Assume all functions with C linkage do not unwind">;
-def fsjlj_exceptions : Flag<["-"], "fsjlj-exceptions">,
-  HelpText<"Use SjLj style exceptions">;
 def split_dwarf_file : Separate<["-"], "split-dwarf-file">,
   HelpText<"File name to use for split dwarf debug info output">;
 def fno_wchar : Flag<["-"], "fno-wchar">,
@@ -548,8 +553,8 @@ def fencode_extended_block_signature : Flag<["-"], "fencode-extended-block-signa
   HelpText<"enable extended encoding of block type signature">;
 def pic_level : Separate<["-"], "pic-level">,
   HelpText<"Value for __PIC__">;
-def pie_level : Separate<["-"], "pie-level">,
-  HelpText<"Value for __PIE__">;
+def pic_is_pie : Flag<["-"], "pic-is-pie">,
+  HelpText<"File is for a position independent executable">;
 def fno_validate_pch : Flag<["-"], "fno-validate-pch">,
   HelpText<"Disable validation of precompiled headers">;
 def dump_deserialized_pch_decls : Flag<["-"], "dump-deserialized-decls">,
@@ -614,6 +619,8 @@ def fallow_half_arguments_and_returns : Flag<["-"], "fallow-half-arguments-and-r
   HelpText<"Allow function arguments and returns of type half">;
 def fdefault_calling_conv_EQ : Joined<["-"], "fdefault-calling-conv=">,
   HelpText<"Set default MS calling convention">;
+def finclude_default_header : Flag<["-"], "finclude-default-header">,
+  HelpText<"Include the default header file for OpenCL">;
 
 // C++ TSes.
 def fcoroutines : Flag<["-"], "fcoroutines">,
@@ -664,31 +671,6 @@ def detailed_preprocessing_record : Flag<["-"], "detailed-preprocessing-record">
   HelpText<"include a detailed record of preprocessing actions">;
 
 //===----------------------------------------------------------------------===//
-// OpenCL Options
-//===----------------------------------------------------------------------===//
-
-def cl_opt_disable : Flag<["-"], "cl-opt-disable">,
-  HelpText<"OpenCL only. This option disables all optimizations. The default is optimizations are enabled.">;
-def cl_strict_aliasing : Flag<["-"], "cl-strict-aliasing">,
-  HelpText<"OpenCL only. This option does nothing and is for compatibility with OpenCL 1.0">;
-def cl_single_precision_constant : Flag<["-"], "cl-single-precision-constant">,
-  HelpText<"OpenCL only. Treat double precision floating-point constant as single precision constant.">;
-def cl_finite_math_only : Flag<["-"], "cl-finite-math-only">,
-  HelpText<"OpenCL only. Allow floating-point optimizations that assume arguments and results are not NaNs or +-Inf.">;
-def cl_kernel_arg_info : Flag<["-"], "cl-kernel-arg-info">,
-  HelpText<"OpenCL only. Generate kernel argument metadata.">;
-def cl_unsafe_math_optimizations : Flag<["-"], "cl-unsafe-math-optimizations">,
-  HelpText<"OpenCL only. Allow unsafe floating-point optimizations.  Also implies -cl-no-signed-zeros and -cl-mad-enable">;
-def cl_fast_relaxed_math : Flag<["-"], "cl-fast-relaxed-math">,
-  HelpText<"OpenCL only. Sets -cl-finite-math-only and -cl-unsafe-math-optimizations, and defines __FAST_RELAXED_MATH__">;
-def cl_mad_enable : Flag<["-"], "cl-mad-enable">,
-  HelpText<"OpenCL only. Enable less precise MAD instructions to be generated.">;
-def cl_std_EQ : Joined<["-"], "cl-std=">,
-  HelpText<"OpenCL language standard to compile for">;
-def cl_denorms_are_zero : Flag<["-"], "cl-denorms-are-zero">,
-  HelpText<"OpenCL only. Allow denormals to be flushed to zero">;
-
-//===----------------------------------------------------------------------===//
 // CUDA Options
 //===----------------------------------------------------------------------===//
 
@@ -707,7 +689,7 @@ def fno_cuda_host_device_constexpr : Flag<["-"], "fno-cuda-host-device-constexpr
 
 def fopenmp_is_device : Flag<["-"], "fopenmp-is-device">,
   HelpText<"Generate code only for an OpenMP target device.">;
-def fomp_host_ir_file_path : Separate<["-"], "fomp-host-ir-file-path">,
+def fopenmp_host_ir_file_path : Separate<["-"], "fopenmp-host-ir-file-path">,
   HelpText<"Path to the IR file produced by the frontend for the host.">;
   
 } // let Flags = [CC1Option]

@@ -16,7 +16,6 @@
 #define LLVM_CLANG_LIB_CODEGEN_CGLOOPINFO_H
 
 #include "llvm/ADT/ArrayRef.h"
-#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/IR/DebugLoc.h"
 #include "llvm/IR/Value.h"
@@ -58,6 +57,9 @@ struct LoopAttributes {
 
   /// \brief llvm.unroll.
   unsigned UnrollCount;
+
+  /// \brief Value for llvm.loop.distribute.enable metadata.
+  LVEnableState DistributeEnable;
 };
 
 /// \brief Information used when generating a structured loop.
@@ -127,6 +129,12 @@ public:
   /// \brief Set the next pushed loop 'vectorize.enable'
   void setVectorizeEnable(bool Enable = true) {
     StagedAttrs.VectorizeEnable =
+        Enable ? LoopAttributes::Enable : LoopAttributes::Disable;
+  }
+
+  /// \brief Set the next pushed loop as a distribution candidate.
+  void setDistributeState(bool Enable = true) {
+    StagedAttrs.DistributeEnable =
         Enable ? LoopAttributes::Enable : LoopAttributes::Disable;
   }
 

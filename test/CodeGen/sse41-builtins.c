@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 %s -triple=x86_64-apple-darwin -target-feature +sse4.1 -emit-llvm -o - -Werror | FileCheck %s
-// RUN: %clang_cc1 %s -triple=x86_64-apple-darwin -target-feature +sse4.1 -fno-signed-char -emit-llvm -o - -Werror | FileCheck %s
+// RUN: %clang_cc1 %s -triple=x86_64-apple-darwin -target-feature +sse4.1 -emit-llvm -o - -Wall -Werror | FileCheck %s
+// RUN: %clang_cc1 %s -triple=x86_64-apple-darwin -target-feature +sse4.1 -fno-signed-char -emit-llvm -o - -Wall -Werror | FileCheck %s
 
 // Don't include mm_malloc.h, it's system specific.
 #define __MM_MALLOC_H
@@ -190,10 +190,11 @@ long long test_mm_extract_epi64(__m128i x) {
   return _mm_extract_epi64(x, 1);
 }
 
-//TODO
-//int test_mm_extract_ps(__m128 x) {
-//  return _mm_extract_ps(_mm_add_ps(x,x), 1);
-//}
+int test_mm_extract_ps(__m128 x) {
+  // CHECK-LABEL: test_mm_extract_ps
+  // CHECK: extractelement <4 x float> %{{.*}}, i32 1
+  return _mm_extract_ps(x, 1);
+}
 
 __m128d test_mm_floor_pd(__m128d x) {
   // CHECK-LABEL: test_mm_floor_pd
@@ -245,49 +246,57 @@ __m128 test_mm_insert_ps(__m128 x, __m128 y) {
 
 __m128i test_mm_max_epi8(__m128i x, __m128i y) {
   // CHECK-LABEL: test_mm_max_epi8
-  // CHECK: call <16 x i8> @llvm.x86.sse41.pmaxsb(<16 x i8> %{{.*}}, <16 x i8> %{{.*}})
+  // CHECK:       [[CMP:%.*]] = icmp sgt <16 x i8> [[X:%.*]], [[Y:%.*]]
+  // CHECK-NEXT:  select <16 x i1> [[CMP]], <16 x i8> [[X]], <16 x i8> [[Y]]
   return _mm_max_epi8(x, y);
 }
 
 __m128i test_mm_max_epi32(__m128i x, __m128i y) {
   // CHECK-LABEL: test_mm_max_epi32
-  // CHECK: call <4 x i32> @llvm.x86.sse41.pmaxsd(<4 x i32> %{{.*}}, <4 x i32> %{{.*}})
+  // CHECK:       [[CMP:%.*]] = icmp sgt <4 x i32> [[X:%.*]], [[Y:%.*]]
+  // CHECK-NEXT:  select <4 x i1> [[CMP]], <4 x i32> [[X]], <4 x i32> [[Y]]
   return _mm_max_epi32(x, y);
 }
 
 __m128i test_mm_max_epu16(__m128i x, __m128i y) {
   // CHECK-LABEL: test_mm_max_epu16
-  // CHECK: call <8 x i16> @llvm.x86.sse41.pmaxuw(<8 x i16> %{{.*}}, <8 x i16> %{{.*}})
+  // CHECK:       [[CMP:%.*]] = icmp ugt <8 x i16> [[X:%.*]], [[Y:%.*]]
+  // CHECK-NEXT:  select <8 x i1> [[CMP]], <8 x i16> [[X]], <8 x i16> [[Y]]
   return _mm_max_epu16(x, y);
 }
 
 __m128i test_mm_max_epu32(__m128i x, __m128i y) {
   // CHECK-LABEL: test_mm_max_epu32
-  // CHECK: call <4 x i32> @llvm.x86.sse41.pmaxud(<4 x i32> %{{.*}}, <4 x i32> %{{.*}})
+  // CHECK:       [[CMP:%.*]] = icmp ugt <4 x i32> [[X:%.*]], [[Y:%.*]]
+  // CHECK-NEXT:  select <4 x i1> [[CMP]], <4 x i32> [[X]], <4 x i32> [[Y]]
   return _mm_max_epu32(x, y);
 }
 
 __m128i test_mm_min_epi8(__m128i x, __m128i y) {
   // CHECK-LABEL: test_mm_min_epi8
-  // CHECK: call <16 x i8> @llvm.x86.sse41.pminsb(<16 x i8> %{{.*}}, <16 x i8> %{{.*}})
+  // CHECK:       [[CMP:%.*]] = icmp slt <16 x i8> [[X:%.*]], [[Y:%.*]]
+  // CHECK-NEXT:  select <16 x i1> [[CMP]], <16 x i8> [[X]], <16 x i8> [[Y]]
   return _mm_min_epi8(x, y);
 }
 
 __m128i test_mm_min_epi32(__m128i x, __m128i y) {
   // CHECK-LABEL: test_mm_min_epi32
-  // CHECK: call <4 x i32> @llvm.x86.sse41.pminsd(<4 x i32> %{{.*}}, <4 x i32> %{{.*}})
+  // CHECK:       [[CMP:%.*]] = icmp slt <4 x i32> [[X:%.*]], [[Y:%.*]]
+  // CHECK-NEXT:  select <4 x i1> [[CMP]], <4 x i32> [[X]], <4 x i32> [[Y]]
   return _mm_min_epi32(x, y);
 }
 
 __m128i test_mm_min_epu16(__m128i x, __m128i y) {
   // CHECK-LABEL: test_mm_min_epu16
-  // CHECK: call <8 x i16> @llvm.x86.sse41.pminuw(<8 x i16> %{{.*}}, <8 x i16> %{{.*}})
+  // CHECK:       [[CMP:%.*]] = icmp ult <8 x i16> [[X:%.*]], [[Y:%.*]]
+  // CHECK-NEXT:  select <8 x i1> [[CMP]], <8 x i16> [[X]], <8 x i16> [[Y]]
   return _mm_min_epu16(x, y);
 }
 
 __m128i test_mm_min_epu32(__m128i x, __m128i y) {
   // CHECK-LABEL: test_mm_min_epu32
-  // CHECK: call <4 x i32> @llvm.x86.sse41.pminud(<4 x i32> %{{.*}}, <4 x i32> %{{.*}})
+  // CHECK:       [[CMP:%.*]] = icmp ult <4 x i32> [[X:%.*]], [[Y:%.*]]
+  // CHECK-NEXT:  select <4 x i1> [[CMP]], <4 x i32> [[X]], <4 x i32> [[Y]]
   return _mm_min_epu32(x, y);
 }
 

@@ -684,6 +684,9 @@ namespace clang {
       /// \brief Specifies a header that is private to this submodule but
       /// must be textually included.
       SUBMODULE_PRIVATE_TEXTUAL_HEADER = 15,
+      /// \brief Specifies some declarations with initializers that must be
+      /// emitted to initialize the module.
+      SUBMODULE_INITIALIZERS = 16,
     };
 
     /// \brief Record types used within a comments block.
@@ -983,13 +986,16 @@ namespace clang {
 
       /// \brief The internal '__NSConstantString' tag type.
       PREDEF_DECL_CF_CONSTANT_STRING_TAG_ID = 15,
+
+      /// \brief The internal '__type_pack_element' template.
+      PREDEF_DECL_TYPE_PACK_ELEMENT_ID = 16,
     };
 
     /// \brief The number of declaration IDs that are predefined.
     ///
     /// For more information about predefined declarations, see the
     /// \c PredefinedDeclIDs type and the PREDEF_DECL_*_ID constants.
-    const unsigned int NUM_PREDEF_DECL_IDS = 16;
+    const unsigned int NUM_PREDEF_DECL_IDS = 17;
 
     /// \brief Record of updates for a declaration that was modified after
     /// being deserialized. This can occur within DECLTYPES_BLOCK_ID.
@@ -1050,6 +1056,10 @@ namespace clang {
       DECL_IMPLICIT_PARAM,
       /// \brief A ParmVarDecl record.
       DECL_PARM_VAR,
+      /// \brief A DecompositionDecl record.
+      DECL_DECOMPOSITION,
+      /// \brief A BindingDecl record.
+      DECL_BINDING,
       /// \brief A FileScopeAsmDecl record.
       DECL_FILE_SCOPE_ASM,
       /// \brief A BlockDecl record.
@@ -1083,6 +1093,8 @@ namespace clang {
       DECL_USING,
       /// \brief A UsingShadowDecl record.
       DECL_USING_SHADOW,
+      /// \brief A ConstructorUsingShadowDecl record.
+      DECL_CONSTRUCTOR_USING_SHADOW,
       /// \brief A UsingDirecitveDecl record.
       DECL_USING_DIRECTIVE,
       /// \brief An UnresolvedUsingValueDecl record.
@@ -1097,6 +1109,8 @@ namespace clang {
       DECL_CXX_METHOD,
       /// \brief A CXXConstructorDecl record.
       DECL_CXX_CONSTRUCTOR,
+      /// \brief A CXXConstructorDecl record for an inherited constructor.
+      DECL_CXX_INHERITED_CONSTRUCTOR,
       /// \brief A CXXDestructorDecl record.
       DECL_CXX_DESTRUCTOR,
       /// \brief A CXXConversionDecl record.
@@ -1342,8 +1356,10 @@ namespace clang {
       STMT_OBJC_AT_THROW,
       /// \brief An ObjCAutoreleasePoolStmt record.
       STMT_OBJC_AUTORELEASE_POOL,
-      /// \brief A ObjCBoolLiteralExpr record.
+      /// \brief An ObjCBoolLiteralExpr record.
       EXPR_OBJC_BOOL_LITERAL,
+      /// \brief An ObjCAvailabilityCheckExpr record.
+      EXPR_OBJC_AVAILABILITY_CHECK,
 
       // C++
       
@@ -1360,6 +1376,8 @@ namespace clang {
       EXPR_CXX_MEMBER_CALL,
       /// \brief A CXXConstructExpr record.
       EXPR_CXX_CONSTRUCT,
+      /// \brief A CXXInheritedCtorInitExpr record.
+      EXPR_CXX_INHERITED_CTOR_INIT,
       /// \brief A CXXTemporaryObjectExpr record.
       EXPR_CXX_TEMPORARY_OBJECT,
       /// \brief A CXXStaticCastExpr record.
@@ -1466,6 +1484,12 @@ namespace clang {
       STMT_OMP_TASKLOOP_SIMD_DIRECTIVE,
       STMT_OMP_DISTRIBUTE_DIRECTIVE,
       STMT_OMP_TARGET_UPDATE_DIRECTIVE,
+      STMT_OMP_DISTRIBUTE_PARALLEL_FOR_DIRECTIVE,
+      STMT_OMP_DISTRIBUTE_PARALLEL_FOR_SIMD_DIRECTIVE,
+      STMT_OMP_DISTRIBUTE_SIMD_DIRECTIVE,
+      STMT_OMP_TARGET_PARALLEL_FOR_SIMD_DIRECTIVE,
+      STMT_OMP_TARGET_SIMD_DIRECTIVE,
+      STMT_OMP_TEAMS_DISTRIBUTE_DIRECTIVE,
       EXPR_OMP_ARRAY_SECTION,
 
       // ARC

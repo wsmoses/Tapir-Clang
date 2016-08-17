@@ -9,10 +9,14 @@
 
 #include "clang/Format/Format.h"
 
+#include "../Tooling/ReplacementTest.h"
 #include "../Tooling/RewriterTestContext.h"
 #include "clang/Tooling/Core/Replacement.h"
 
 #include "gtest/gtest.h"
+
+using clang::tooling::ReplacementTest;
+using clang::tooling::toReplacements;
 
 namespace clang {
 namespace format {
@@ -25,9 +29,9 @@ protected:
                       const FormatStyle &Style = getLLVMStyle()) {
     tooling::Replacements Replaces = format::cleanup(Style, Code, Ranges);
 
-    std::string Result = applyAllReplacements(Code, Replaces);
-    EXPECT_NE("", Result);
-    return Result;
+    auto Result = applyAllReplacements(Code, Replaces);
+    EXPECT_TRUE(static_cast<bool>(Result));
+    return *Result;
   }
 };
 
@@ -241,7 +245,7 @@ TEST_F(CleanupTest, CtorInitializerInNamespace) {
   EXPECT_EQ(Expected, Result);
 }
 
-class CleanUpReplacementsTest : public ::testing::Test {
+class CleanUpReplacementsTest : public ReplacementTest {
 protected:
   tooling::Replacement createReplacement(unsigned Offset, unsigned Length,
                                          StringRef Text) {
@@ -254,16 +258,26 @@ protected:
 
   inline std::string apply(StringRef Code,
                            const tooling::Replacements Replaces) {
-    return applyAllReplacements(
-        Code, cleanupAroundReplacements(Code, Replaces, Style));
+    auto CleanReplaces = cleanupAroundReplacements(Code, Replaces, Style);
+    EXPECT_TRUE(static_cast<bool>(CleanReplaces))
+        << llvm::toString(CleanReplaces.takeError()) << "\n";
+    auto Result = applyAllReplacements(Code, *CleanReplaces);
+    EXPECT_TRUE(static_cast<bool>(Result));
+    return *Result;
   }
 
   inline std::string formatAndApply(StringRef Code,
                                     const tooling::Replacements Replaces) {
-    return applyAllReplacements(
-        Code,
-        formatReplacements(
-            Code, cleanupAroundReplacements(Code, Replaces, Style), Style));
+
+    auto CleanReplaces = cleanupAroundReplacements(Code, Replaces, Style);
+    EXPECT_TRUE(static_cast<bool>(CleanReplaces))
+        << llvm::toString(CleanReplaces.takeError()) << "\n";
+    auto FormattedReplaces = formatReplacements(Code, *CleanReplaces, Style);
+    EXPECT_TRUE(static_cast<bool>(FormattedReplaces))
+        << llvm::toString(FormattedReplaces.takeError()) << "\n";
+    auto Result = applyAllReplacements(Code, *FormattedReplaces);
+    EXPECT_TRUE(static_cast<bool>(Result));
+    return *Result;
   }
 
   int getOffset(StringRef Code, int Line, int Column) {
@@ -294,9 +308,9 @@ TEST_F(CleanUpReplacementsTest, FixOnlyAffectedCodeAfterReplacements) {
                          "namespace D { int i; }\n\n"
                          "int x=     0;"
                          "}";
-  tooling::Replacements Replaces = {
-      createReplacement(getOffset(Code, 3, 3), 6, ""),
-      createReplacement(getOffset(Code, 9, 34), 6, "")};
+  tooling::Replacements Replaces =
+      toReplacements({createReplacement(getOffset(Code, 3, 3), 6, ""),
+                      createReplacement(getOffset(Code, 9, 34), 6, "")});
 
   EXPECT_EQ(Expected, formatAndApply(Code, Replaces));
 }
@@ -305,7 +319,8 @@ TEST_F(CleanUpReplacementsTest, NoExistingIncludeWithoutDefine) {
   std::string Code = "int main() {}";
   std::string Expected = "#include \"a.h\"\n"
                          "int main() {}";
-  tooling::Replacements Replaces = {createInsertion("#include \"a.h\"")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include \"a.h\"")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -322,7 +337,8 @@ TEST_F(CleanUpReplacementsTest, NoExistingIncludeWithDefine) {
                          "#define MMM 123\n"
                          "#endif";
 
-  tooling::Replacements Replaces = {createInsertion("#include \"b.h\"")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include \"b.h\"")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -347,7 +363,8 @@ TEST_F(CleanUpReplacementsTest, InsertBeforeCategoryWithLowerPriority) {
                          "#define MMM 123\n"
                          "#endif";
 
-  tooling::Replacements Replaces = {createInsertion("#include \"a.h\"")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include \"a.h\"")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -359,7 +376,8 @@ TEST_F(CleanUpReplacementsTest, InsertAfterMainHeader) {
                          "#include <a>\n"
                          "\n"
                          "int main() {}";
-  tooling::Replacements Replaces = {createInsertion("#include <a>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <a>")});
   Style = format::getGoogleStyle(format::FormatStyle::LanguageKind::LK_Cpp);
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
@@ -372,7 +390,8 @@ TEST_F(CleanUpReplacementsTest, InsertBeforeSystemHeaderLLVM) {
                          "#include <memory>\n"
                          "\n"
                          "int main() {}";
-  tooling::Replacements Replaces = {createInsertion("#include \"z.h\"")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include \"z.h\"")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -384,7 +403,8 @@ TEST_F(CleanUpReplacementsTest, InsertAfterSystemHeaderGoogle) {
                          "#include \"z.h\"\n"
                          "\n"
                          "int main() {}";
-  tooling::Replacements Replaces = {createInsertion("#include \"z.h\"")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include \"z.h\"")});
   Style = format::getGoogleStyle(format::FormatStyle::LanguageKind::LK_Cpp);
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
@@ -402,8 +422,9 @@ TEST_F(CleanUpReplacementsTest, InsertOneIncludeLLVMStyle) {
                          "#include \"clang/Format/Format.h\"\n"
                          "#include \"llvm/x/y.h\"\n"
                          "#include <memory>\n";
-  tooling::Replacements Replaces = {createInsertion("#include \"d.h\""),
-                                    createInsertion("#include \"llvm/x/y.h\"")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include \"d.h\""),
+                      createInsertion("#include \"llvm/x/y.h\"")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -420,8 +441,9 @@ TEST_F(CleanUpReplacementsTest, InsertMultipleIncludesLLVMStyle) {
                          "#include \"clang/Format/Format.h\"\n"
                          "#include <memory>\n"
                          "#include <list>\n";
-  tooling::Replacements Replaces = {createInsertion("#include <list>"),
-                                    createInsertion("#include \"new/new.h\"")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <list>"),
+                      createInsertion("#include \"new/new.h\"")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -437,7 +459,8 @@ TEST_F(CleanUpReplacementsTest, InsertNewSystemIncludeGoogleStyle) {
                          "\n"
                          "#include \"y/a.h\"\n"
                          "#include \"z/b.h\"\n";
-  tooling::Replacements Replaces = {createInsertion("#include <vector>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>")});
   Style = format::getGoogleStyle(format::FormatStyle::LanguageKind::LK_Cpp);
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
@@ -457,8 +480,9 @@ TEST_F(CleanUpReplacementsTest, InsertMultipleIncludesGoogleStyle) {
                          "#include \"y/a.h\"\n"
                          "#include \"z/b.h\"\n"
                          "#include \"x/x.h\"\n";
-  tooling::Replacements Replaces = {createInsertion("#include <list>"),
-                                    createInsertion("#include \"x/x.h\"")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <list>"),
+                      createInsertion("#include \"x/x.h\"")});
   Style = format::getGoogleStyle(format::FormatStyle::LanguageKind::LK_Cpp);
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
@@ -472,12 +496,11 @@ TEST_F(CleanUpReplacementsTest, InsertMultipleNewHeadersAndSortLLVM) {
                          "#include <list>\n"
                          "#include <vector>\n"
                          "int x;";
-  tooling::Replacements Replaces = {createInsertion("#include \"a.h\""),
-                                    createInsertion("#include \"c.h\""),
-                                    createInsertion("#include \"b.h\""),
-                                    createInsertion("#include <vector>"),
-                                    createInsertion("#include <list>"),
-                                    createInsertion("#include \"fix.h\"")};
+  tooling::Replacements Replaces = toReplacements(
+      {createInsertion("#include \"a.h\""), createInsertion("#include \"c.h\""),
+       createInsertion("#include \"b.h\""),
+       createInsertion("#include <vector>"), createInsertion("#include <list>"),
+       createInsertion("#include \"fix.h\"")});
   EXPECT_EQ(Expected, formatAndApply(Code, Replaces));
 }
 
@@ -490,12 +513,11 @@ TEST_F(CleanUpReplacementsTest, InsertMultipleNewHeadersAndSortGoogle) {
                          "#include \"b.h\"\n"
                          "#include \"c.h\"\n"
                          "int x;";
-  tooling::Replacements Replaces = {createInsertion("#include \"a.h\""),
-                                    createInsertion("#include \"c.h\""),
-                                    createInsertion("#include \"b.h\""),
-                                    createInsertion("#include <vector>"),
-                                    createInsertion("#include <list>"),
-                                    createInsertion("#include \"fix.h\"")};
+  tooling::Replacements Replaces = toReplacements(
+      {createInsertion("#include \"a.h\""), createInsertion("#include \"c.h\""),
+       createInsertion("#include \"b.h\""),
+       createInsertion("#include <vector>"), createInsertion("#include <list>"),
+       createInsertion("#include \"fix.h\"")});
   Style = format::getGoogleStyle(format::FormatStyle::LanguageKind::LK_Cpp);
   EXPECT_EQ(Expected, formatAndApply(Code, Replaces));
 }
@@ -516,13 +538,12 @@ TEST_F(CleanUpReplacementsTest, FormatCorrectLineWhenHeadersAreInserted) {
                          "int    a;\n"
                          "int b;\n"
                          "int    a;";
-  tooling::Replacements Replaces = {
-      createReplacement(getOffset(Code, 4, 8), 1, "b"),
-      createInsertion("#include <vector>"),
-      createInsertion("#include <list>"),
-      createInsertion("#include \"clang/x/x.h\""),
-      createInsertion("#include \"y.h\""),
-      createInsertion("#include \"x.h\"")};
+  tooling::Replacements Replaces = toReplacements(
+      {createReplacement(getOffset(Code, 4, 8), 1, "b"),
+       createInsertion("#include <vector>"), createInsertion("#include <list>"),
+       createInsertion("#include \"clang/x/x.h\""),
+       createInsertion("#include \"y.h\""),
+       createInsertion("#include \"x.h\"")});
   EXPECT_EQ(Expected, formatAndApply(Code, Replaces));
 }
 
@@ -534,7 +555,8 @@ TEST_F(CleanUpReplacementsTest, NotConfusedByDefine) {
                          "void f() {}\n"
                          "#define A \\\n"
                          "  int i;";
-  tooling::Replacements Replaces = {createInsertion("#include <vector>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>")});
   EXPECT_EQ(Expected, formatAndApply(Code, Replaces));
 }
 
@@ -546,7 +568,8 @@ TEST_F(CleanUpReplacementsTest, SkippedTopComment) {
                          "\n"
                          "   // comment\n"
                          "#include <vector>\n";
-  tooling::Replacements Replaces = {createInsertion("#include <vector>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -564,7 +587,8 @@ TEST_F(CleanUpReplacementsTest, SkippedMixedComments) {
                          "* comment\n"
                          "*/\n"
                          "#include <vector>\n";
-  tooling::Replacements Replaces = {createInsertion("#include <vector>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -582,7 +606,8 @@ TEST_F(CleanUpReplacementsTest, MultipleBlockCommentsInOneLine) {
                          "\n\n"
                          "/* c1 */ /*c2 */\n"
                          "#include <vector>\n";
-  tooling::Replacements Replaces = {createInsertion("#include <vector>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -604,7 +629,8 @@ TEST_F(CleanUpReplacementsTest, CodeAfterComments) {
                          "\n"
                          "#include <vector>\n"
                          "int x;\n";
-  tooling::Replacements Replaces = {createInsertion("#include <vector>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -616,7 +642,8 @@ TEST_F(CleanUpReplacementsTest, FakeHeaderGuardIfDef) {
                          "#include <vector>\n"
                          "#ifdef X\n"
                          "#define X\n";
-  tooling::Replacements Replaces = {createInsertion("#include <vector>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -632,7 +659,8 @@ TEST_F(CleanUpReplacementsTest, RealHeaderGuardAfterComments) {
                          "#include <vector>\n"
                          "int x;\n"
                          "#define Y 1\n";
-  tooling::Replacements Replaces = {createInsertion("#include <vector>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -646,7 +674,8 @@ TEST_F(CleanUpReplacementsTest, IfNDefWithNoDefine) {
                          "#ifndef X\n"
                          "int x;\n"
                          "#define Y 1\n";
-  tooling::Replacements Replaces = {createInsertion("#include <vector>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -668,14 +697,16 @@ TEST_F(CleanUpReplacementsTest, HeaderGuardWithComment) {
                          "#include <vector>\n"
                          "int x;\n"
                          "#define Y 1\n";
-  tooling::Replacements Replaces = {createInsertion("#include <vector>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
 TEST_F(CleanUpReplacementsTest, EmptyCode) {
   std::string Code = "";
   std::string Expected = "#include <vector>\n";
-  tooling::Replacements Replaces = {createInsertion("#include <vector>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 
@@ -684,7 +715,33 @@ TEST_F(CleanUpReplacementsTest, EmptyCode) {
 TEST_F(CleanUpReplacementsTest, NoNewLineAtTheEndOfCode) {
   std::string Code = "#include <map>";
   std::string Expected = "#include <map>#include <vector>\n";
-  tooling::Replacements Replaces = {createInsertion("#include <vector>")};
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>")});
+  EXPECT_EQ(Expected, apply(Code, Replaces));
+}
+
+TEST_F(CleanUpReplacementsTest, SkipExistingHeaders) {
+  std::string Code = "#include \"a.h\"\n"
+                     "#include <vector>\n";
+  std::string Expected = "#include \"a.h\"\n"
+                         "#include <vector>\n";
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include <vector>"),
+                      createInsertion("#include \"a.h\"")});
+  EXPECT_EQ(Expected, apply(Code, Replaces));
+}
+
+TEST_F(CleanUpReplacementsTest, AddIncludesWithDifferentForms) {
+  std::string Code = "#include \"a.h\"\n"
+                     "#include <vector>\n";
+  // FIXME: this might not be the best behavior.
+  std::string Expected = "#include \"a.h\"\n"
+                         "#include \"vector\"\n"
+                         "#include <vector>\n"
+                         "#include <a.h>\n";
+  tooling::Replacements Replaces =
+      toReplacements({createInsertion("#include \"vector\""),
+                      createInsertion("#include <a.h>")});
   EXPECT_EQ(Expected, apply(Code, Replaces));
 }
 

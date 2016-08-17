@@ -67,6 +67,7 @@ class CGDebugInfo {
 #define IMAGE_TYPE(ImgType, Id, SingletonId, Access, Suffix) \
   llvm::DIType *SingletonId = nullptr;
 #include "clang/Basic/OpenCLImageTypes.def"
+  llvm::DIType *OCLSamplerDITy = nullptr;
   llvm::DIType *OCLEventDITy = nullptr;
   llvm::DIType *OCLClkEventDITy = nullptr;
   llvm::DIType *OCLQueueDITy = nullptr;
@@ -232,10 +233,15 @@ class CGDebugInfo {
                            llvm::DIFile *F);
 
   llvm::DIType *createFieldType(StringRef name, QualType type,
-                                uint64_t sizeInBitsOverride, SourceLocation loc,
-                                AccessSpecifier AS, uint64_t offsetInBits,
-                                llvm::DIFile *tunit, llvm::DIScope *scope,
+                                SourceLocation loc, AccessSpecifier AS,
+                                uint64_t offsetInBits, llvm::DIFile *tunit,
+                                llvm::DIScope *scope,
                                 const RecordDecl *RD = nullptr);
+
+  /// Create new bit field member.
+  llvm::DIType *createBitFieldType(const FieldDecl *BitFieldDecl,
+                                   llvm::DIScope *RecordTy,
+                                   const RecordDecl *RD);
 
   /// Helpers for collecting fields of a record.
   /// @{
@@ -249,6 +255,8 @@ class CGDebugInfo {
                                 llvm::DIFile *F,
                                 SmallVectorImpl<llvm::Metadata *> &E,
                                 llvm::DIType *RecordTy, const RecordDecl *RD);
+  void CollectRecordNestedRecord(const RecordDecl *RD,
+                                 SmallVectorImpl<llvm::Metadata *> &E);
   void CollectRecordFields(const RecordDecl *Decl, llvm::DIFile *F,
                            SmallVectorImpl<llvm::Metadata *> &E,
                            llvm::DICompositeType *RecordTy);

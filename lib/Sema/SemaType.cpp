@@ -1748,6 +1748,12 @@ QualType Sema::BuildQualifiedType(QualType T, SourceLocation Loc,
   if (T.isNull())
     return QualType();
 
+  // Ignore any attempt to form a cv-qualified reference.
+  if (T->isReferenceType()) {
+    Qs.removeConst();
+    Qs.removeVolatile();
+  }
+
   // Enforce C99 6.7.3p2: "Types other than pointer types derived from
   // object or incomplete types shall not be restrict-qualified."
   if (Qs.hasRestrict()) {
@@ -1788,6 +1794,11 @@ QualType Sema::BuildQualifiedType(QualType T, SourceLocation Loc,
                                   unsigned CVRAU, const DeclSpec *DS) {
   if (T.isNull())
     return QualType();
+
+  // Ignore any attempt to form a cv-qualified reference.
+  if (T->isReferenceType())
+    CVRAU &=
+        ~(DeclSpec::TQ_const | DeclSpec::TQ_volatile | DeclSpec::TQ_atomic);
 
   // Convert from DeclSpec::TQ to Qualifiers::TQ by just dropping TQ_atomic and
   // TQ_unaligned;
@@ -2063,7 +2074,8 @@ static bool isArraySizeVLA(Sema &S, Expr *ArraySize, llvm::APSInt &SizeVal) {
   } Diagnoser;
 
   return S.VerifyIntegerConstantExpression(ArraySize, &SizeVal, Diagnoser,
-                                           S.LangOpts.GNUMode).isInvalid();
+                                           S.LangOpts.GNUMode ||
+                                           S.LangOpts.OpenCL).isInvalid();
 }
 
 /// \brief Build an array type.
@@ -2882,6 +2894,7 @@ static QualType GetDeclSpecTypeForDeclarator(TypeProcessingState &state,
     case Declarator::FileContext:
     case Declarator::BlockContext:
     case Declarator::ForContext:
+    case Declarator::InitStmtContext:
     case Declarator::ConditionContext:
       break;
     case Declarator::CXXNewContext:
@@ -2967,6 +2980,7 @@ static QualType GetDeclSpecTypeForDeclarator(TypeProcessingState &state,
     case Declarator::MemberContext:
     case Declarator::BlockContext:
     case Declarator::ForContext:
+    case Declarator::InitStmtContext:
     case Declarator::BlockLiteralContext:
     case Declarator::LambdaExprContext:
       // C++11 [dcl.type]p3:
@@ -3181,15 +3195,19 @@ getCCForDeclaratorChunk(Sema &S, Declarator &D,
   CallingConv CC = S.Context.getDefaultCallingConvention(FTI.isVariadic,
                                                          IsCXXInstanceMethod);
 
-  // Attribute AT_OpenCLKernel affects the calling convention only on
-  // the SPIR target, hence it cannot be treated as a calling
+  // Attribute AT_OpenCLKernel affects the calling convention for SPIR
+  // and AMDGPU targets, hence it cannot be treated as a calling
   // convention attribute. This is the simplest place to infer
-  // "spir_kernel" for OpenCL kernels on SPIR.
-  if (CC == CC_SpirFunction) {
+  // calling convention for OpenCL kernels.
+  if (S.getLangOpts().OpenCL) {
     for (const AttributeList *Attr = D.getDeclSpec().getAttributes().getList();
          Attr; Attr = Attr->getNext()) {
       if (Attr->getKind() == AttributeList::AT_OpenCLKernel) {
-        CC = CC_SpirKernel;
+        llvm::Triple::ArchType arch = S.Context.getTargetInfo().getTriple().getArch();
+        if (arch == llvm::Triple::spir || arch == llvm::Triple::spir64 ||
+            arch == llvm::Triple::amdgcn) {
+          CC = CC_OpenCLKernel;
+        }
         break;
       }
     }
@@ -3710,6 +3728,7 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
     case Declarator::CXXCatchContext:
     case Declarator::CXXNewContext:
     case Declarator::ForContext:
+    case Declarator::InitStmtContext:
     case Declarator::LambdaExprContext:
     case Declarator::LambdaExprParameterContext:
     case Declarator::ObjCCatchContext:
@@ -3810,15 +3829,20 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
     case DeclaratorChunk::BlockPointer:
       // If blocks are disabled, emit an error.
       if (!LangOpts.Blocks)
-        S.Diag(DeclType.Loc, diag::err_blocks_disable);
+        S.Diag(DeclType.Loc, diag::err_blocks_disable) << LangOpts.OpenCL;
 
       // Handle pointer nullability.
       inferPointerNullability(SimplePointerKind::BlockPointer,
                               DeclType.Loc, DeclType.getAttrListRef());
 
       T = S.BuildBlockPointerType(T, D.getIdentifierLoc(), Name);
-      if (DeclType.Cls.TypeQuals)
+      if (DeclType.Cls.TypeQuals || LangOpts.OpenCL) {
+        // OpenCL v2.0, s6.12.5 - Block variable declarations are implicitly
+        // qualified with const.
+        if (LangOpts.OpenCL)
+          DeclType.Cls.TypeQuals |= DeclSpec::TQ_const;
         T = S.BuildQualifiedType(T, DeclType.Loc, DeclType.Cls.TypeQuals);
+      }
       break;
     case DeclaratorChunk::Pointer:
       // Verify that we're not building a pointer to pointer to function with
@@ -3839,6 +3863,18 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
           T = S.BuildQualifiedType(T, DeclType.Loc, DeclType.Ptr.TypeQuals);
         break;
       }
+
+      // OpenCL v2.0 s6.9b - Pointer to image/sampler cannot be used.
+      // OpenCL v2.0 s6.13.16.1 - Pointer to pipe cannot be used.
+      // OpenCL v2.0 s6.12.5 - Pointers to Blocks are not allowed.
+      if (LangOpts.OpenCL) {
+        if (T->isImageType() || T->isSamplerT() || T->isPipeType() ||
+            T->isBlockPointerType()) {
+          S.Diag(D.getIdentifierLoc(), diag::err_opencl_pointer_to_type) << T;
+          D.setInvalidType(true);
+        }
+      }
+
       T = S.BuildPointerType(T, DeclType.Loc, Name);
       if (DeclType.Ptr.TypeQuals)
         T = S.BuildQualifiedType(T, DeclType.Loc, DeclType.Ptr.TypeQuals);
@@ -4021,7 +4057,8 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
 
         // OpenCL v2.0 s6.12.5 - A block cannot be the return value of a
         // function.
-      if (LangOpts.OpenCL && T->isBlockPointerType()) {
+      if (LangOpts.OpenCL && (T->isBlockPointerType() || T->isImageType() ||
+                              T->isSamplerT() || T->isPipeType())) {
         S.Diag(D.getIdentifierLoc(), diag::err_opencl_invalid_return)
             << T << 1 /*hint off*/;
         D.setInvalidType(true);
@@ -4522,6 +4559,7 @@ static TypeSourceInfo *GetFullTypeForDeclarator(TypeProcessingState &state,
     case Declarator::MemberContext:
     case Declarator::BlockContext:
     case Declarator::ForContext:
+    case Declarator::InitStmtContext:
     case Declarator::ConditionContext:
     case Declarator::CXXCatchContext:
     case Declarator::ObjCCatchContext:
@@ -6472,11 +6510,30 @@ static void HandleNeonVectorTypeAttr(QualType& CurType,
 /// Handle OpenCL Access Qualifier Attribute.
 static void HandleOpenCLAccessAttr(QualType &CurType, const AttributeList &Attr,
                                    Sema &S) {
-  // OpenCL v2.0 s6.6 - Access qualifier can used only for image and pipe type.
+  // OpenCL v2.0 s6.6 - Access qualifier can be used only for image and pipe type.
   if (!(CurType->isImageType() || CurType->isPipeType())) {
     S.Diag(Attr.getLoc(), diag::err_opencl_invalid_access_qualifier);
     Attr.setInvalid();
     return;
+  }
+
+  if (const TypedefType* TypedefTy = CurType->getAs<TypedefType>()) {
+    QualType PointeeTy = TypedefTy->desugar();
+    S.Diag(Attr.getLoc(), diag::err_opencl_multiple_access_qualifiers);
+
+    std::string PrevAccessQual;
+    switch (cast<BuiltinType>(PointeeTy.getTypePtr())->getKind()) {
+      #define IMAGE_TYPE(ImgType, Id, SingletonId, Access, Suffix) \
+    case BuiltinType::Id:                                          \
+      PrevAccessQual = #Access;                                    \
+      break;
+      #include "clang/Basic/OpenCLImageTypes.def"
+    default:
+      assert(0 && "Unable to find corresponding image type.");
+    }
+
+    S.Diag(TypedefTy->getDecl()->getLocStart(),
+       diag::note_opencl_typedef_access_qualifier) << PrevAccessQual;
   }
 }
 

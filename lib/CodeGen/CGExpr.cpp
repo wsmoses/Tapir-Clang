@@ -11,13 +11,14 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "CodeGenFunction.h"
 #include "CGCXXABI.h"
 #include "CGCall.h"
+#include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CGObjCRuntime.h"
 #include "CGOpenMPRuntime.h"
 #include "CGRecordLayout.h"
+#include "CodeGenFunction.h"
 #include "CodeGenModule.h"
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
@@ -423,6 +424,23 @@ EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *M) {
       EmitAnyExprToMem(E, Object, Qualifiers(), /*IsInit*/true);
     }
   } else {
+    switch (M->getStorageDuration()) {
+    case SD_Automatic:
+    case SD_FullExpression:
+      if (auto *Size = EmitLifetimeStart(
+              CGM.getDataLayout().getTypeAllocSize(Object.getElementType()),
+              Object.getPointer())) {
+        if (M->getStorageDuration() == SD_Automatic)
+          pushCleanupAfterFullExpr<CallLifetimeEnd>(NormalEHLifetimeMarker,
+                                                    Object, Size);
+        else
+          pushFullExprCleanup<CallLifetimeEnd>(NormalEHLifetimeMarker, Object,
+                                               Size);
+      }
+      break;
+    default:
+      break;
+    }
     EmitAnyExprToMem(E, Object, Qualifiers(), /*IsInit*/true);
   }
   pushTemporaryCleanup(*this, M, E, Object);
@@ -1740,8 +1758,7 @@ void CodeGenFunction::EmitStoreThroughExtVectorComponentLValue(RValue Src,
 
   if (const VectorType *VTy = Dst.getType()->getAs<VectorType>()) {
     unsigned NumSrcElts = VTy->getNumElements();
-    unsigned NumDstElts =
-       cast<llvm::VectorType>(Vec->getType())->getNumElements();
+    unsigned NumDstElts = Vec->getType()->getVectorNumElements();
     if (NumDstElts == NumSrcElts) {
       // Use shuffle vector is the src and destination are the same number of
       // elements and restore the vector mask since it is on the side it will be
@@ -2189,6 +2206,12 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
   if (const auto *FD = dyn_cast<FunctionDecl>(ND))
     return EmitFunctionDeclLValue(*this, E, FD);
 
+  // FIXME: While we're emitting a binding from an enclosing scope, all other
+  // DeclRefExprs we see should be implicitly treated as if they also refer to
+  // an enclosing scope.
+  if (const auto *BD = dyn_cast<BindingDecl>(ND))
+    return EmitLValue(BD->getBinding());
+
   llvm_unreachable("Unhandled DeclRefExpr");
 }
 
@@ -2324,7 +2347,7 @@ llvm::Constant *CodeGenFunction::EmitCheckTypeDescriptor(QualType T) {
   auto *GV = new llvm::GlobalVariable(
       CGM.getModule(), Descriptor->getType(),
       /*isConstant=*/true, llvm::GlobalVariable::PrivateLinkage, Descriptor);
-  GV->setUnnamedAddr(true);
+  GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
   CGM.getSanitizerMetadata()->disableSanitizerForGlobal(GV);
 
   // Remember the descriptor for this type.
@@ -2545,7 +2568,7 @@ void CodeGenFunction::EmitCheck(
     auto *InfoPtr =
         new llvm::GlobalVariable(CGM.getModule(), Info->getType(), false,
                                  llvm::GlobalVariable::PrivateLinkage, Info);
-    InfoPtr->setUnnamedAddr(true);
+    InfoPtr->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     CGM.getSanitizerMetadata()->disableSanitizerForGlobal(InfoPtr);
     Args.push_back(Builder.CreateBitCast(InfoPtr, Int8PtrTy));
     ArgTypes.push_back(Int8PtrTy);
@@ -2604,7 +2627,7 @@ void CodeGenFunction::EmitCfiSlowPathCheck(
     auto *InfoPtr =
         new llvm::GlobalVariable(CGM.getModule(), Info->getType(), false,
                                  llvm::GlobalVariable::PrivateLinkage, Info);
-    InfoPtr->setUnnamedAddr(true);
+    InfoPtr->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
     CGM.getSanitizerMetadata()->disableSanitizerForGlobal(InfoPtr);
 
     llvm::Constant *SlowPathDiagFn = CGM.getModule().getOrInsertFunction(
@@ -2682,7 +2705,7 @@ void CodeGenFunction::EmitCfiCheckFail() {
       CGM.getLLVMContext(),
       llvm::MDString::get(CGM.getLLVMContext(), "all-vtables"));
   llvm::Value *ValidVtable = Builder.CreateZExt(
-      Builder.CreateCall(CGM.getIntrinsic(llvm::Intrinsic::bitset_test),
+      Builder.CreateCall(CGM.getIntrinsic(llvm::Intrinsic::type_test),
                          {Addr, AllVtables}),
       IntPtrTy);
 
@@ -3584,6 +3607,7 @@ LValue CodeGenFunction::EmitCastLValue(const CastExpr *E) {
   case CK_ARCExtendBlockObject:
   case CK_CopyAndAutoreleaseBlockObject:
   case CK_AddressSpaceConversion:
+  case CK_IntToOCLSampler:
     return EmitUnsupportedLValue(E, "unexpected cast lvalue");
 
   case CK_Dependent:
@@ -4050,24 +4074,23 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType, llvm::Value *Callee,
     EmitSanitizerStatReport(llvm::SanStat_CFI_ICall);
 
     llvm::Metadata *MD = CGM.CreateMetadataIdentifierForType(QualType(FnType, 0));
-    llvm::Value *BitSetName = llvm::MetadataAsValue::get(getLLVMContext(), MD);
+    llvm::Value *TypeId = llvm::MetadataAsValue::get(getLLVMContext(), MD);
 
     llvm::Value *CastedCallee = Builder.CreateBitCast(Callee, Int8PtrTy);
-    llvm::Value *BitSetTest =
-        Builder.CreateCall(CGM.getIntrinsic(llvm::Intrinsic::bitset_test),
-                           {CastedCallee, BitSetName});
+    llvm::Value *TypeTest = Builder.CreateCall(
+        CGM.getIntrinsic(llvm::Intrinsic::type_test), {CastedCallee, TypeId});
 
-    auto TypeId = CGM.CreateCfiIdForTypeMetadata(MD);
+    auto CrossDsoTypeId = CGM.CreateCrossDsoCfiTypeId(MD);
     llvm::Constant *StaticData[] = {
         llvm::ConstantInt::get(Int8Ty, CFITCK_ICall),
         EmitCheckSourceLocation(E->getLocStart()),
         EmitCheckTypeDescriptor(QualType(FnType, 0)),
     };
-    if (CGM.getCodeGenOpts().SanitizeCfiCrossDso && TypeId) {
-      EmitCfiSlowPathCheck(SanitizerKind::CFIICall, BitSetTest, TypeId,
+    if (CGM.getCodeGenOpts().SanitizeCfiCrossDso && CrossDsoTypeId) {
+      EmitCfiSlowPathCheck(SanitizerKind::CFIICall, TypeTest, CrossDsoTypeId,
                            CastedCallee, StaticData);
     } else {
-      EmitCheck(std::make_pair(BitSetTest, SanitizerKind::CFIICall),
+      EmitCheck(std::make_pair(TypeTest, SanitizerKind::CFIICall),
                 "cfi_check_fail", StaticData,
                 {CastedCallee, llvm::UndefValue::get(IntPtrTy)});
     }

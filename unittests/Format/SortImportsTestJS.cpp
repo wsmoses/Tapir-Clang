@@ -25,10 +25,13 @@ protected:
     if (Length == 0U)
       Length = Code.size() - Offset;
     std::vector<tooling::Range> Ranges(1, tooling::Range(Offset, Length));
-    std::string Sorted =
+    auto Sorted =
         applyAllReplacements(Code, sortIncludes(Style, Code, Ranges, FileName));
-    return applyAllReplacements(Sorted,
-                                reformat(Style, Sorted, Ranges, FileName));
+    EXPECT_TRUE(static_cast<bool>(Sorted));
+    auto Formatted = applyAllReplacements(
+        *Sorted, reformat(Style, *Sorted, Ranges, FileName));
+    EXPECT_TRUE(static_cast<bool>(Formatted));
+    return *Formatted;
   }
 
   void verifySort(llvm::StringRef Expected, llvm::StringRef Code,
@@ -92,12 +95,12 @@ TEST_F(SortImportsTestJS, SeparateMainCodeBody) {
 TEST_F(SortImportsTestJS, Comments) {
   verifySort("/** @fileoverview This is a great file. */\n"
              "// A very important import follows.\n"
-             "import {sym} from 'a'; /* more comments */\n"
-             "import {sym} from 'b'; // from //foo:bar\n",
+             "import {sym} from 'a';  /* more comments */\n"
+             "import {sym} from 'b';  // from //foo:bar\n",
              "/** @fileoverview This is a great file. */\n"
-             "import {sym} from 'b'; // from //foo:bar\n"
+             "import {sym} from 'b';  // from //foo:bar\n"
              "// A very important import follows.\n"
-             "import {sym} from 'a'; /* more comments */\n");
+             "import {sym} from 'a';  /* more comments */\n");
 }
 
 TEST_F(SortImportsTestJS, SortStar) {
@@ -221,6 +224,44 @@ TEST_F(SortImportsTestJS, AffectedRange) {
              "import {sym} from 'c';\n"
              "let x = 1;",
              24, 30);
+}
+
+TEST_F(SortImportsTestJS, SortingCanShrink) {
+  // Sort excluding a suffix.
+  verifySort("import {B} from 'a';\n"
+             "import {A} from 'b';\n"
+             "\n"
+             "1;",
+             "import {A} from 'b';\n"
+             "\n"
+             "import {B} from 'a';\n"
+             "\n"
+             "1;");
+}
+
+TEST_F(SortImportsTestJS, TrailingComma) {
+  verifySort("import {A, B,} from 'aa';\n", "import {B, A,} from 'aa';\n");
+}
+
+TEST_F(SortImportsTestJS, SortCaseInsensitive) {
+  verifySort("import {A} from 'aa';\n"
+             "import {A} from 'Ab';\n"
+             "import {A} from 'b';\n"
+             "import {A} from 'Bc';\n"
+             "\n"
+             "1;",
+             "import {A} from 'b';\n"
+             "import {A} from 'Bc';\n"
+             "import {A} from 'Ab';\n"
+             "import {A} from 'aa';\n"
+             "\n"
+             "1;");
+  verifySort("import {aa, Ab, b, Bc} from 'x';\n"
+             "\n"
+             "1;",
+             "import {b, Bc, Ab, aa} from 'x';\n"
+             "\n"
+             "1;");
 }
 
 } // end namespace

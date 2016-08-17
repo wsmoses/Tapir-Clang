@@ -26,7 +26,6 @@
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringRef.h"
-#include "llvm/ADT/StringSwitch.h"
 #include "llvm/ADT/Triple.h"
 #include "llvm/IR/DataLayout.h"
 #include "llvm/Support/DataTypes.h"
@@ -41,6 +40,7 @@ struct fltSemantics;
 namespace clang {
 class DiagnosticsEngine;
 class LangOptions;
+class CodeGenOptions;
 class MacroBuilder;
 class SourceLocation;
 class SourceManager;
@@ -92,6 +92,8 @@ protected:
   unsigned ComplexLongDoubleUsesFP2Ret : 1;
 
   unsigned HasBuiltinMSVaList : 1;
+
+  unsigned IsRenderScriptTarget : 1;
 
   // TargetInfo Constructor.  Default initializes all fields.
   TargetInfo(const llvm::Triple &T);
@@ -566,6 +568,9 @@ public:
   /// available on this target.
   bool hasBuiltinMSVaList() const { return HasBuiltinMSVaList; }
 
+  /// Returns true for RenderScript.
+  bool isRenderScriptTarget() const { return IsRenderScriptTarget; }
+
   /// \brief Returns whether the passed in string is a valid clobber in an
   /// inline asm statement.
   ///
@@ -793,6 +798,10 @@ public:
   /// language options which change the target configuration.
   virtual void adjust(const LangOptions &Opts);
 
+  /// \brief Adjust target options based on codegen options.
+  virtual void adjustTargetOptions(const CodeGenOptions &CGOpts,
+                                   TargetOptions &TargetOpts) const {}
+
   /// \brief Initialize the map with the default set of target features for the
   /// CPU this should include all legal feature strings on the target.
   ///
@@ -980,6 +989,16 @@ public:
   /// \brief Get const supported OpenCL extensions and optional core features.
   const OpenCLOptions &getSupportedOpenCLOpts() const {
       return getTargetOpts().SupportedOpenCLOptions;
+  }
+
+  /// \brief Get OpenCL image type address space.
+  virtual LangAS::ID getOpenCLImageAddrSpace() const {
+    return LangAS::opencl_global;
+  }
+
+  /// \brief Check the target is valid after it is fully initialized.
+  virtual bool validateTarget(DiagnosticsEngine &Diags) const {
+    return true;
   }
 
 protected:

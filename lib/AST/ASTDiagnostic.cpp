@@ -20,7 +20,6 @@
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/TemplateBase.h"
 #include "clang/AST/Type.h"
-#include "llvm/ADT/SmallString.h"
 #include "llvm/Support/raw_ostream.h"
 
 using namespace clang;
@@ -119,7 +118,7 @@ static QualType Desugar(ASTContext &Context, QualType QT, bool &ShouldAKA) {
         if (DesugarArgument) {
           ShouldAKA = true;
           QT = Context.getTemplateSpecializationType(
-              TST->getTemplateName(), Args.data(), Args.size(), QT);
+              TST->getTemplateName(), Args, QT);
         }
         break;
       }
@@ -201,7 +200,7 @@ break; \
   return QC.apply(Context, QT);
 }
 
-/// \brief Convert the given type to a string suitable for printing as part of
+/// \brief Convert the given type to a string suitable for printing as part of 
 /// a diagnostic.
 ///
 /// There are four main criteria when determining whether we should have an
@@ -255,7 +254,7 @@ ConvertTypeToDiagnosticString(ASTContext &Context, QualType Ty,
                  // and the desugared comparison string.
     std::string CompareCanS =
         CompareCanTy.getAsString(Context.getPrintingPolicy());
-
+    
     if (CompareCanS == CanS)
       continue;  // No new info from canonical type
 
@@ -328,11 +327,11 @@ void clang::FormatASTNodeDiagnosticArgument(
     void *Cookie,
     ArrayRef<intptr_t> QualTypeVals) {
   ASTContext &Context = *static_cast<ASTContext*>(Cookie);
-
+  
   size_t OldEnd = Output.size();
   llvm::raw_svector_ostream OS(Output);
   bool NeedQuotes = true;
-
+  
   switch (Kind) {
     default: llvm_unreachable("unknown ArgumentKind");
     case DiagnosticsEngine::ak_qualtype_pair: {
@@ -365,7 +364,7 @@ void clang::FormatASTNodeDiagnosticArgument(
     case DiagnosticsEngine::ak_qualtype: {
       assert(Modifier.empty() && Argument.empty() &&
              "Invalid modifier for QualType argument");
-
+      
       QualType Ty(QualType::getFromOpaquePtr(reinterpret_cast<void*>(Val)));
       OS << ConvertTypeToDiagnosticString(Context, Ty, PrevArgs, QualTypeVals);
       NeedQuotes = false;
@@ -616,7 +615,7 @@ class TemplateDiff {
       SetDefault(FromDefault, ToDefault);
     }
 
-    void SetIntegerDiff(llvm::APSInt FromInt, llvm::APSInt ToInt,
+    void SetIntegerDiff(const llvm::APSInt &FromInt, const llvm::APSInt &ToInt,
                         bool IsValidFromInt, bool IsValidToInt,
                         QualType FromIntType, QualType ToIntType,
                         Expr *FromExpr, Expr *ToExpr, bool FromDefault,
@@ -653,7 +652,7 @@ class TemplateDiff {
 
     void SetFromDeclarationAndToIntegerDiff(
         ValueDecl *FromValueDecl, bool FromAddressOf, bool FromNullPtr,
-        Expr *FromExpr, llvm::APSInt ToInt, bool IsValidToInt,
+        Expr *FromExpr, const llvm::APSInt &ToInt, bool IsValidToInt,
         QualType ToIntType, Expr *ToExpr, bool FromDefault, bool ToDefault) {
       assert(FlatTree[CurrentNode].Kind == Invalid && "Node is not empty.");
       FlatTree[CurrentNode].Kind = FromDeclarationAndToInteger;
@@ -669,7 +668,7 @@ class TemplateDiff {
     }
 
     void SetFromIntegerAndToDeclarationDiff(
-        llvm::APSInt FromInt, bool IsValidFromInt, QualType FromIntType,
+        const llvm::APSInt &FromInt, bool IsValidFromInt, QualType FromIntType,
         Expr *FromExpr, ValueDecl *ToValueDecl, bool ToAddressOf,
         bool ToNullPtr, Expr *ToExpr, bool FromDefault, bool ToDefault) {
       assert(FlatTree[CurrentNode].Kind == Invalid && "Node is not empty.");
@@ -917,6 +916,8 @@ class TemplateDiff {
       /// template argument.
       InternalIterator(const TemplateSpecializationType *TST)
           : TST(TST), Index(0), CurrentTA(nullptr), EndTA(nullptr) {
+        if (!TST) return;
+
         if (isEnd()) return;
 
         // Set to first template argument.  If not a parameter pack, done.
@@ -937,11 +938,13 @@ class TemplateDiff {
 
       /// isEnd - Returns true if the iterator is one past the end.
       bool isEnd() const {
+        assert(TST && "InternalIterator is invalid with a null TST.");
         return Index >= TST->getNumArgs();
       }
 
       /// &operator++ - Increment the iterator to the next template argument.
       InternalIterator &operator++() {
+        assert(TST && "InternalIterator is invalid with a null TST.");
         if (isEnd()) {
           return *this;
         }
@@ -977,6 +980,7 @@ class TemplateDiff {
 
       /// operator* - Returns the appropriate TemplateArgument.
       reference operator*() const {
+        assert(TST && "InternalIterator is invalid with a null TST.");
         assert(!isEnd() && "Index exceeds number of arguments.");
         if (CurrentTA == EndTA)
           return TST->getArg(Index);
@@ -986,6 +990,7 @@ class TemplateDiff {
 
       /// operator-> - Allow access to the underlying TemplateArgument.
       pointer operator->() const {
+        assert(TST && "InternalIterator is invalid with a null TST.");
         return &operator*();
       }
     };
@@ -1060,8 +1065,7 @@ class TemplateDiff {
 
     Ty = Context.getTemplateSpecializationType(
              TemplateName(CTSD->getSpecializedTemplate()),
-             CTSD->getTemplateArgs().data(),
-             CTSD->getTemplateArgs().size(),
+             CTSD->getTemplateArgs().asArray(),
              Ty.getLocalUnqualifiedType().getCanonicalType());
 
     return Ty->getAs<TemplateSpecializationType>();
@@ -1705,7 +1709,7 @@ class TemplateDiff {
 
   /// PrintAPSInt - Handles printing of integral arguments, highlighting
   /// argument differences.
-  void PrintAPSInt(llvm::APSInt FromInt, llvm::APSInt ToInt,
+  void PrintAPSInt(const llvm::APSInt &FromInt, const llvm::APSInt &ToInt,
                    bool IsValidFromInt, bool IsValidToInt, QualType FromIntType,
                    QualType ToIntType, Expr *FromExpr, Expr *ToExpr,
                    bool FromDefault, bool ToDefault, bool Same) {
@@ -1738,8 +1742,8 @@ class TemplateDiff {
 
   /// PrintAPSInt - If valid, print the APSInt.  If the expression is
   /// gives more information, print it too.
-  void PrintAPSInt(llvm::APSInt Val, Expr *E, bool Valid, QualType IntType,
-                   bool PrintType) {
+  void PrintAPSInt(const llvm::APSInt &Val, Expr *E, bool Valid,
+                   QualType IntType, bool PrintType) {
     Bold();
     if (Valid) {
       if (HasExtraInfo(E)) {
@@ -1842,13 +1846,6 @@ class TemplateDiff {
       Bold();
       PrintValueDecl(ToValueDecl, ToAddressOf, ToExpr, ToNullPtr);
       Unbold();
-    } else {
-      OS << (DefaultDecl ? "[(default) " : "[");
-      Bold();
-      PrintValueDecl(VD, NeedAddressOf, VDExpr, IsNullPtr);
-      Unbold();
-      OS << " != " << (DefaultInt ? "(default) " : "");
-      PrintAPSInt(Val, IntExpr, true /*Valid*/, IntType, false /*PrintType*/);
       OS << ']';
     }
   }
@@ -1857,7 +1854,7 @@ class TemplateDiff {
   /// APSInt to print a mixed difference.
   void PrintValueDeclAndInteger(ValueDecl *VD, bool NeedAddressOf,
                                 bool IsNullPtr, Expr *VDExpr, bool DefaultDecl,
-                                llvm::APSInt Val, QualType IntType,
+                                const llvm::APSInt &Val, QualType IntType,
                                 Expr *IntExpr, bool DefaultInt) {
     if (!PrintTree) {
       OS << (DefaultDecl ? "(default) " : "");
@@ -1877,7 +1874,7 @@ class TemplateDiff {
 
   /// PrintIntegerAndValueDecl - Uses the print functions for APSInt and
   /// ValueDecl to print a mixed difference.
-  void PrintIntegerAndValueDecl(llvm::APSInt Val, QualType IntType,
+  void PrintIntegerAndValueDecl(const llvm::APSInt &Val, QualType IntType,
                                 Expr *IntExpr, bool DefaultInt, ValueDecl *VD,
                                 bool NeedAddressOf, bool IsNullPtr,
                                 Expr *VDExpr, bool DefaultDecl) {
@@ -2039,7 +2036,7 @@ public:
 /// is successful.
 static bool FormatTemplateTypeDiff(ASTContext &Context, QualType FromType,
                                    QualType ToType, bool PrintTree,
-                                   bool PrintFromType, bool ElideType,
+                                   bool PrintFromType, bool ElideType, 
                                    bool ShowColors, raw_ostream &OS) {
   if (PrintTree)
     PrintFromType = true;

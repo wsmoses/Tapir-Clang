@@ -1032,7 +1032,7 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
 /// including the next assigned index (if none of them match). Returns an
 /// empty option if the context is not a record, i.e.. if the anonymous
 /// struct/union is at namespace or block scope.
-static Optional<unsigned> findAnonymousStructOrUnionIndex(RecordDecl *Anon) {
+static Optional<unsigned> findUntaggedStructOrUnionIndex(RecordDecl *Anon) {
   ASTContext &Context = Anon->getASTContext();
   QualType AnonTy = Context.getRecordType(Anon);
 
@@ -1043,13 +1043,29 @@ static Optional<unsigned> findAnonymousStructOrUnionIndex(RecordDecl *Anon) {
   unsigned Index = 0;
   for (const auto *D : Owner->noload_decls()) {
     const auto *F = dyn_cast<FieldDecl>(D);
-    if (!F || !F->isAnonymousStructOrUnion())
+    if (!F)
       continue;
 
-    if (Context.hasSameType(F->getType(), AnonTy))
-      break;
+    if (F->isAnonymousStructOrUnion()) {
+      if (Context.hasSameType(F->getType(), AnonTy))
+        break;
+      ++Index;
+      continue;
+    }
 
-    ++Index;
+    // If the field looks like this:
+    // struct { ... } A;
+    QualType FieldType = F->getType();
+    if (const auto *RecType = dyn_cast<RecordType>(FieldType)) {
+      const RecordDecl *RecDecl = RecType->getDecl();
+      if (RecDecl->getDeclContext() == Owner &&
+          !RecDecl->getIdentifier()) {
+        if (Context.hasSameType(FieldType, AnonTy))
+          break;
+        ++Index;
+        continue;
+      }
+    }
   }
 
   return Index;
@@ -1071,8 +1087,8 @@ static bool IsStructurallyEquivalent(StructuralEquivalenceContext &Context,
   if (D1->isAnonymousStructOrUnion() && D2->isAnonymousStructOrUnion()) {
     // If both anonymous structs/unions are in a record context, make sure
     // they occur in the same location in the context records.
-    if (Optional<unsigned> Index1 = findAnonymousStructOrUnionIndex(D1)) {
-      if (Optional<unsigned> Index2 = findAnonymousStructOrUnionIndex(D2)) {
+    if (Optional<unsigned> Index1 = findUntaggedStructOrUnionIndex(D1)) {
+      if (Optional<unsigned> Index2 = findUntaggedStructOrUnionIndex(D2)) {
         if (*Index1 != *Index2)
           return false;
       }
@@ -1912,8 +1928,7 @@ QualType ASTNodeImporter::VisitTemplateSpecializationType(
       return QualType();
   }
   return Importer.getToContext().getTemplateSpecializationType(ToTemplate, 
-                                                         ToTemplateArgs.data(), 
-                                                         ToTemplateArgs.size(),
+                                                               ToTemplateArgs,
                                                                ToCanonType);
 }
 
@@ -2250,11 +2265,21 @@ TemplateParameterList *ASTNodeImporter::ImportTemplateParameterList(
     ToParams.push_back(cast<NamedDecl>(To));
   }
   
+  Expr *ToRequiresClause;
+  if (Expr *const R = Params->getRequiresClause()) {
+    ToRequiresClause = Importer.Import(R);
+    if (!ToRequiresClause)
+      return nullptr;
+  } else {
+    ToRequiresClause = nullptr;
+  }
+
   return TemplateParameterList::Create(Importer.getToContext(),
                                        Importer.Import(Params->getTemplateLoc()),
                                        Importer.Import(Params->getLAngleLoc()),
                                        ToParams,
-                                       Importer.Import(Params->getRAngleLoc()));
+                                       Importer.Import(Params->getRAngleLoc()),
+                                       ToRequiresClause);
 }
 
 TemplateArgument 
@@ -2753,9 +2778,9 @@ Decl *ASTNodeImporter::VisitRecordDecl(RecordDecl *D) {
           // If both anonymous structs/unions are in a record context, make sure
           // they occur in the same location in the context records.
           if (Optional<unsigned> Index1
-              = findAnonymousStructOrUnionIndex(D)) {
+              = findUntaggedStructOrUnionIndex(D)) {
             if (Optional<unsigned> Index2 =
-                    findAnonymousStructOrUnionIndex(FoundRecord)) {
+                    findUntaggedStructOrUnionIndex(FoundRecord)) {
               if (*Index1 != *Index2)
                 continue;
             }
@@ -3013,7 +3038,7 @@ Decl *ASTNodeImporter::VisitFunctionDecl(FunctionDecl *D) {
 
   // Import the function parameters.
   SmallVector<ParmVarDecl *, 8> Parameters;
-  for (auto P : D->params()) {
+  for (auto P : D->parameters()) {
     ParmVarDecl *ToP = cast_or_null<ParmVarDecl>(Importer.Import(P));
     if (!ToP)
       return nullptr;
@@ -3279,7 +3304,7 @@ Decl *ASTNodeImporter::VisitIndirectFieldDecl(IndirectFieldDecl *D) {
 
   IndirectFieldDecl *ToIndirectField = IndirectFieldDecl::Create(
       Importer.getToContext(), DC, Loc, Name.getAsIdentifierInfo(), T,
-      NamedChain, D->getChainingSize());
+      {NamedChain, D->getChainingSize()});
 
   for (const auto *Attr : D->attrs())
     ToIndirectField->addAttr(Attr->clone(Importer.getToContext()));
@@ -3622,7 +3647,7 @@ Decl *ASTNodeImporter::VisitObjCMethodDecl(ObjCMethodDecl *D) {
 
   // Import the parameters
   SmallVector<ParmVarDecl *, 5> ToParams;
-  for (auto *FromP : D->params()) {
+  for (auto *FromP : D->parameters()) {
     ParmVarDecl *ToP = cast_or_null<ParmVarDecl>(Importer.Import(FromP));
     if (!ToP)
       return nullptr;
@@ -4556,8 +4581,7 @@ Decl *ASTNodeImporter::VisitClassTemplateSpecializationDecl(
                                                  D->getTagKind(), DC, 
                                                  StartLoc, IdLoc,
                                                  ClassTemplate,
-                                                 TemplateArgs.data(), 
-                                                 TemplateArgs.size(), 
+                                                 TemplateArgs,
                                                  /*PrevDecl=*/nullptr);
     D2->setSpecializationKind(D->getSpecializationKind());
 
@@ -4758,7 +4782,7 @@ Decl *ASTNodeImporter::VisitVarTemplateSpecializationDecl(
     // Create a new specialization.
     D2 = VarTemplateSpecializationDecl::Create(
         Importer.getToContext(), DC, StartLoc, IdLoc, VarTemplate, T, TInfo,
-        D->getStorageClass(), TemplateArgs.data(), TemplateArgs.size());
+        D->getStorageClass(), TemplateArgs);
     D2->setSpecializationKind(D->getSpecializationKind());
     D2->setTemplateArgsInfo(D->getTemplateArgsInfo());
 
@@ -4966,6 +4990,9 @@ Stmt *ASTNodeImporter::VisitAttributedStmt(AttributedStmt *S) {
 
 Stmt *ASTNodeImporter::VisitIfStmt(IfStmt *S) {
   SourceLocation ToIfLoc = Importer.Import(S->getIfLoc());
+  Stmt *ToInit = Importer.Import(S->getInit());
+  if (!ToInit && S->getInit())
+    return nullptr;
   VarDecl *ToConditionVariable = nullptr;
   if (VarDecl *FromConditionVariable = S->getConditionVariable()) {
     ToConditionVariable =
@@ -4984,12 +5011,17 @@ Stmt *ASTNodeImporter::VisitIfStmt(IfStmt *S) {
   if (!ToElseStmt && S->getElse())
     return nullptr;
   return new (Importer.getToContext()) IfStmt(Importer.getToContext(),
-                                              ToIfLoc, ToConditionVariable,
+                                              ToIfLoc, S->isConstexpr(),
+                                              ToInit,
+                                              ToConditionVariable,
                                               ToCondition, ToThenStmt,
                                               ToElseLoc, ToElseStmt);
 }
 
 Stmt *ASTNodeImporter::VisitSwitchStmt(SwitchStmt *S) {
+  Stmt *ToInit = Importer.Import(S->getInit());
+  if (!ToInit && S->getInit())
+    return nullptr;
   VarDecl *ToConditionVariable = nullptr;
   if (VarDecl *FromConditionVariable = S->getConditionVariable()) {
     ToConditionVariable =
@@ -5001,8 +5033,8 @@ Stmt *ASTNodeImporter::VisitSwitchStmt(SwitchStmt *S) {
   if (!ToCondition && S->getCond())
     return nullptr;
   SwitchStmt *ToStmt = new (Importer.getToContext()) SwitchStmt(
-                         Importer.getToContext(), ToConditionVariable,
-                         ToCondition);
+                         Importer.getToContext(), ToInit,
+                         ToConditionVariable, ToCondition);
   Stmt *ToBody = Importer.Import(S->getBody());
   if (!ToBody && S->getBody())
     return nullptr;
@@ -5477,19 +5509,17 @@ Expr *ASTNodeImporter::VisitDesignatedInitExpr(DesignatedInitExpr *DIE) {
   }
 
   SmallVector<Designator, 4> Designators(DIE->size());
-  std::transform(DIE->designators_begin(), DIE->designators_end(),
-                 Designators.begin(),
-    [this](const Designator &D) -> Designator {
-      return ImportDesignator(D);
-    });
+  llvm::transform(DIE->designators(), Designators.begin(),
+                  [this](const Designator &D) -> Designator {
+                    return ImportDesignator(D);
+                  });
 
-  for (auto I = DIE->designators_begin(), E = DIE->designators_end(); I != E;
-       ++I)
-    if (I->isFieldDesignator() && !I->getFieldName())
+  for (const Designator &D : DIE->designators())
+    if (D.isFieldDesignator() && !D.getFieldName())
       return nullptr;
 
   return DesignatedInitExpr::Create(
-        Importer.getToContext(), Designators.data(), Designators.size(),
+        Importer.getToContext(), Designators,
         IndexExprs, Importer.Import(DIE->getEqualOrColonLoc()),
         DIE->usesGNUSyntax(), Init);
 }
@@ -5843,11 +5873,6 @@ Expr *ASTNodeImporter::VisitCXXConstructExpr(CXXConstructExpr *E) {
   if (T.isNull())
     return nullptr;
 
-  NamedDecl *ToFound =
-    dyn_cast_or_null<NamedDecl>(Importer.Import(E->getFoundDecl()));
-  if (!ToFound)
-    return nullptr;
-
   CXXConstructorDecl *ToCCD =
     dyn_cast_or_null<CXXConstructorDecl>(Importer.Import(E->getConstructor()));
   if (!ToCCD)
@@ -5860,7 +5885,7 @@ Expr *ASTNodeImporter::VisitCXXConstructExpr(CXXConstructExpr *E) {
 
   return CXXConstructExpr::Create(Importer.getToContext(), T,
                                   Importer.Import(E->getLocation()),
-                                  ToFound, ToCCD, E->isElidable(),
+                                  ToCCD, E->isElidable(),
                                   ToArgs, E->hadMultipleCandidates(),
                                   E->isListInitialization(),
                                   E->isStdInitListInitialization(),

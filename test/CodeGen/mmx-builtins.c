@@ -1,5 +1,5 @@
-// RUN: %clang_cc1 %s -triple=x86_64-apple-darwin -target-feature +ssse3 -emit-llvm -o - -Werror | FileCheck %s
-// RUN: %clang_cc1 %s -triple=x86_64-apple-darwin -target-feature +ssse3 -fno-signed-char -emit-llvm -o - -Werror | FileCheck %s
+// RUN: %clang_cc1 %s -triple=x86_64-apple-darwin -target-feature +ssse3 -emit-llvm -o - -Wall -Werror | FileCheck %s
+// RUN: %clang_cc1 %s -triple=x86_64-apple-darwin -target-feature +ssse3 -fno-signed-char -emit-llvm -o - -Wall -Werror | FileCheck %s
 
 // Don't include mm_malloc.h, it's system specific.
 #define __MM_MALLOC_H
@@ -217,6 +217,12 @@ __m64 test_mm_cvttps_pi32(__m128 a) {
   return _mm_cvttps_pi32(a);
 }
 
+int test_mm_extract_pi16(__m64 a) {
+  // CHECK-LABEL: test_mm_extract_pi16
+  // CHECK: call i32 @llvm.x86.mmx.pextr.w
+  return _mm_extract_pi16(a, 2);
+}
+
 __m64 test_m_from_int(int a) {
   // CHECK-LABEL: test_m_from_int
   // CHECK: insertelement <2 x i32>
@@ -263,6 +269,12 @@ __m64 test_mm_hsubs_pi16(__m64 a, __m64 b) {
   // CHECK-LABEL: test_mm_hsubs_pi16
   // CHECK: call x86_mmx @llvm.x86.ssse3.phsub.sw
   return _mm_hsubs_pi16(a, b);
+}
+
+__m64 test_mm_insert_pi16(__m64 a, int d) {
+  // CHECK-LABEL: test_mm_insert_pi16
+  // CHECK: call x86_mmx @llvm.x86.mmx.pinsr.w
+  return _mm_insert_pi16(a, d, 2);
 }
 
 __m64 test_mm_madd_pi16(__m64 a, __m64 b) {

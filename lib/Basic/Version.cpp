@@ -25,16 +25,15 @@
 namespace clang {
 
 std::string getClangRepositoryPath() {
-//#if defined(CLANG_REPOSITORY_STRING)
-//  return CLANG_REPOSITORY_STRING;
-//#else
-//#ifdef SVN_REPOSITORY
-//  StringRef URL(SVN_REPOSITORY);
-//#else
+#if defined(CLANG_REPOSITORY_STRING)
+  return CLANG_REPOSITORY_STRING;
+#else
+#ifdef SVN_REPOSITORY
+  StringRef URL(SVN_REPOSITORY);
+#else
   StringRef URL("");
-//#endif
-  return "Cilk-Clang";
-/*
+#endif
+
   // If the SVN_REPOSITORY is empty, try to use the SVN keyword. This helps us
   // pick up a tag in an SVN export, for example.
   StringRef SVNRepository("$URL$");
@@ -52,16 +51,15 @@ std::string getClangRepositoryPath() {
     URL = URL.substr(Start + 4);
 
   return URL;
-//#endif
-*/
+#endif
 }
 
 std::string getLLVMRepositoryPath() {
-//#ifdef LLVM_REPOSITORY
-//  StringRef URL(LLVM_REPOSITORY);
-//#else
+#ifdef LLVM_REPOSITORY
+  StringRef URL(LLVM_REPOSITORY);
+#else
   StringRef URL("");
-//#endif
+#endif
 
   // Trim path prefix off, assuming path came from standard llvm path.
   // Leave "llvm/" prefix to distinguish the following llvm revision from the
