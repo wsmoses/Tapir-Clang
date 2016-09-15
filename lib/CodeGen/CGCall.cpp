@@ -699,7 +699,7 @@ CodeGenTypes::arrangeLLVMFunctionInfo(CanQualType resultType,
   bool inserted = FunctionsBeingProcessed.insert(FI).second;
   (void)inserted;
   assert(inserted && "Recursively being processed?");
-  
+
   // Compute ABI information.
   if (info.getCC() != CC_Swift) {
     getABIInfo().computeInfo(*FI);
@@ -720,7 +720,7 @@ CodeGenTypes::arrangeLLVMFunctionInfo(CanQualType resultType,
 
   bool erased = FunctionsBeingProcessed.erase(FI); (void)erased;
   assert(erased && "Not in set?");
-  
+
   return *FI;
 }
 
@@ -1267,7 +1267,7 @@ static void CreateCoercedStore(llvm::Value *Src,
 }
 
 static Address emitAddressAtOffset(CodeGenFunction &CGF, Address addr,
-                                   const ABIArgInfo &info) {      
+                                   const ABIArgInfo &info) {
   if (unsigned offset = info.getDirectOffset()) {
     addr = CGF.Builder.CreateElementBitCast(addr, CGF.Int8Ty);
     addr = CGF.Builder.CreateConstInBoundsByteGEP(addr,
@@ -1596,7 +1596,7 @@ llvm::Type *CodeGenTypes::GetFunctionTypeForVTable(GlobalDecl GD) {
 
   if (!isFuncTypeConvertible(FPT))
     return llvm::StructType::get(getLLVMContext());
-    
+
   const CGFunctionInfo *Info;
   if (isa<CXXDestructorDecl>(MD))
     Info =
@@ -2255,7 +2255,7 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
           if (!AVAttr)
             if (const auto *TOTy = dyn_cast<TypedefType>(OTy))
               AVAttr = TOTy->getDecl()->getAttr<AlignValueAttr>();
-          if (AVAttr) {         
+          if (AVAttr) {
             llvm::Value *AlignmentValue =
               EmitScalarExpr(AVAttr->getAlignment());
             llvm::ConstantInt *AlignmentCI =
@@ -2565,7 +2565,7 @@ static llvm::Value *tryRemoveRetainOfSelf(CodeGenFunction &CGF,
   llvm::Value *retainedValue = retainCall->getArgOperand(0);
   llvm::LoadInst *load =
     dyn_cast<llvm::LoadInst>(retainedValue->stripPointerCasts());
-  if (!load || load->isAtomic() || load->isVolatile() || 
+  if (!load || load->isAtomic() || load->isVolatile() ||
       load->getPointerOperand() != CGF.GetAddrOfLocalVar(self).getPointer())
     return nullptr;
 
@@ -2673,9 +2673,11 @@ void CodeGenFunction::EmitFunctionEpilog(const CGFunctionInfo &FI,
     return;
   }
 
-  llvm::BasicBlock* SyncBlock = createBasicBlock("preSyncL");
-  Builder.CreateSync(SyncBlock);
-  EmitBlock(SyncBlock);
+  if (getLangOpts().CilkPlus) {
+    llvm::BasicBlock* SyncBlock = createBasicBlock("preSyncL");
+    Builder.CreateSync(SyncBlock);
+    EmitBlock(SyncBlock);
+  }
 
   // Functions with no result always return void.
   if (!ReturnValue.isValid()) {
@@ -2943,7 +2945,7 @@ static void emitWriteback(CodeGenFunction &CGF,
   // Cast it back, in case we're writing an id to a Foo* or something.
   value = CGF.Builder.CreateBitCast(value, srcAddr.getElementType(),
                                     "icr.writeback-cast");
-  
+
   // Perform the writeback.
 
   // If we have a "to use" value, it's something we need to emit a use
@@ -3050,7 +3052,7 @@ static void emitWritebackArg(CodeGenFunction &CGF, CallArgList &args,
   // isn't null, so we need to register a dominating point so that the cleanups
   // system will make valid IR.
   CodeGenFunction::ConditionalEvaluation condEval(CGF);
-  
+
   // Zero-initialize it if we're not doing a copy-initialization.
   bool shouldCopy = CRE->shouldCopy();
   if (!shouldCopy) {
@@ -3073,7 +3075,7 @@ static void emitWritebackArg(CodeGenFunction &CGF, CallArgList &args,
     llvm::Value *isNull =
       CGF.Builder.CreateIsNull(srcAddr.getPointer(), "icr.isnull");
 
-    finalArgument = CGF.Builder.CreateSelect(isNull, 
+    finalArgument = CGF.Builder.CreateSelect(isNull,
                                    llvm::ConstantPointerNull::get(destType),
                                              temp.getPointer(), "icr.argument");
 
@@ -3113,7 +3115,7 @@ static void emitWritebackArg(CodeGenFunction &CGF, CallArgList &args,
       valueToUse = src;
     }
   }
-  
+
   // Finish the control flow if we needed it.
   if (shouldCopy && !provablyNonNull) {
     llvm::BasicBlock *copyBB = CGF.Builder.GetInsertBlock();
@@ -3435,7 +3437,7 @@ void CodeGenFunction::EmitNoreturnRuntimeCallOrInvoke(llvm::Value *callee,
   getBundlesForFunclet(callee, CurrentFuncletPad, BundleList);
 
   if (getInvokeDest()) {
-    llvm::InvokeInst *invoke = 
+    llvm::InvokeInst *invoke =
       Builder.CreateInvoke(callee,
                            getUnreachableBlock(),
                            getInvokeDest(),
