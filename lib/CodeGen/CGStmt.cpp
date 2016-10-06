@@ -1167,10 +1167,13 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
   const Expr *Inc = S.getInc();
   assert(Inc && "_Cilk_for loop has no increment");
+  //llvm::BasicBlock *Preattach = createBasicBlock("pfor.preattach");
+  //llvm::errs() << (void*) Preattach << "\n";
+  JumpDest Preattach = getJumpDestInCurrentScope("pfor.preattach");
   Continue = getJumpDestInCurrentScope("pfor.inc");
 
   // Store the blocks to use for break and continue.
-  BreakContinueStack.push_back(BreakContinue(LoopExit, Continue));
+  BreakContinueStack.push_back(BreakContinue(Preattach, Preattach));
 
   // Create a cleanup scope for the condition variable cleanups.
   LexicalScope ConditionScope(*this, S.getSourceRange());
@@ -1234,6 +1237,11 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
     // a compound statement.
     RunCleanupsScope BodyScope(*this);
     EmitStmt(S.getBody());
+    Builder.CreateBr(Preattach.getBlock());
+  }
+
+  {
+    EmitBlock(Preattach.getBlock());
     Builder.CreateReattach(Continue.getBlock());
 
     //AllocaInsertPt->eraseFromParent();
@@ -1254,7 +1262,6 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
   ForScope.ForceCleanup();
 
   LoopStack.pop();
-
   // Emit the fall-through block.
   EmitBlock(LoopExit.getBlock(), true);
   if (!madeSync) {
