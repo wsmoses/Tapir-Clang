@@ -1537,6 +1537,83 @@ namespace {
     return false;
   }
 
+  // DeclFinder checks to see if the decls are used in a given
+  // expressison.
+  class DeclFinder : public EvaluatedExprVisitor<DeclFinder> {
+    llvm::SmallPtrSetImpl<VarDecl*> &Decls;
+    bool FoundDecl;
+
+  public:
+    typedef EvaluatedExprVisitor<DeclFinder> Inherited;
+
+    DeclFinder(Sema &S, llvm::SmallPtrSetImpl<VarDecl*> &Decls,
+               Stmt *Statement) :
+        Inherited(S.Context), Decls(Decls), FoundDecl(false) {
+      if (!Statement) return;
+      Visit(Statement);
+    }
+
+    void VisitReturnStmt(ReturnStmt *S) {
+      FoundDecl = true;
+    }
+
+    void VisitBreakStmt(BreakStmt *S) {
+      FoundDecl = true;
+    }
+
+    void VisitGotoStmt(GotoStmt *S) {
+      FoundDecl = true;
+    }
+
+    void VisitCastExpr(CastExpr *E) {
+      if (E->getCastKind() == CK_LValueToRValue)
+        CheckLValueToRValueCast(E->getSubExpr());
+      else
+        Visit(E->getSubExpr());
+    }
+
+    void CheckLValueToRValueCast(Expr *E) {
+      E = E->IgnoreParenImpCasts();
+
+      if (ConditionalOperator *CO = dyn_cast<ConditionalOperator>(E)) {
+        Visit(CO->getCond());
+        CheckLValueToRValueCast(CO->getTrueExpr());
+        CheckLValueToRValueCast(CO->getFalseExpr());
+        return;
+      }
+
+      if (BinaryConditionalOperator *BCO =
+              dyn_cast<BinaryConditionalOperator>(E)) {
+        CheckLValueToRValueCast(BCO->getOpaqueValue()->getSourceExpr());
+        CheckLValueToRValueCast(BCO->getFalseExpr());
+        return;
+      }
+
+      Visit(E);
+    }
+
+    void VisitDeclRefExpr(DeclRefExpr *E) {
+      if (VarDecl *VD = dyn_cast<VarDecl>(E->getDecl()))
+        if (Decls.count(VD))
+          FoundDecl = true;
+    }
+
+    void VisitPseudoObjectExpr(PseudoObjectExpr *POE) {
+      // Only need to visit the semantics for POE.
+      // SyntaticForm doesn't really use the Decal.
+      for (auto *S : POE->semantics()) {
+        if (auto *OVE = dyn_cast<OpaqueValueExpr>(S))
+          // Look past the OVE into the expression it binds.
+          Visit(OVE->getSourceExpr());
+        else
+          Visit(S);
+      }
+    }
+
+    bool FoundDeclInUse() { return FoundDecl; }
+
+  };  // end class DeclFinder
+
   // A visitor to determine if a continue or break statement is a
   // subexpression.
   class BreakContinueFinder : public EvaluatedExprVisitor<BreakContinueFinder> {
@@ -1604,7 +1681,6 @@ namespace {
   }
 
 } // end namespace
-
 
 void Sema::CheckBreakContinueBinding(Expr *E) {
   if (!E || getLangOpts().CPlusPlus)
@@ -2701,6 +2777,89 @@ Sema::ActOnCilkSyncStmt(SourceLocation SyncLoc) {
   return new (Context) CilkSyncStmt(SyncLoc);
 }
 
+// Examine the condition of the _Cilk_for loop to implement the
+// following syntactic sugar:
+//
+//   _Cilk_for(decl var;
+//             var cmp_op <expr not using var>;
+//     =>
+//   _Cilk_for(decl var, end = <expr not using var>;
+//             var cmp_op end;
+std::pair<Stmt*, Expr*> Sema::LiftCilkForLoopLimit(Stmt *First, Expr *Second) {
+  std::pair<Stmt*, Expr*> Result(nullptr, Second);
+
+  // Extract decls from First.  If First is not a decl statement, give
+  // up.
+  llvm::SmallPtrSet<VarDecl*, 8> Decls;
+  if (DeclStmt *DS = dyn_cast_or_null<DeclStmt>(First)) {
+    for (auto *DI : DS->decls()) {
+      VarDecl *VD = dyn_cast<VarDecl>(DI);
+      Decls.insert(VD);
+    }
+  } else {
+    return Result;
+  }
+
+  // Ensure that Second is not null.
+  if (!Second)
+    return Result;
+
+  // Only get an expression to extract if Decl's appear in only one
+  // side of a comparison.
+  if (BinaryOperator *E = dyn_cast_or_null<BinaryOperator>(Second)) {
+    if (!E->isComparisonOp())
+      return Result;
+
+    bool DeclUseInRHS = DeclFinder(*this, Decls, E->getRHS()).FoundDeclInUse();
+    bool DeclUseInLHS = DeclFinder(*this, Decls, E->getLHS()).FoundDeclInUse();
+    Expr *ToExtract;
+    if ((DeclUseInLHS && DeclUseInRHS) ||
+        (!DeclUseInLHS && !DeclUseInRHS))
+      return Result;
+
+    // Get the expression to lift.
+    if (DeclUseInLHS)
+      ToExtract = E->getRHS();
+    else if (DeclUseInRHS)
+      ToExtract = E->getLHS();
+
+    // Create a new VarDecl that stores the result of the lifted
+    // expression.
+    SourceLocation EndLoc = ToExtract->getLocStart();
+    QualType EndType = ToExtract->getType();
+    // Hijacking this method for handling range loops to build the
+    // declaration for the end of the loop.
+    VarDecl *EndVar = BuildForRangeVarDecl(*this, EndLoc, EndType,
+                                           "__end");
+    AddInitializerToDecl(EndVar, ToExtract, /*DirectInit=*/false,
+                         /*TypeMayContainAuto=*/false);
+    FinalizeDeclaration(EndVar);
+    CurContext->addHiddenDecl(EndVar);
+
+    // Create a Decl statement for the new VarDecl.
+    StmtResult EndDeclStmt =
+      ActOnDeclStmt(ConvertDeclToDeclGroup(EndVar), EndLoc, EndLoc);
+
+    // Create a new condition expression that uses the new VarDecl
+    // in place of the lifted expression.
+    ExprResult EndRef = BuildDeclRefExpr(EndVar, EndType,
+                                         VK_LValue, EndLoc);
+    ExprResult NewCondExpr;
+    Scope *S = getCurScope();
+    if (DeclUseInLHS)
+      NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
+                               E->getLHS(), EndRef.get());
+    else if (DeclUseInRHS)
+      NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
+                               EndRef.get(), E->getRHS());
+
+    Result.first = EndDeclStmt.get();
+    Result.second = NewCondExpr.get();
+  }
+
+  return Result;
+}
+
 StmtResult
 Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
                        Stmt *First, ConditionResult second,
@@ -2725,8 +2884,8 @@ Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
 
   CheckBreakContinueBinding(second.get().second);
   CheckBreakContinueBinding(third.get());
-
-  CheckForLoopConditionalStatement(*this, second.get().second, third.get(), Body);
+  Expr* Condition = second.get().second;
+  CheckForLoopConditionalStatement(*this, Condition, third.get(), Body);
   CheckForRedundantIteration(*this, third.get(), Body);
 
   // ExprResult SecondResult(second.release());
@@ -2748,7 +2907,15 @@ Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
   if (isa<NullStmt>(Body))
     getCurCompoundScope().setHasEmptyLoopBodies();
 
-  return new (Context) CilkForStmt(Context, First, second.get().second,
+  // Attempt to find the loop limit and extract it into its own
+  // declaration.
+  std::pair<Stmt*, Expr*> LiftedLimit =
+    LiftCilkForLoopLimit(First, Condition);
+
+  if (LiftedLimit.first)
+    Condition = LiftedLimit.second;
+
+  return new (Context) CilkForStmt(Context, First, LiftedLimit.first, Condition,
                                    Increment, Body, CilkForLoc, LParenLoc, RParenLoc);
 }
 

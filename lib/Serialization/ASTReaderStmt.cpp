@@ -2887,6 +2887,7 @@ void ASTStmtReader::VisitCilkSyncStmt(CilkSyncStmt *S) {
 void ASTStmtReader::VisitCilkForStmt(CilkForStmt *S) {
   VisitStmt(S);
   S->setInit(Reader.ReadSubStmt());
+  S->setCondDecl(Reader.ReadSubStmt());
   S->setCond(Reader.ReadSubExpr());
   // S->setConditionVariable(Reader.getContext(),
   //                         ReadDeclAs<VarDecl>(Record, Idx));

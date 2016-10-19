@@ -2587,6 +2587,11 @@ void StmtPrinter::VisitCilkSyncStmt(CilkSyncStmt *) {
 }
 
 void StmtPrinter::VisitCilkForStmt(CilkForStmt *Node) {
+  if (Node->getCondDecl()) {
+    DeclStmt *CD = dyn_cast<DeclStmt>(Node->getCondDecl());
+    PrintRawDeclStmt(CD);
+  }
+  OS << ";";
   Indent() << "_Cilk_for (";
   if (Node->getInit()) {
     if (DeclStmt *DS = dyn_cast<DeclStmt>(Node->getInit()))

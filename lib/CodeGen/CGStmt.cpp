@@ -1088,7 +1088,7 @@ void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
   // arguments before spawn.
   const CallExpr* callExpr = nullptr;
   llvm::CallInst* finalInst = nullptr;
-  if ( callExpr = dyn_cast_or_null<CallExpr>(S.getSpawnedStmt())) {
+  if ((callExpr = dyn_cast_or_null<CallExpr>(S.getSpawnedStmt()))) {
     // Remember the block we came in on.
     llvm::BasicBlock *incoming = Builder.GetInsertBlock();
     assert(incoming && "expression emission must have an insertion point");
@@ -1156,6 +1156,13 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
   if (S.getInit())
     EmitStmt(S.getInit());
 
+  // Emit any declarations created for evaluating the loop condition.
+  if (S.getCondDecl())
+    EmitStmt(S.getCondDecl());
+
+  const Expr *Cond = S.getCond();
+  assert(Cond && "_Cilk_for loop has no condition");
+
   // Start the loop with a block that tests the condition.
   // If there's an increment, the continue scope will be overwritten
   // later.
@@ -1179,9 +1186,6 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
   LexicalScope ConditionScope(*this, S.getSourceRange());
 
   auto temp = AllocaInsertPt;
-
-  const Expr *Cond = S.getCond();
-  assert(Cond && "_Cilk_for loop has no condition");
 
   llvm::BasicBlock *SyncContinueBlock = createBasicBlock("pfor.end.continue");
   bool madeSync = false;
