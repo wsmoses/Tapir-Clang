@@ -2226,20 +2226,21 @@ StmtResult Parser::ParseCilkForStatement(SourceLocation *TrailingElseLoc) {
   if (Body.isInvalid())
     return StmtError();
 
+  // TODO: Extend _Cilk_for to support these.
   if (ForEach) {
-    assert (0 && "Cilk for not allowed for foreach");
+    assert (0 && "_Cilk_for not allowed for foreach");
     //return Actions.FinishObjCForCollectionStmt(ForEachStmt.get(),
     //                                            Body.get());
   }
 
   if (ForRange) {
-    assert (0 && "Cilk for not allowed for forrange");
+    assert (0 && "_Cilk_for not allowed for forrange");
     //return Actions.FinishCXXForRangeStmt(ForRangeStmt.get(), Body.get());
   }
 
   return Actions.ActOnCilkForStmt(ForLoc, T.getOpenLocation(), FirstPart.get(),
-                              SecondPart, ThirdPart, T.getCloseLocation(),
-                              Body.get());
+                                  SecondPart, ThirdPart, T.getCloseLocation(),
+                                  Body.get());
 }
 
 StmtResult Parser::ParsePragmaLoopHint(StmtVector &Stmts,

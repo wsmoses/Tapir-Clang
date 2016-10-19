@@ -1235,11 +1235,11 @@ public:
   /// By default, performs semantic analysis to build the new statement.
   /// Subclasses may override this routine to provide different behavior.
   StmtResult RebuildCilkForStmt(SourceLocation ForLoc, SourceLocation LParenLoc,
-                            Stmt *Init, Sema::ConditionResult Cond,
-                            Sema::FullExprArg Inc, SourceLocation RParenLoc,
-                            Stmt *Body) {
+                                Stmt *Init, Sema::ConditionResult Cond,
+                                Sema::FullExprArg Inc, SourceLocation RParenLoc,
+                                Stmt *Body) {
     return getSema().ActOnCilkForStmt(ForLoc, LParenLoc, Init, Cond,
-                                  Inc, RParenLoc, Body);
+                                      Inc, RParenLoc, Body);
   }
 
   /// \brief Build a new goto statement.
