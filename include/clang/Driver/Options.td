@@ -717,6 +717,9 @@ def fsanitize_undefined_strip_path_components_EQ : Joined<["-"], "fsanitize-unde
   Group<f_clang_Group>, Flags<[CC1Option]>, MetaVarName<"<number>">,
   HelpText<"Strip (or keep only, if negative) a given number of path components "
            "when emitting check metadata.">;
+def fcsi : Flag<["-"], "fcsi">, Group<f_clang_Group>,
+           Flags<[CC1Option, CoreOption]>, MetaVarName<"<check>">,
+           HelpText<"Turn on Comprehensive Static Instrumentation.">;
 def funsafe_math_optimizations : Flag<["-"], "funsafe-math-optimizations">,
   Group<f_Group>;
 def fno_unsafe_math_optimizations : Flag<["-"], "fno-unsafe-math-optimizations">,
