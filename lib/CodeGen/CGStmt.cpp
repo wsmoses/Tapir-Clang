@@ -1152,6 +1152,8 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
   LexicalScope ForScope(*this, S.getSourceRange());
 
+  llvm::DebugLoc DL = Builder.getCurrentDebugLocation();
+
   // Evaluate the first part before the loop.
   if (S.getInit())
     EmitStmt(S.getInit());
@@ -1170,7 +1172,8 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
   llvm::BasicBlock *CondBlock = Continue.getBlock();
   EmitBlock(CondBlock);
 
-  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs);
+  LoopStack.setSpawnStrategy(LoopAttributes::DAC);
+  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs, DL);
 
   const Expr *Inc = S.getInc();
   assert(Inc && "_Cilk_for loop has no increment");
