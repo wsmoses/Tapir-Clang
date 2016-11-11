@@ -435,7 +435,7 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   }
 
   if (LangOpts.ComprehensiveStaticInstrumentation) {
-    PMBuilder.addExtension(PassManagerBuilder::EP_OptimizerLast,
+    PMBuilder.addExtension(PassManagerBuilder::EP_TapirLate,
                            addComprehensiveStaticInstrumentationPass);
     PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,
                            addComprehensiveStaticInstrumentationPass);
