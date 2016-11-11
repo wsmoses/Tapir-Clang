@@ -3496,8 +3496,14 @@ public:
   StmtResult ActOnCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *S);
 
   // bool CheckIfBodyModifiesLoopControlVar(Stmt *Body);
-  std::pair<Stmt*, Expr*>
-  LiftCilkForLoopLimit(Stmt *First, Expr *Second);
+  StmtResult HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
+                                     SourceLocation LParenLoc,
+                                     Stmt *First,
+                                     Expr *Condition,
+                                     Expr *Increment,
+                                     SourceLocation RParenLoc,
+                                     Stmt *Body);
+  StmtResult LiftCilkForLoopLimit(Stmt *First, Expr **Second);
   StmtResult ActOnCilkForStmt(SourceLocation CilkForLoc,
                               SourceLocation LParenLoc,
                               Stmt *Init,
