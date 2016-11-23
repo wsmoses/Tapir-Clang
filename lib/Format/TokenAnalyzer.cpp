@@ -107,7 +107,7 @@ tooling::Replacements TokenAnalyzer::process() {
     }
 
     tooling::Replacements RunResult =
-        analyze(Annotator, AnnotatedLines, Tokens, Result);
+        analyze(Annotator, AnnotatedLines, Tokens);
 
     DEBUG({
       llvm::dbgs() << "Replacements for run " << Run << ":\n";
@@ -120,7 +120,7 @@ tooling::Replacements TokenAnalyzer::process() {
     for (unsigned i = 0, e = AnnotatedLines.size(); i != e; ++i) {
       delete AnnotatedLines[i];
     }
-    for (auto R : RunResult) {
+    for (const auto &R : RunResult) {
       auto Err = Result.add(R);
       // FIXME: better error handling here. For now, simply return an empty
       // Replacements to indicate failure.

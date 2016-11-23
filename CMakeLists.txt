@@ -124,6 +124,7 @@ Please install Python or specify the PYTHON_EXECUTABLE CMake variable.")
     endif()
 
     if(EXISTS ${LLVM_MAIN_SRC_DIR}/utils/lit/lit.py)
+      # Note: path not really used, except for checking if lit was found
       set(LLVM_LIT ${LLVM_MAIN_SRC_DIR}/utils/lit/lit.py)
       if(NOT LLVM_UTILS_PROVIDED)
         add_subdirectory(${LLVM_MAIN_SRC_DIR}/utils/FileCheck utils/FileCheck)
@@ -140,8 +141,10 @@ Please install Python or specify the PYTHON_EXECUTABLE CMake variable.")
       endif()
     else()
       # Seek installed Lit.
-      find_program(LLVM_LIT "lit.py" ${LLVM_MAIN_SRC_DIR}/utils/lit
-        DOC "Path to lit.py")
+      find_program(LLVM_LIT
+                   NAMES llvm-lit lit.py lit
+                   PATHS "${LLVM_MAIN_SRC_DIR}/utils/lit"
+                   DOC "Path to lit.py")
     endif()
 
     if(LLVM_LIT)
@@ -176,6 +179,9 @@ find_package(LibXml2 2.5.3 QUIET)
 if (LIBXML2_FOUND)
   set(CLANG_HAVE_LIBXML 1)
 endif()
+
+include(CheckIncludeFile)
+check_include_file(sys/resource.h CLANG_HAVE_RLIMITS)
 
 set(CLANG_RESOURCE_DIR "" CACHE STRING
   "Relative directory from the Clang binary to its resource files.")
@@ -258,22 +264,19 @@ if( NOT CMAKE_SOURCE_DIR STREQUAL CMAKE_BINARY_DIR )
   endif()
 endif()
 
-# Compute the Clang version from the LLVM version.
-string(REGEX MATCH "[0-9]+\\.[0-9]+(\\.[0-9]+)?" CLANG_VERSION
-  ${PACKAGE_VERSION})
-message(STATUS "Clang version: ${CLANG_VERSION}")
-
-string(REGEX REPLACE "([0-9]+)\\.[0-9]+(\\.[0-9]+)?" "\\1" CLANG_VERSION_MAJOR
-  ${CLANG_VERSION})
-string(REGEX REPLACE "[0-9]+\\.([0-9]+)(\\.[0-9]+)?" "\\1" CLANG_VERSION_MINOR
-  ${CLANG_VERSION})
-if (${CLANG_VERSION} MATCHES "[0-9]+\\.[0-9]+\\.[0-9]+")
-  set(CLANG_HAS_VERSION_PATCHLEVEL 1)
-  string(REGEX REPLACE "[0-9]+\\.[0-9]+\\.([0-9]+)" "\\1" CLANG_VERSION_PATCHLEVEL
-    ${CLANG_VERSION})
-else()
-  set(CLANG_HAS_VERSION_PATCHLEVEL 0)
+# If CLANG_VERSION_* is specified, use it, if not use LLVM_VERSION_*.
+if(NOT DEFINED CLANG_VERSION_MAJOR)
+  set(CLANG_VERSION_MAJOR ${LLVM_VERSION_MAJOR})
 endif()
+if(NOT DEFINED CLANG_VERSION_MINOR)
+  set(CLANG_VERSION_MINOR ${LLVM_VERSION_MINOR})
+endif()
+if(NOT DEFINED CLANG_VERSION_PATCHLEVEL)
+  set(CLANG_VERSION_PATCHLEVEL ${LLVM_VERSION_PATCH})
+endif()
+# Unlike PACKAGE_VERSION, CLANG_VERSION does not include LLVM_VERSION_SUFFIX.
+set(CLANG_VERSION "${CLANG_VERSION_MAJOR}.${CLANG_VERSION_MINOR}.${CLANG_VERSION_PATCHLEVEL}")
+message(STATUS "Clang version: ${CLANG_VERSION}")
 
 # Configure the Version.inc file.
 configure_file(
@@ -481,6 +484,8 @@ endif()
 if (CLANG_ENABLE_BOOTSTRAP)
   include(ExternalProject)
 
+  add_custom_target(clang-bootstrap-deps DEPENDS clang)
+
   if(NOT CLANG_STAGE)
     set(CLANG_STAGE stage1)
   endif()
@@ -506,10 +511,10 @@ if (CLANG_ENABLE_BOOTSTRAP)
   set(STAMP_DIR ${CMAKE_CURRENT_BINARY_DIR}/${NEXT_CLANG_STAGE}-stamps/)
   set(BINARY_DIR ${CMAKE_CURRENT_BINARY_DIR}/${NEXT_CLANG_STAGE}-bins/)
 
-  # If the next stage is LTO we need to depend on LTO and possibly LLVMgold
-  if(BOOTSTRAP_LLVM_ENABLE_LTO OR LLVM_ENABLE_LTO)
-    set(LTO_DEP LTO)
+  # If the next stage is LTO we need to depend on LTO and possibly lld or LLVMgold
+  if(BOOTSTRAP_LLVM_ENABLE_LTO OR LLVM_ENABLE_LTO AND NOT LLVM_BUILD_INSTRUMENTED)
     if(APPLE)
+      add_dependencies(clang-bootstrap-deps LTO)
       # on Darwin we need to set DARWIN_LTO_LIBRARY so that -flto will work
       # using the just-built compiler, and we need to override DYLD_LIBRARY_PATH
       # so that the host object file tools will use the just-built libLTO.
@@ -521,7 +526,12 @@ if (CLANG_ENABLE_BOOTSTRAP)
       set(LTO_LIBRARY -DDARWIN_LTO_LIBRARY=${LLVM_SHLIB_OUTPUT_INTDIR}/libLTO.dylib
         -DDYLD_LIBRARY_PATH=${LLVM_LIBRARY_OUTPUT_INTDIR})
     elseif(NOT WIN32)
-      list(APPEND LTO_DEP LLVMgold llvm-ar llvm-ranlib)
+      add_dependencies(clang-bootstrap-deps llvm-ar llvm-ranlib)
+      if(BOOTSTRAP_LLVM_ENABLE_LLD)
+        add_dependencies(clang-bootstrap-deps lld)
+      elseif(LLVM_BINUTILS_INCDIR)
+        add_dependencies(clang-bootstrap-deps LLVMgold)
+      endif()
       set(LTO_AR -DCMAKE_AR=${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-ar)
       set(LTO_RANLIB -DCMAKE_RANLIB=${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-ranlib)
     endif()
@@ -532,7 +542,7 @@ if (CLANG_ENABLE_BOOTSTRAP)
     )
   add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/${NEXT_CLANG_STAGE}-cleared
-    DEPENDS clang ${LTO_DEP}
+    DEPENDS clang-bootstrap-deps
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${BINARY_DIR}
     COMMAND ${CMAKE_COMMAND} -E make_directory ${BINARY_DIR}
     COMMAND ${CMAKE_COMMAND} -E remove_directory ${STAMP_DIR}
@@ -546,16 +556,23 @@ if (CLANG_ENABLE_BOOTSTRAP)
 
   set(_BOOTSTRAP_DEFAULT_PASSTHROUGH
     PACKAGE_VERSION
+    PACKAGE_VENDOR
     LLVM_VERSION_MAJOR
     LLVM_VERSION_MINOR
     LLVM_VERSION_PATCH
+    CLANG_VERSION_MAJOR
+    CLANG_VERSION_MINOR
+    CLANG_VERSION_PATCHLEVEL
     LLVM_VERSION_SUFFIX
     LLVM_BINUTILS_INCDIR
     CLANG_REPOSITORY_STRING
-    CMAKE_MAKE_PROGRAM)
+    CMAKE_MAKE_PROGRAM
+    CMAKE_OSX_ARCHITECTURES)
 
-  if(TARGET compiler-rt)
-    set(RUNTIME_DEP compiler-rt)
+  # We don't need to depend on compiler-rt if we're building instrumented
+  # because the next stage will use the same compiler used to build this stage.
+  if(TARGET compiler-rt AND NOT LLVM_BUILD_INSTRUMENTED)
+    add_dependencies(clang-bootstrap-deps compiler-rt)
   endif()
 
   set(COMPILER_OPTIONS
@@ -564,12 +581,12 @@ if (CLANG_ENABLE_BOOTSTRAP)
     -DCMAKE_ASM_COMPILER=${LLVM_RUNTIME_OUTPUT_INTDIR}/clang)
 
   if(BOOTSTRAP_LLVM_BUILD_INSTRUMENTED)
-    set(PGO_DEP llvm-profdata)
+    add_dependencies(clang-bootstrap-deps llvm-profdata)
     set(PGO_OPT -DLLVM_PROFDATA=${LLVM_RUNTIME_OUTPUT_INTDIR}/llvm-profdata)
   endif()
 
   if(LLVM_BUILD_INSTRUMENTED)
-    set(PGO_DEP generate-profdata)
+    add_dependencies(clang-bootstrap-deps generate-profdata)
     set(PGO_OPT -DLLVM_PROFDATA_FILE=${CMAKE_CURRENT_BINARY_DIR}/utils/perf-training/clang.profdata)
     # Use the current tools for LTO instead of the instrumented ones
     list(APPEND _BOOTSTRAP_DEFAULT_PASSTHROUGH
@@ -583,8 +600,6 @@ if (CLANG_ENABLE_BOOTSTRAP)
 
     set(COMPILER_OPTIONS)
     set(LTO_LIBRARY)
-    set(RUNTIME_DEP) # Don't set runtime dependencies
-    set(LTO_DEP)     # Don't need to depend on LTO
     set(LTO_AR)
     set(LTO_RANLIB)
   endif()
@@ -607,15 +622,19 @@ if (CLANG_ENABLE_BOOTSTRAP)
 
   # Populate the passthrough variables
   foreach(variableName ${CLANG_BOOTSTRAP_PASSTHROUGH} ${_BOOTSTRAP_DEFAULT_PASSTHROUGH})
-    if(${variableName})
-      string(REPLACE ";" "\;" value ${${variableName}})
+    if(DEFINED ${variableName})
+      if("${${variableName}}" STREQUAL "")
+        set(value "")
+      else()
+        string(REPLACE ";" "\;" value ${${variableName}})
+      endif()
       list(APPEND PASSTHROUGH_VARIABLES
         -D${variableName}=${value})
     endif()
   endforeach()
 
   ExternalProject_Add(${NEXT_CLANG_STAGE}
-    DEPENDS clang ${LTO_DEP} ${RUNTIME_DEP} ${PGO_DEP}
+    DEPENDS clang-bootstrap-deps
     PREFIX ${NEXT_CLANG_STAGE}
     SOURCE_DIR ${CMAKE_SOURCE_DIR}
     STAMP_DIR ${STAMP_DIR}

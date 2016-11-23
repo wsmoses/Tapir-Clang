@@ -239,6 +239,12 @@ Tool *ToolChain::getLink() const {
   return Link.get();
 }
 
+Tool *ToolChain::getOffloadBundler() const {
+  if (!OffloadBundler)
+    OffloadBundler.reset(new tools::OffloadBundler(*this));
+  return OffloadBundler.get();
+}
+
 Tool *ToolChain::getTool(Action::ActionClass AC) const {
   switch (AC) {
   case Action::AssembleJobClass:
@@ -263,6 +269,10 @@ Tool *ToolChain::getTool(Action::ActionClass AC) const {
   case Action::VerifyPCHJobClass:
   case Action::BackendJobClass:
     return getClang();
+
+  case Action::OffloadBundlingJobClass:
+  case Action::OffloadUnbundlingJobClass:
+    return getOffloadBundler();
   }
 
   llvm_unreachable("Invalid tool kind.");
@@ -370,7 +380,7 @@ std::string ToolChain::GetLinkerPath() const {
   return GetProgramPath(DefaultLinker);
 }
 
-types::ID ToolChain::LookupTypeForExtension(const char *Ext) const {
+types::ID ToolChain::LookupTypeForExtension(StringRef Ext) const {
   return types::lookupTypeForExtension(Ext);
 }
 
@@ -698,6 +708,8 @@ SanitizerMask ToolChain::getSupportedSanitizers() const {
                       CFICastStrict | UnsignedIntegerOverflow | LocalBounds;
   if (getTriple().getArch() == llvm::Triple::x86 ||
       getTriple().getArch() == llvm::Triple::x86_64 ||
+      getTriple().getArch() == llvm::Triple::arm ||
+      getTriple().getArch() == llvm::Triple::aarch64 ||
       getTriple().getArch() == llvm::Triple::wasm32 ||
       getTriple().getArch() == llvm::Triple::wasm64)
     Res |= CFIICall;

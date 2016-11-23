@@ -394,7 +394,7 @@ public:
 
   /// createImplicitParams - Used to lazily create the self and cmd
   /// implict parameters. This must be called prior to using getSelfDecl()
-  /// or getCmdDecl(). The call is ignored if the implicit paramters
+  /// or getCmdDecl(). The call is ignored if the implicit parameters
   /// have already been created.
   void createImplicitParams(ASTContext &Context, const ObjCInterfaceDecl *ID);
 
@@ -869,6 +869,9 @@ public:
   }
   PropertyControl getPropertyImplementation() const {
     return PropertyControl(PropertyImplementation);
+  }
+  bool isOptional() const {
+    return getPropertyImplementation() == PropertyControl::Optional;
   }
 
   void setPropertyIvarDecl(ObjCIvarDecl *Ivar) {
