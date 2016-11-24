@@ -166,14 +166,14 @@ void test_frexp_mant_f64(global double* out, double a)
 }
 
 // CHECK-LABEL: @test_frexp_exp_f32
-// CHECK: call i32 @llvm.amdgcn.frexp.exp.f32
+// CHECK: call i32 @llvm.amdgcn.frexp.exp.i32.f32
 void test_frexp_exp_f32(global int* out, float a)
 {
   *out = __builtin_amdgcn_frexp_expf(a);
 }
 
 // CHECK-LABEL: @test_frexp_exp_f64
-// CHECK: call i32 @llvm.amdgcn.frexp.exp.f64
+// CHECK: call i32 @llvm.amdgcn.frexp.exp.i32.f64
 void test_frexp_exp_f64(global int* out, double a)
 {
   *out = __builtin_amdgcn_frexp_exp(a);
@@ -228,6 +228,13 @@ void test_uicmp_i64(global ulong* out, ulong a, ulong b)
   *out = __builtin_amdgcn_uicmpl(a, b, 30+5);
 }
 
+// CHECK-LABEL: @test_ds_swizzle
+// CHECK: call i32 @llvm.amdgcn.ds.swizzle(i32 %a, i32 32)
+void test_ds_swizzle(global int* out, int a)
+{
+  *out = __builtin_amdgcn_ds_swizzle(a, 32);
+}
+
 // CHECK-LABEL: @test_fcmp_f32
 // CHECK: call i64 @llvm.amdgcn.fcmp.f32(float %a, float %b, i32 5)
 void test_fcmp_f32(global ulong* out, float a, float b)
@@ -263,6 +270,13 @@ void test_s_barrier()
   __builtin_amdgcn_s_barrier();
 }
 
+// CHECK-LABEL: @test_wave_barrier
+// CHECK: call void @llvm.amdgcn.wave.barrier(
+void test_wave_barrier()
+{
+  __builtin_amdgcn_wave_barrier();
+}
+
 // CHECK-LABEL: @test_s_memtime
 // CHECK: call i64 @llvm.amdgcn.s.memtime()
 void test_s_memtime(global ulong* out)
@@ -277,6 +291,24 @@ void test_s_sleep()
 {
   __builtin_amdgcn_s_sleep(1);
   __builtin_amdgcn_s_sleep(15);
+}
+
+// CHECK-LABEL: @test_s_incperflevel
+// CHECK: call void @llvm.amdgcn.s.incperflevel(i32 1)
+// CHECK: call void @llvm.amdgcn.s.incperflevel(i32 15)
+void test_s_incperflevel()
+{
+  __builtin_amdgcn_s_incperflevel(1);
+  __builtin_amdgcn_s_incperflevel(15);
+}
+
+// CHECK-LABEL: @test_s_decperflevel
+// CHECK: call void @llvm.amdgcn.s.decperflevel(i32 1)
+// CHECK: call void @llvm.amdgcn.s.decperflevel(i32 15)
+void test_s_decperflevel()
+{
+  __builtin_amdgcn_s_decperflevel(1);
+  __builtin_amdgcn_s_decperflevel(15);
 }
 
 // CHECK-LABEL: @test_cubeid(

@@ -276,6 +276,30 @@ TEST_F(FormatTest, RemovesEmptyLines) {
                    "int i;\n"
                    "\n"
                    "}  // namespace"));
+
+  FormatStyle Style = getLLVMStyle();
+  Style.AllowShortFunctionsOnASingleLine = FormatStyle::SFS_All;
+  Style.MaxEmptyLinesToKeep = 2;
+  Style.BreakBeforeBraces = FormatStyle::BS_Custom;
+  Style.BraceWrapping.AfterClass = true;
+  Style.BraceWrapping.AfterFunction = true;
+  Style.KeepEmptyLinesAtTheStartOfBlocks = false;
+
+  EXPECT_EQ("class Foo\n"
+            "{\n"
+            "  Foo() {}\n"
+            "\n"
+            "  void funk() {}\n"
+            "};",
+            format("class Foo\n"
+                   "{\n"
+                   "  Foo()\n"
+                   "  {\n"
+                   "  }\n"
+                   "\n"
+                   "  void funk() {}\n"
+                   "};",
+                   Style));
 }
 
 TEST_F(FormatTest, RecognizesBinaryOperatorKeywords) {
@@ -4802,6 +4826,8 @@ TEST_F(FormatTest, DeclarationsOfMultipleVariables) {
   verifyFormat("aaaaaaaaa *a = aaaaaaaaaaaaaaaaaaa, *b = bbbbbbbbbbbbbbbbbbb,\n"
                "          *b = bbbbbbbbbbbbbbbbbbb, *d = ddddddddddddddddddd;",
                Style);
+  verifyFormat("vector<int*> a, b;", Style);
+  verifyFormat("for (int *p, *q; p != q; p = p->next) {\n}", Style);
 }
 
 TEST_F(FormatTest, ConditionalExpressionsInBrackets) {
@@ -5499,6 +5525,18 @@ TEST_F(FormatTest, UnderstandsTemplateParameters) {
   verifyFormat("< < < < < < < < < < < < < < < < < < < < < < < < < < < < < <");
 }
 
+TEST_F(FormatTest, BitshiftOperatorWidth) {
+  EXPECT_EQ("int a = 1 << 2; /* foo\n"
+            "                   bar */",
+            format("int    a=1<<2;  /* foo\n"
+                   "                   bar */"));
+
+  EXPECT_EQ("int b = 256 >> 1; /* foo\n"
+            "                     bar */",
+            format("int  b  =256>>1 ;  /* foo\n"
+                   "                      bar */"));
+}
+
 TEST_F(FormatTest, UnderstandsBinaryOperators) {
   verifyFormat("COMPARE(a, ==, b);");
   verifyFormat("auto s = sizeof...(Ts) - 1;");
@@ -5635,6 +5673,9 @@ TEST_F(FormatTest, UnderstandsFunctionRefQualification) {
   verifyFormat("SomeType MemberFunction(const Deleted &) && final {}");
   verifyFormat("SomeType MemberFunction(const Deleted &) && override {}");
   verifyFormat("SomeType MemberFunction(const Deleted &) const &;");
+  verifyFormat("template <typename T>\n"
+               "void F(T) && = delete;",
+               getGoogleStyle());
 
   FormatStyle AlignLeft = getLLVMStyle();
   AlignLeft.PointerAlignment = FormatStyle::PAS_Left;
@@ -5787,7 +5828,7 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   FormatStyle Left = getLLVMStyle();
   Left.PointerAlignment = FormatStyle::PAS_Left;
   verifyFormat("x = *a(x) = *a(y);", Left);
-  verifyFormat("for (;; * = b) {\n}", Left);
+  verifyFormat("for (;; *a = b) {\n}", Left);
   verifyFormat("return *this += 1;", Left);
 
   verifyIndependentOfContext("a = *(x + y);");
@@ -5868,6 +5909,7 @@ TEST_F(FormatTest, UnderstandsUsesOfStarAndAmp) {
   verifyIndependentOfContext("MACRO(auto *a);");
   verifyIndependentOfContext("MACRO(const A *a);");
   verifyIndependentOfContext("MACRO('0' <= c && c <= '9');");
+  verifyFormat("void f() { f(float{1}, a * a); }");
   // FIXME: Is there a way to make this work?
   // verifyIndependentOfContext("MACRO(A *a);");
 
@@ -7177,6 +7219,30 @@ TEST_F(FormatTest, SpecialTokensAtEndOfLine) {
   verifyFormat("operator");
 }
 
+TEST_F(FormatTest, SkipsDeeplyNestedLines) {
+  // This code would be painfully slow to format if we didn't skip it.
+  std::string Code("A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(\n" // 20x
+                   "A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(\n"
+                   "A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(\n"
+                   "A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(\n"
+                   "A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(A(\n"
+                   "A(1, 1)\n"
+                   ", 1), 1), 1), 1), 1), 1), 1), 1), 1), 1)\n" // 10x
+                   ", 1), 1), 1), 1), 1), 1), 1), 1), 1), 1)\n"
+                   ", 1), 1), 1), 1), 1), 1), 1), 1), 1), 1)\n"
+                   ", 1), 1), 1), 1), 1), 1), 1), 1), 1), 1)\n"
+                   ", 1), 1), 1), 1), 1), 1), 1), 1), 1), 1)\n"
+                   ", 1), 1), 1), 1), 1), 1), 1), 1), 1), 1)\n"
+                   ", 1), 1), 1), 1), 1), 1), 1), 1), 1), 1)\n"
+                   ", 1), 1), 1), 1), 1), 1), 1), 1), 1), 1)\n"
+                   ", 1), 1), 1), 1), 1), 1), 1), 1), 1), 1)\n"
+                   ", 1), 1), 1), 1), 1), 1), 1), 1), 1), 1);\n");
+  // Deeply nested part is untouched, rest is formatted.
+  EXPECT_EQ(std::string("int i;\n") + Code + "int j;\n",
+            format(std::string("int    i;\n") + Code + "int    j;\n",
+                   getLLVMStyle(), IC_ExpectIncomplete));
+}
+
 //===----------------------------------------------------------------------===//
 // Objective-C tests.
 //===----------------------------------------------------------------------===//
@@ -7513,6 +7579,20 @@ TEST_F(FormatTest, FormatObjCMethodDeclarations) {
                "       aShortf:(NSRect)theRect {\n"
                "}",
                continuationStyle);
+
+  // Format pairs correctly.
+  verifyFormat("- (void)drawRectOn:(id)surface\n"
+               "            ofSize:(aaaaaaaa)height\n"
+               "                  :(size_t)width\n"
+               "          atOrigin:(size_t)x\n"
+               "                  :(size_t)y\n"
+               "             aaaaa:(a)yyy\n"
+               "               bbb:(d)cccc;");
+  verifyFormat("- (void)drawRectOn:(id)surface ofSize:(aaa)height:(bbb)width;");
+  verifyFormat("- (void)drawRectOn:(id)surface\n"
+               "            ofSize:(size_t)height\n"
+               "                  :(size_t)width;",
+               getLLVMStyleWithColumns(60));
 }
 
 TEST_F(FormatTest, FormatObjCMethodExpr) {
@@ -7715,6 +7795,12 @@ TEST_F(FormatTest, FormatObjCMethodExpr) {
                "    aaa:aaa];");
   verifyFormat("bool a = ([aaaaaaaa aaaaa] == aaaaaaaaaaaaaaaaa ||\n"
                "          [aaaaaaaa aaaaa] == aaaaaaaaaaaaaaaaaaaa);");
+
+  // Formats pair-parameters.
+  verifyFormat("[I drawRectOn:surface ofSize:aa:bbb atOrigin:cc:dd];");
+  verifyFormat("[I drawRectOn:surface //\n"
+               "        ofSize:aa:bbb\n"
+               "      atOrigin:cc:dd];");
 }
 
 TEST_F(FormatTest, ObjCAt) {
@@ -10928,6 +11014,7 @@ TEST_F(FormatTest, FormatsLambdas) {
   verifyFormat("int c = [&a, &a, a] { [=, a, b, &c] { return b++; }(); }();\n");
   verifyFormat("auto c = {[&a, &a, a] { [=, a, b, &c] { return b++; }(); }}\n");
   verifyFormat("auto c = {[&a, &a, a] { [=, a, b, &c] {}(); }}\n");
+  verifyFormat("int x = f(*+[] {});");
   verifyFormat("void f() {\n"
                "  other(x.begin(), x.end(), [&](int, int) { return 1; });\n"
                "}\n");
@@ -11155,6 +11242,8 @@ TEST_F(FormatTest, FormatsBlocks) {
                "  }\n"
                "});");
   verifyFormat("Block b = ^int *(A *a, B *b) {}");
+  verifyFormat("BOOL (^aaa)(void) = ^BOOL {\n"
+               "};");
 
   FormatStyle FourIndent = getLLVMStyle();
   FourIndent.ObjCBlockIndentWidth = 4;
@@ -11346,6 +11435,8 @@ TEST_F(FormatTest, TripleAngleBrackets) {
   EXPECT_EQ("f<param><<<1, 1>>>();", format("f< param > <<< 1, 1 >>> ();"));
   verifyFormat("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
                "aaaaaaaaaaa<<<\n    1, 1>>>();");
+  verifyFormat("aaaaaaaaaaaaaaa<aaaaaaaaa, aaaaaaaaaa, aaaaaaaaaaaaaa>\n"
+               "    <<<aaaaaaaaa, aaaaaaaaaa, aaaaaaaaaaaaaaaaaa>>>();");
 }
 
 TEST_F(FormatTest, MergeLessLessAtEnd) {
@@ -11497,6 +11588,26 @@ TEST_F(FormatTest, FormatsTableGenCode) {
   verifyFormat("include \"a.td\"\ninclude \"b.td\"", Style);
 }
 
+TEST_F(FormatTest, ArrayOfTemplates) {
+  EXPECT_EQ("auto a = new unique_ptr<int>[10];",
+            format("auto a = new unique_ptr<int > [ 10];"));
+
+  FormatStyle Spaces = getLLVMStyle();
+  Spaces.SpacesInSquareBrackets = true;
+  EXPECT_EQ("auto a = new unique_ptr<int>[ 10 ];",
+            format("auto a = new unique_ptr<int > [10];", Spaces));
+}
+
+TEST_F(FormatTest, ArrayAsTemplateType) {
+  EXPECT_EQ("auto a = unique_ptr<Foo<Bar>[10]>;",
+            format("auto a = unique_ptr < Foo < Bar>[ 10]> ;"));
+
+  FormatStyle Spaces = getLLVMStyle();
+  Spaces.SpacesInSquareBrackets = true;
+  EXPECT_EQ("auto a = unique_ptr<Foo<Bar>[ 10 ]>;",
+            format("auto a = unique_ptr < Foo < Bar>[10]> ;", Spaces));
+}
+
 // Since this test case uses UNIX-style file path. We disable it for MS
 // compiler.
 #if !defined(_MSC_VER) && !defined(__MINGW32__)
@@ -11593,6 +11704,17 @@ TEST_F(ReplacementTest, SortIncludesAfterReplacement) {
   EXPECT_EQ(Expected, *Result);
 }
 
+TEST_F(FormatTest, AllignTrailingComments) {
+  EXPECT_EQ("#define MACRO(V)                       \\\n"
+            "  V(Rt2) /* one more char */           \\\n"
+            "  V(Rs)  /* than here  */              \\\n"
+            "/* comment 3 */\n",
+            format("#define MACRO(V)\\\n"
+                   "V(Rt2)  /* one more char */ \\\n"
+                   "V(Rs) /* than here  */    \\\n"
+                   "/* comment 3 */         \\\n",
+                   getLLVMStyleWithColumns(40)));
+}
 } // end namespace
 } // end namespace format
 } // end namespace clang

@@ -380,7 +380,8 @@ private:
   SourceRange Range;
 
   SourceLocation StorageClassSpecLoc, ThreadStorageClassSpecLoc;
-  SourceLocation TSWLoc, TSCLoc, TSSLoc, TSTLoc, AltiVecLoc;
+  SourceRange TSWRange;
+  SourceLocation TSCLoc, TSSLoc, TSTLoc, AltiVecLoc;
   /// TSTNameLoc - If TypeSpecType is any of class, enum, struct, union,
   /// typename, then this is the location of the named type (if present);
   /// otherwise, it is the same as TSTLoc. Hence, the pair TSTLoc and
@@ -503,7 +504,8 @@ public:
   SourceLocation getLocStart() const LLVM_READONLY { return Range.getBegin(); }
   SourceLocation getLocEnd() const LLVM_READONLY { return Range.getEnd(); }
 
-  SourceLocation getTypeSpecWidthLoc() const { return TSWLoc; }
+  SourceLocation getTypeSpecWidthLoc() const { return TSWRange.getBegin(); }
+  SourceRange getTypeSpecWidthRange() const { return TSWRange; }
   SourceLocation getTypeSpecComplexLoc() const { return TSCLoc; }
   SourceLocation getTypeSpecSignLoc() const { return TSSLoc; }
   SourceLocation getTypeSpecTypeLoc() const { return TSTLoc; }
@@ -1186,14 +1188,14 @@ struct DeclaratorChunk {
     /// declaration of a member function), it will be stored here as a
     /// sequence of tokens to be parsed once the class definition is
     /// complete. Non-NULL indicates that there is a default argument.
-    CachedTokens *DefaultArgTokens;
+    std::unique_ptr<CachedTokens> DefaultArgTokens;
 
     ParamInfo() = default;
     ParamInfo(IdentifierInfo *ident, SourceLocation iloc,
               Decl *param,
-              CachedTokens *DefArgTokens = nullptr)
+              std::unique_ptr<CachedTokens> DefArgTokens = nullptr)
       : Ident(ident), IdentLoc(iloc), Param(param),
-        DefaultArgTokens(DefArgTokens) {}
+        DefaultArgTokens(std::move(DefArgTokens)) {}
   };
 
   struct TypeAndRange {
@@ -1308,10 +1310,8 @@ struct DeclaratorChunk {
     ///
     /// This is used in various places for error recovery.
     void freeParams() {
-      for (unsigned I = 0; I < NumParams; ++I) {
-        delete Params[I].DefaultArgTokens;
-        Params[I].DefaultArgTokens = nullptr;
-      }
+      for (unsigned I = 0; I < NumParams; ++I)
+        Params[I].DefaultArgTokens.reset();
       if (DeleteParams) {
         delete[] Params;
         DeleteParams = false;
@@ -1417,15 +1417,12 @@ struct DeclaratorChunk {
     unsigned TypeQuals : 5;
     // CXXScopeSpec has a constructor, so it can't be a direct member.
     // So we need some pointer-aligned storage and a bit of trickery.
-    union {
-      void *Aligner;
-      char Mem[sizeof(CXXScopeSpec)];
-    } ScopeMem;
+    alignas(CXXScopeSpec) char ScopeMem[sizeof(CXXScopeSpec)];
     CXXScopeSpec &Scope() {
-      return *reinterpret_cast<CXXScopeSpec*>(ScopeMem.Mem);
+      return *reinterpret_cast<CXXScopeSpec *>(ScopeMem);
     }
     const CXXScopeSpec &Scope() const {
-      return *reinterpret_cast<const CXXScopeSpec*>(ScopeMem.Mem);
+      return *reinterpret_cast<const CXXScopeSpec *>(ScopeMem);
     }
     void destroy() {
       Scope().~CXXScopeSpec();
@@ -1580,7 +1577,7 @@ struct DeclaratorChunk {
     I.EndLoc        = Loc;
     I.Mem.TypeQuals = TypeQuals;
     I.Mem.AttrList  = nullptr;
-    new (I.Mem.ScopeMem.Mem) CXXScopeSpec(SS);
+    new (I.Mem.ScopeMem) CXXScopeSpec(SS);
     return I;
   }
 

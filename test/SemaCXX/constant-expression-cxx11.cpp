@@ -279,17 +279,17 @@ static_assert(&s.x > &s.y, "false"); // expected-error {{false}}
 
 static_assert(0 == &y, "false"); // expected-error {{false}}
 static_assert(0 != &y, "");
-constexpr bool n3 = 0 <= &y; // expected-error {{must be initialized by a constant expression}}
-constexpr bool n4 = 0 >= &y; // expected-error {{must be initialized by a constant expression}}
-constexpr bool n5 = 0 < &y; // expected-error {{must be initialized by a constant expression}}
-constexpr bool n6 = 0 > &y; // expected-error {{must be initialized by a constant expression}}
+constexpr bool n3 = (int*)0 <= &y; // expected-error {{must be initialized by a constant expression}}
+constexpr bool n4 = (int*)0 >= &y; // expected-error {{must be initialized by a constant expression}}
+constexpr bool n5 = (int*)0 < &y; // expected-error {{must be initialized by a constant expression}}
+constexpr bool n6 = (int*)0 > &y; // expected-error {{must be initialized by a constant expression}}
 
 static_assert(&x == 0, "false"); // expected-error {{false}}
 static_assert(&x != 0, "");
-constexpr bool n9 = &x <= 0; // expected-error {{must be initialized by a constant expression}}
-constexpr bool n10 = &x >= 0; // expected-error {{must be initialized by a constant expression}}
-constexpr bool n11 = &x < 0; // expected-error {{must be initialized by a constant expression}}
-constexpr bool n12 = &x > 0; // expected-error {{must be initialized by a constant expression}}
+constexpr bool n9 = &x <= (int*)0; // expected-error {{must be initialized by a constant expression}}
+constexpr bool n10 = &x >= (int*)0; // expected-error {{must be initialized by a constant expression}}
+constexpr bool n11 = &x < (int*)0; // expected-error {{must be initialized by a constant expression}}
+constexpr bool n12 = &x > (int*)0; // expected-error {{must be initialized by a constant expression}}
 
 static_assert(&x == &x, "");
 static_assert(&x != &x, "false"); // expected-error {{false}}
@@ -1862,8 +1862,8 @@ namespace ZeroSizeTypes {
 namespace BadDefaultInit {
   template<int N> struct X { static const int n = N; };
 
-  struct A {
-    int k = // expected-error {{cannot use defaulted default constructor of 'A' within the class outside of member functions because 'k' has an initializer}}
+  struct A { // expected-error {{default member initializer for 'k' needed within definition of enclosing class}}
+    int k = // expected-note {{default member initializer declared here}}
         X<A().k>::n; // expected-error {{not a constant expression}} expected-note {{implicit default constructor for 'BadDefaultInit::A' first required here}}
   };
 
@@ -2066,3 +2066,33 @@ namespace InheritedCtor {
   constexpr Z z(1);
   static_assert(z.w == 1 && z.x == 2 && z.y == 3 && z.z == 4, "");
 }
+
+
+namespace PR28366 {
+namespace ns1 {
+
+void f(char c) { //expected-note2{{declared here}}
+  struct X {
+    static constexpr char f() { //expected-error{{never produces a constant expression}}
+      return c; //expected-error{{reference to local}} expected-note{{non-const variable}}
+    }
+  };
+  int I = X::f();
+}
+
+void g() {
+  const int c = 'c';
+  static const int d = 'd';
+  struct X {
+    static constexpr int f() {
+      return c + d;
+    }
+  };
+  static_assert(X::f() == 'c' + 'd',"");
+}
+
+
+} // end ns1
+
+} //end ns PR28366
+

@@ -325,10 +325,7 @@ PathDiagnosticPiece *NullabilityChecker::NullabilityBugVisitor::VisitNode(
   // Retrieve the associated statement.
   const Stmt *S = TrackedNullab->getNullabilitySource();
   if (!S) {
-    ProgramPoint ProgLoc = N->getLocation();
-    if (Optional<StmtPoint> SP = ProgLoc.getAs<StmtPoint>()) {
-      S = SP->getStmt();
-    }
+    S = PathDiagnosticLocation::getStmt(N);
   }
 
   if (!S)
@@ -682,9 +679,10 @@ void NullabilityChecker::checkPreCall(const CallEvent &Call,
     if (Param->isParameterPack())
       break;
 
-    const Expr *ArgExpr = nullptr;
-    if (Idx < Call.getNumArgs())
-      ArgExpr = Call.getArgExpr(Idx);
+    if (Idx >= Call.getNumArgs())
+      break;
+
+    const Expr *ArgExpr = Call.getArgExpr(Idx);
     auto ArgSVal = Call.getArgSVal(Idx++).getAs<DefinedOrUnknownSVal>();
     if (!ArgSVal)
       continue;
