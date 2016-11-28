@@ -3026,124 +3026,228 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
 /// Here, loop-var-expr can use variables declared in loop-var-decl, while
 /// end-expr must not use any such variables.  In general, the loop condition
 /// can swap the positions of loop-var-expr and end-expr.
-StmtResult Sema::LiftCilkForLoopLimit(Stmt *First, Expr **Second) {
+StmtResult Sema::LiftCilkForLoopLimit(SourceLocation CilkForLoc,
+                                      Stmt *First, Expr **Second) {
   if (!First || !Second)
     return StmtEmpty();
 
-  // Extract decls from First.  If First is not a decl statement, give
-  // up.
-  llvm::SmallPtrSet<VarDecl*, 8> Decls;
-  if (DeclStmt *DS = dyn_cast<DeclStmt>(First)) {
-    for (auto *DI : DS->decls()) {
-      VarDecl *VD = dyn_cast<VarDecl>(DI);
-      Decls.insert(VD);
-    }
-  } else {
+  // Get the single loop variable declared.
+  DeclStmt *LoopVarDS = cast<DeclStmt>(First);
+  if (!LoopVarDS->isSingleDecl())
     return StmtEmpty();
-  }
+  VarDecl *LoopVar = dyn_cast<VarDecl>(LoopVarDS->getSingleDecl());
+  if (!LoopVar)
+    return StmtEmpty();
+
+  // // Extract decls from First.  If First is not a decl statement, give
+  // // up.
+  // llvm::SmallPtrSet<VarDecl*, 8> Decls;
+  // if (DeclStmt *DS = dyn_cast<DeclStmt>(First)) {
+  //   for (auto *DI : DS->decls()) {
+  //     VarDecl *VD = dyn_cast<VarDecl>(DI);
+  //     Decls.insert(VD);
+  //   }
+  // } else {
+  //   return StmtEmpty();
+  // }
 
   // Only get an expression to extract if Decl's appear in just one
   // side of a comparison.
-  if (BinaryOperator *E = dyn_cast<BinaryOperator>(*Second)) {
-    if (!E->isComparisonOp())
-      return StmtEmpty();
+  BinaryOperator *E = dyn_cast<BinaryOperator>(*Second);
+  if (!E || !E->isComparisonOp())
+    return StmtEmpty();
 
-    bool DeclUseInRHS = DeclFinder(*this, Decls, E->getRHS()).FoundDeclInUse();
-    bool DeclUseInLHS = DeclFinder(*this, Decls, E->getLHS()).FoundDeclInUse();
-    Expr *ToExtract;
-    if ((DeclUseInLHS && DeclUseInRHS) ||
-        (!DeclUseInLHS && !DeclUseInRHS))
-      return StmtEmpty();
+  llvm::SmallPtrSet<VarDecl *, 1> Decls;
+  Decls.insert(LoopVar);
+  bool DeclUseInRHS = DeclFinder(*this, Decls, E->getRHS()).FoundDeclInUse();
+  bool DeclUseInLHS = DeclFinder(*this, Decls, E->getLHS()).FoundDeclInUse();
+  Expr *ToExtract;
+  if ((DeclUseInLHS && DeclUseInRHS) ||
+      (!DeclUseInLHS && !DeclUseInRHS))
+    return StmtEmpty();
 
-    // Get the expression to lift.
-    if (DeclUseInLHS)
-      ToExtract = E->getRHS();
-    else if (DeclUseInRHS)
-      ToExtract = E->getLHS();
+  // Get the expression to lift.
+  if (DeclUseInLHS)
+    ToExtract = E->getRHS();
+  else if (DeclUseInRHS)
+    ToExtract = E->getLHS();
 
-    // Create a new VarDecl that stores the result of the lifted
-    // expression.
-    Scope *S = getCurScope();
-    SourceLocation EndLoc = ToExtract->getLocStart();
-    QualType EndType = ToExtract->getType();
-    // Hijacking this method for handling range loops to build the
-    // declaration for the end of the loop.
-    VarDecl *EndVar = BuildForRangeVarDecl(*this, EndLoc, EndType,
-                                           "__end");
-    // // Get the stride from the loop increment expression, if it exists.
-    // Expr *Stride = GetCilkForStride(*this, Decls, *Third);
-    // bool RelationCompare = false;
-    // bool CompareWithCeiling = true;
-    // switch(E->getOpcode()) {
-    // default: break;
-    // case BO_LE:
-    // case BO_GE:
-    //   CompareWithCeiling = false;
-    // case BO_LT:
-    // case BO_GT:
-    //   RelationCompare = true;
-    //   break;
-    // }
-    // // If we have a stride, modify the extracted loop limit to reflect the
-    // // stride.
-    // if (RelationCompare && Stride) {
-    //   if (CompareWithCeiling) {
-    //     ExprResult LiteralOne = ActOnIntegerConstant(EndLoc, 1);
-    //     ExprResult Offset = BuildBinOp(S, EndLoc, BO_Sub,
-    //                                    Stride, LiteralOne.get());
-    //     ExprResult NewToExtract = BuildBinOp(S, EndLoc, BO_Add,
-    //                                          ToExtract, Offset.get());
-    //     ToExtract = NewToExtract.get();
-    //   }
+  // Create a new VarDecl that stores the result of the lifted
+  // expression.
+  Scope *S = getCurScope();
+  SourceLocation EndLoc = ToExtract->getLocStart();
+  QualType EndType = LoopVar->getType();
+  QualType EndInitType = ToExtract->getType();
+  // Hijacking this method for handling range loops to build the
+  // declaration for the end of the loop.
+  VarDecl *EndVar = BuildForRangeVarDecl(*this, EndLoc, EndType,
+                                         "__end");
+  AddInitializerToDecl(EndVar, ToExtract, /*DirectInit=*/false,
+                       /*TypeMayContainAuto=*/false);
+  FinalizeDeclaration(EndVar);
+  CurContext->addHiddenDecl(EndVar);
 
-    //   ExprResult NewToExtract = BuildBinOp(S, EndLoc, BO_Div,
-    //                                        ToExtract, Stride);
-    //   ToExtract = NewToExtract.get();
+  // Combine declarations into a single DeclStmt.
+  SmallVector<Decl *, 2> NewDecls;
+  NewDecls.push_back(LoopVar);
+  NewDecls.push_back(EndVar);
+  DeclGroupPtrTy DG = BuildDeclaratorGroup(MutableArrayRef<Decl *>(NewDecls),
+                                           /*TypeMayContainAuto=*/false);
+  StmtResult NewInit = ActOnDeclStmt(DG, CilkForLoc, CilkForLoc);
+  if (NewInit.isInvalid())
+    return StmtError();
 
-    //   // Replace the strided loop increment expression with a preincrement or
-    //   // predecrement.
-    //   if (const CompoundAssignOperator *CAO =
-    //       dyn_cast<CompoundAssignOperator>(*Third)) {
-    //     SourceLocation CAOLoc = CAO->getLocStart();
-    //     ExprResult ReplInc;
-    //     switch (CAO->getOpcode()) {
-    //     default: break;  // Should not reach this case if we have a Stride.
-    //     case BO_AddAssign:
-    //       ReplInc = BuildUnaryOp(S, CAOLoc, UO_PreInc, CAO->getLHS());
-    //       break;
-    //     case BO_SubAssign:
-    //       ReplInc = BuildUnaryOp(S, CAOLoc, UO_PreDec, CAO->getLHS());
-    //       break;
-    //     }
-    //     *Third = ReplInc.get();
-    //   }
-    // }
-    AddInitializerToDecl(EndVar, ToExtract, /*DirectInit=*/false,
-                         /*TypeMayContainAuto=*/false);
-    FinalizeDeclaration(EndVar);
-    CurContext->addHiddenDecl(EndVar);
+  // // Create a Decl statement for the new VarDecl.
+  // StmtResult EndDeclStmt =
+  //   ActOnDeclStmt(ConvertDeclToDeclGroup(EndVar), EndLoc, EndLoc);
 
-    // Create a Decl statement for the new VarDecl.
-    StmtResult EndDeclStmt =
-      ActOnDeclStmt(ConvertDeclToDeclGroup(EndVar), EndLoc, EndLoc);
+  // Create a new condition expression that uses the new VarDecl
+  // in place of the lifted expression.
+  ExprResult EndRef = BuildDeclRefExpr(EndVar, EndType,
+                                       VK_LValue, EndLoc);
+  ExprResult NewCondExpr;
+  if (DeclUseInLHS)
+    NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
+                             E->getLHS(), EndRef.get());
+  else if (DeclUseInRHS)
+    NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
+                             EndRef.get(), E->getRHS());
 
-    // Create a new condition expression that uses the new VarDecl
-    // in place of the lifted expression.
-    ExprResult EndRef = BuildDeclRefExpr(EndVar, EndType,
-                                         VK_LValue, EndLoc);
-    ExprResult NewCondExpr;
-    if (DeclUseInLHS)
-      NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
-                               E->getLHS(), EndRef.get());
-    else if (DeclUseInRHS)
-      NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
-                               EndRef.get(), E->getRHS());
-
-    *Second = NewCondExpr.get();
-    return EndDeclStmt;
-  }
-  return StmtEmpty();
+  *Second = NewCondExpr.get();
+  return NewInit;
 }
+
+// /// Examine the condition of the _Cilk_for loop to lift the evaluation of the
+// /// end condition of a _Cilk_for loop out of the loop.  Intuitively, this
+// /// routine transforms _Cilk_for loops as follows:
+// ///
+// ///   _Cilk_for(loop-var-decl;
+// ///             loop-var-expr comparison-op end-expr;
+// ///   =>
+// ///   _Cilk_for(loop-var-decl, __end = end-expr;
+// ///             loop-var-expr comparison-op __end;
+// ///
+// /// Here, loop-var-expr can use variables declared in loop-var-decl, while
+// /// end-expr must not use any such variables.  In general, the loop condition
+// /// can swap the positions of loop-var-expr and end-expr.
+// StmtResult Sema::LiftCilkForLoopLimit(Stmt *First, Expr **Second) {
+//   if (!First || !Second)
+//     return StmtEmpty();
+
+//   // Extract decls from First.  If First is not a decl statement, give
+//   // up.
+//   llvm::SmallPtrSet<VarDecl*, 8> Decls;
+//   if (DeclStmt *DS = dyn_cast<DeclStmt>(First)) {
+//     for (auto *DI : DS->decls()) {
+//       VarDecl *VD = dyn_cast<VarDecl>(DI);
+//       Decls.insert(VD);
+//     }
+//   } else {
+//     return StmtEmpty();
+//   }
+
+//   // Only get an expression to extract if Decl's appear in just one
+//   // side of a comparison.
+//   if (BinaryOperator *E = dyn_cast<BinaryOperator>(*Second)) {
+//     if (!E->isComparisonOp())
+//       return StmtEmpty();
+
+//     bool DeclUseInRHS = DeclFinder(*this, Decls, E->getRHS()).FoundDeclInUse();
+//     bool DeclUseInLHS = DeclFinder(*this, Decls, E->getLHS()).FoundDeclInUse();
+//     Expr *ToExtract;
+//     if ((DeclUseInLHS && DeclUseInRHS) ||
+//         (!DeclUseInLHS && !DeclUseInRHS))
+//       return StmtEmpty();
+
+//     // Get the expression to lift.
+//     if (DeclUseInLHS)
+//       ToExtract = E->getRHS();
+//     else if (DeclUseInRHS)
+//       ToExtract = E->getLHS();
+
+//     // Create a new VarDecl that stores the result of the lifted
+//     // expression.
+//     Scope *S = getCurScope();
+//     SourceLocation EndLoc = ToExtract->getLocStart();
+//     QualType EndType = ToExtract->getType();
+//     // Hijacking this method for handling range loops to build the
+//     // declaration for the end of the loop.
+//     VarDecl *EndVar = BuildForRangeVarDecl(*this, EndLoc, EndType,
+//                                            "__end");
+//     // // Get the stride from the loop increment expression, if it exists.
+//     // Expr *Stride = GetCilkForStride(*this, Decls, *Third);
+//     // bool RelationCompare = false;
+//     // bool CompareWithCeiling = true;
+//     // switch(E->getOpcode()) {
+//     // default: break;
+//     // case BO_LE:
+//     // case BO_GE:
+//     //   CompareWithCeiling = false;
+//     // case BO_LT:
+//     // case BO_GT:
+//     //   RelationCompare = true;
+//     //   break;
+//     // }
+//     // // If we have a stride, modify the extracted loop limit to reflect the
+//     // // stride.
+//     // if (RelationCompare && Stride) {
+//     //   if (CompareWithCeiling) {
+//     //     ExprResult LiteralOne = ActOnIntegerConstant(EndLoc, 1);
+//     //     ExprResult Offset = BuildBinOp(S, EndLoc, BO_Sub,
+//     //                                    Stride, LiteralOne.get());
+//     //     ExprResult NewToExtract = BuildBinOp(S, EndLoc, BO_Add,
+//     //                                          ToExtract, Offset.get());
+//     //     ToExtract = NewToExtract.get();
+//     //   }
+
+//     //   ExprResult NewToExtract = BuildBinOp(S, EndLoc, BO_Div,
+//     //                                        ToExtract, Stride);
+//     //   ToExtract = NewToExtract.get();
+
+//     //   // Replace the strided loop increment expression with a preincrement or
+//     //   // predecrement.
+//     //   if (const CompoundAssignOperator *CAO =
+//     //       dyn_cast<CompoundAssignOperator>(*Third)) {
+//     //     SourceLocation CAOLoc = CAO->getLocStart();
+//     //     ExprResult ReplInc;
+//     //     switch (CAO->getOpcode()) {
+//     //     default: break;  // Should not reach this case if we have a Stride.
+//     //     case BO_AddAssign:
+//     //       ReplInc = BuildUnaryOp(S, CAOLoc, UO_PreInc, CAO->getLHS());
+//     //       break;
+//     //     case BO_SubAssign:
+//     //       ReplInc = BuildUnaryOp(S, CAOLoc, UO_PreDec, CAO->getLHS());
+//     //       break;
+//     //     }
+//     //     *Third = ReplInc.get();
+//     //   }
+//     // }
+//     AddInitializerToDecl(EndVar, ToExtract, /*DirectInit=*/false,
+//                          /*TypeMayContainAuto=*/false);
+//     FinalizeDeclaration(EndVar);
+//     CurContext->addHiddenDecl(EndVar);
+
+//     // Create a Decl statement for the new VarDecl.
+//     StmtResult EndDeclStmt =
+//       ActOnDeclStmt(ConvertDeclToDeclGroup(EndVar), EndLoc, EndLoc);
+
+//     // Create a new condition expression that uses the new VarDecl
+//     // in place of the lifted expression.
+//     ExprResult EndRef = BuildDeclRefExpr(EndVar, EndType,
+//                                          VK_LValue, EndLoc);
+//     ExprResult NewCondExpr;
+//     if (DeclUseInLHS)
+//       NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
+//                                E->getLHS(), EndRef.get());
+//     else if (DeclUseInRHS)
+//       NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
+//                                EndRef.get(), E->getRHS());
+
+//     *Second = NewCondExpr.get();
+//     return EndDeclStmt;
+//   }
+//   return StmtEmpty();
+// }
 
 StmtResult
 Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
@@ -3210,10 +3314,13 @@ Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
     
   // Attempt to find the loop limit and extract it into its own
   // declaration.
-  StmtResult LiftedLimit = LiftCilkForLoopLimit(First, &Condition);
-  assert(!LiftedLimit.isInvalid());
-
-  return new (Context) CilkForStmt(Context, First, LiftedLimit.get(), Condition,
+  StmtResult NewInit = LiftCilkForLoopLimit(CilkForLoc, First, &Condition);
+  assert(!NewInit.isInvalid());
+  if (!NewInit.isUnset())
+    return new (Context) CilkForStmt(Context, NewInit.get(), nullptr, Condition,
+                                     Increment, Body, CilkForLoc, LParenLoc,
+                                     RParenLoc);
+  return new (Context) CilkForStmt(Context, First, nullptr, Condition,
                                    Increment, Body, CilkForLoc, LParenLoc,
                                    RParenLoc);
 }
