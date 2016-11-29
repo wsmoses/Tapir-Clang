@@ -3567,7 +3567,8 @@ public:
                                      Expr *Increment,
                                      SourceLocation RParenLoc,
                                      Stmt *Body);
-  StmtResult LiftCilkForLoopLimit(Stmt *First, Expr **Second);
+  StmtResult LiftCilkForLoopLimit(SourceLocation CilkForLoc,
+                                  Stmt *First, Expr **Second);
   StmtResult ActOnCilkForStmt(SourceLocation CilkForLoc,
                               SourceLocation LParenLoc,
                               Stmt *Init,
