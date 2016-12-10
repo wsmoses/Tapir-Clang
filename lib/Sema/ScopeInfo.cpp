@@ -243,3 +243,4 @@ void LambdaScopeInfo::getPotentialVariableCapture(unsigned Idx, VarDecl *&VD,
 FunctionScopeInfo::~FunctionScopeInfo() { }
 BlockScopeInfo::~BlockScopeInfo() { }
 CapturedRegionScopeInfo::~CapturedRegionScopeInfo() { }
+// CilkForScopeInfo::~CilkForScopeInfo() { }

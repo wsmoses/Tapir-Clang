@@ -84,7 +84,8 @@ protected:
     SK_Function,
     SK_Block,
     SK_Lambda,
-    SK_CapturedRegion
+    SK_CapturedRegion,
+    // SK_CilkFor
   };
   
 public:
@@ -595,6 +596,9 @@ public:
   static bool classof(const FunctionScopeInfo *FSI) { 
     return FSI->Kind == SK_Block || FSI->Kind == SK_Lambda
                                  || FSI->Kind == SK_CapturedRegion;
+    // return FSI->Kind == SK_Block || FSI->Kind == SK_Lambda
+    //                              || FSI->Kind == SK_CapturedRegion
+    //                              || FSI->Kind == SK_CilkFor;
   }
 };
 
@@ -627,6 +631,7 @@ public:
 
 /// \brief Retains information about a captured region.
 class CapturedRegionScopeInfo final : public CapturingScopeInfo {
+// class CapturedRegionScopeInfo : public CapturingScopeInfo {
 public:
   /// \brief The CapturedDecl for this statement.
   CapturedDecl *TheCapturedDecl;
@@ -659,14 +664,44 @@ public:
       return "default captured statement";
     case CR_OpenMP:
       return "OpenMP region";
+    case CR_CilkFor:
+      return "CilkFor region";
     }
     llvm_unreachable("Invalid captured region kind!");
   }
 
   static bool classof(const FunctionScopeInfo *FSI) {
     return FSI->Kind == SK_CapturedRegion;
+    // return FSI->Kind == SK_CapturedRegion || FSI->Kind == SK_CilkFor;
   }
 };
+
+// /// \brief Retains information about a _Cilk_for capturing region.
+// class CilkForScopeInfo final : public CapturedRegionScopeInfo {
+// public:
+
+//   /// \brief The loop control variable of this Cilk for loop.
+//   const VarDecl *LoopControlVar;
+
+//   CilkForScopeInfo(DiagnosticsEngine &Diag, Scope *S, CapturedDecl *CD,
+//                    RecordDecl *RD, ImplicitParamDecl *Context,
+//                    const VarDecl *LV)
+//       : CapturedRegionScopeInfo(Diag, S, CD, RD, Context, CR_CilkFor, 0),
+//         LoopControlVar(LV)
+//   {
+//     Kind = SK_CilkFor;
+//   }
+
+//   ~CilkForScopeInfo() override;
+
+//   bool isLoopControlVar(const VarDecl *VD) const {
+//     return VD && (VD == LoopControlVar);
+//   }
+
+//   static bool classof(const FunctionScopeInfo *FSI) {
+//     return FSI->Kind == SK_CilkFor;
+//   }
+// };
 
 class LambdaScopeInfo final : public CapturingScopeInfo {
 public:

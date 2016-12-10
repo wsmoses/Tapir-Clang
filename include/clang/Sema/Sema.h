@@ -198,6 +198,7 @@ namespace sema {
   class BlockScopeInfo;
   class CapturedRegionScopeInfo;
   class CapturingScopeInfo;
+  // class CilkForScopeInfo;
   class CompoundScopeInfo;
   class DelayedDiagnostic;
   class DelayedDiagnosticPool;
@@ -1188,6 +1189,10 @@ public:
   void PushCapturedRegionScope(Scope *RegionScope, CapturedDecl *CD,
                                RecordDecl *RD,
                                CapturedRegionKind K);
+
+  // void PushCilkForScope(Scope *RegionScope, CapturedDecl *CD,
+  //                       RecordDecl *RD, const VarDecl *LV);
+
   void
   PopFunctionScopeInfo(const sema::AnalysisBasedWarnings::Policy *WP = nullptr,
                        const Decl *D = nullptr,
@@ -1235,6 +1240,9 @@ public:
 
   /// \brief Retrieve the current captured region, if any.
   sema::CapturedRegionScopeInfo *getCurCapturedRegion();
+
+  // /// \brief Retrieve the current _Cilk_for region, if any.
+  // sema::CilkForScopeInfo *getCurCilkFor();
 
   /// WeakTopLevelDeclDecls - access to \#pragma weak-generated Decls
   SmallVectorImpl<Decl *> &WeakTopLevelDecls() { return WeakTopLevelDecl; }
@@ -3557,38 +3565,72 @@ public:
   StmtResult ActOnCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *S);
 
   // bool CheckIfBodyModifiesLoopControlVar(Stmt *Body);
-  StmtResult HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
+  // StmtResult ReplaceCilkForStmtWithABICall(SourceLocation CilkForLoc,
+  //                                          SourceLocation LParenLoc,
+  //                                          Stmt *First,
+  //                                          Expr *Condition,
+  //                                          Expr *Increment,
+  //                                          SourceLocation RParenLoc,
+  //                                          Stmt *Body);
+  // StmtResult HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
+  //                                    SourceLocation LParenLoc,
+  //                                    Stmt *First,
+  //                                    Expr *Condition,
+  //                                    Expr *Increment,
+  //                                    SourceLocation RParenLoc,
+  //                                    Stmt *Body);
+  // StmtResult LiftCilkForLoopLimit(SourceLocation CilkForLoc,
+  //                                 Stmt *First, Expr **Second);
+  StmtResult HandleCilkForLoopCtl(SourceLocation CilkForLoc,
+                                  SourceLocation LParenLoc,
+                                  Stmt *First,
+                                  ConditionResult Second,
+                                  FullExprArg Third,
+                                  SourceLocation RParenLoc,
+                                  Expr **ReplCond, Expr **ReplInc,
+                                  VarDecl **InitVar, Expr **StrideExpr,
+                                  Expr **LoopCountExpr);
+  StmtResult ActOnStartOfCilkForStmt(SourceLocation CilkForLoc,
                                      SourceLocation LParenLoc,
-                                     Stmt *First,
-                                     Expr *Condition,
-                                     Expr *Increment,
+                                     Stmt *Init,
+                                     ConditionResult second,
+                                     FullExprArg third,
                                      SourceLocation RParenLoc,
-                                     Stmt *Body);
-  StmtResult LiftCilkForLoopLimit(SourceLocation CilkForLoc,
-                                  Stmt *First, Expr **Second);
-  StmtResult ActOnCilkForStmt(SourceLocation CilkForLoc,
-                              SourceLocation LParenLoc,
-                              Stmt *Init,
-                              ConditionResult second,
-                              FullExprArg third,
-                              SourceLocation RParenLoc,
-                              Stmt *Body);
-
+                                     Expr **ReplCond, Expr **ReplInc,
+                                     VarDecl **InitVar,
+                                     Expr **StrideExpr,
+                                     Expr **LoopCountExpr);
+  ExprResult CalculateCilkForLoopCount(SourceLocation CilkForLoc,
+                                       Expr *Span, Expr *Increment,
+                                       Expr *StrideExpr, int Dir,
+                                       BinaryOperatorKind Opcode);
+  ExprResult CreateNewCilkForLVInit(SourceLocation CilkForLoc,
+                                    Stmt *OldLVInit,
+                                    VarDecl *InitVar, Expr *StrideRef);
+  StmtResult ActOnEndOfCilkForStmt(SourceLocation CilkForLoc,
+                                   SourceLocation LParenLoc,
+                                   Stmt *Init,
+                                   Expr *Condition,
+                                   Expr *Increment,
+                                   SourceLocation RParenLoc,
+                                   Stmt *Body, Stmt *LoopVarDS,
+                                   Expr *LoopCount);
   StmtResult BuildCilkForStmt(SourceLocation CilkForLoc,
                               SourceLocation LParenLoc,
-                              Stmt *Init, Expr *Cond, Expr *Inc,
+                              Stmt *Init, ConditionResult second,
+                              FullExprArg third,
                               SourceLocation RParenLoc, Stmt *Body,
-                              Expr *LoopCount, Expr *Stride,
-                              QualType SpanType);
+                              Expr *LoopCount, Stmt *LoopVarDS);
+
+  // void ActOnCilkForCapturedRegionStart(SourceLocation Loc, Scope *CurScope,
+  //                                      // CapturedRegionKind Kind,
+  //                                      ArrayRef<CapturedParamNameType> Params,
+  //                                      const VarDecl *LV);
 
   // void ActOnStartOfCilkForStmt(SourceLocation CilkForLoc, Scope *CurScope,
   //                              StmtResult FirstPart);
 
   // void ActOnCilkForStmtError();
-
-  ExprResult CalculateCilkForLoopCount(SourceLocation CilkForLoc, Expr *Span,
-                                       Expr *Increment, Expr *StrideExpr,
-                                       int Dir, BinaryOperatorKind Opcode);
 
   VarDecl *getCopyElisionCandidate(QualType ReturnType, Expr *E,
                                    bool AllowParamOrMoveConstructible);

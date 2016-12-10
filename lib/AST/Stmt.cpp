@@ -1135,19 +1135,20 @@ Stmt* CilkSpawnStmt::getSpawnedStmt() {
 }
 
 // CilkForStmt
-CilkForStmt::CilkForStmt(const ASTContext &C, Stmt *Init, Stmt *CondDecl,
+CilkForStmt::CilkForStmt(const ASTContext &C, Stmt *Init,
                          Expr *Cond, /* VarDecl *condVar, */
-                         Expr *Inc, Stmt *Body, /* Expr *LoopCount, */
+                         Expr *Inc, Stmt *Body, Expr *LoopCount,
+                         Stmt *LoopVar,
                          SourceLocation CFL, SourceLocation LP, SourceLocation RP)
   : Stmt(CilkForStmtClass), CilkForLoc(CFL), LParenLoc(LP), RParenLoc(RP)
 {
   SubExprs[INIT] = Init;
-  SubExprs[CONDDECL] = CondDecl;
   SubExprs[COND] = Cond;
   // setConditionVariable(C, condVar);
   SubExprs[INC] = Inc;
   SubExprs[BODY] = Body;
-  // SubExprs[LOOP_COUNT] = LoopCount;
+  SubExprs[LOOP_COUNT] = LoopCount;
+  SubExprs[LOOP_VAR] = LoopVar;
 }
 
 // VarDecl *CilkForStmt::getConditionVariable() const {

@@ -27,6 +27,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/IR/TypeBuilder.h"
 
 using namespace clang;
 using namespace CodeGen;
@@ -1158,10 +1159,22 @@ void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
   EmitBlock(ContinueBlock);
 }
 
+/// A simple RAII object to deal with CapturedStmtInfo of the given CGF
+class CilkForRAII {
+  CodeGenFunction::CGCapturedStmtInfo *OldCapturedStmtInfo;
+  CodeGenFunction *CGF;
+
+public:
+  CilkForRAII(CodeGenFunction *CGF) : CGF(CGF){
+    OldCapturedStmtInfo = CGF->CapturedStmtInfo;
+  };
+  ~CilkForRAII() {
+    CGF->CapturedStmtInfo = OldCapturedStmtInfo;
+  }
+};
+
 void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
                                       ArrayRef<const Attr *> ForAttrs) {
-  JumpDest LoopExit = getJumpDestInCurrentScope("pfor.end");
-
   LexicalScope ForScope(*this, S.getSourceRange());
 
   // llvm::DebugLoc DL = Builder.getCurrentDebugLocation();
@@ -1170,127 +1183,365 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
   if (S.getInit())
     EmitStmt(S.getInit());
 
-  // Emit any declarations created for evaluating the loop condition.
-  if (S.getCondDecl())
-    EmitStmt(S.getCondDecl());
+  // if (getLangOpts().Detach) {
+  // Emit the helper function
+  CGCilkForStmtInfo CSInfo(S);
+  CodeGenFunction CGF(CGM, true);
+  CGF.CapturedStmtInfo = &CSInfo;
+  const CapturedStmt *CS = cast<CapturedStmt>(S.getBody());
+  llvm::Function *Helper =
+    CGF.GenerateCapturedStmtFunction(*CS);
 
-  const Expr *Cond = S.getCond();
-  assert(Cond && "_Cilk_for loop has no condition");
+  llvm::BasicBlock *ThenBlock = createBasicBlock("if.then");
+  llvm::BasicBlock *ContBlock = createBasicBlock("if.end");
+  EmitBranchOnBoolExpr(S.getCond(), ThenBlock, ContBlock, 0);
 
-  // Start the loop with a block that tests the condition.
-  // If there's an increment, the continue scope will be overwritten
-  // later.
-  JumpDest Continue = getJumpDestInCurrentScope("pfor.cond");
-  llvm::BasicBlock *CondBlock = Continue.getBlock();
-  EmitBlock(CondBlock);
-
-  LoopStack.setSpawnStrategy(LoopAttributes::DAC);
-  // LoopStack.push(CondBlock, CGM.getContext(), ForAttrs, DL);
-  const SourceRange &R = S.getSourceRange();
-  LoopStack.push(CondBlock, CGM.getContext(), ForAttrs,
-                 SourceLocToDebugLoc(R.getBegin()),
-                 SourceLocToDebugLoc(R.getEnd()));
-
-  const Expr *Inc = S.getInc();
-  assert(Inc && "_Cilk_for loop has no increment");
-  //llvm::BasicBlock *Preattach = createBasicBlock("pfor.preattach");
-  //llvm::errs() << (void*) Preattach << "\n";
-  JumpDest Preattach = getJumpDestInCurrentScope("pfor.preattach");
-  Continue = getJumpDestInCurrentScope("pfor.inc");
-
-  // Store the blocks to use for break and continue.
-  BreakContinueStack.push_back(BreakContinue(Preattach, Preattach));
-
-  // Create a cleanup scope for the condition variable cleanups.
-  LexicalScope ConditionScope(*this, S.getSourceRange());
-
-  auto temp = AllocaInsertPt;
-
-  llvm::BasicBlock *SyncContinueBlock = createBasicBlock("pfor.end.continue");
-  bool madeSync = false;
+  EmitBlock(ThenBlock);
   {
-    // // If the for statement has a condition scope, emit the local variable
-    // // declaration.
-    // if (S.getConditionVariable()) {
-    //   EmitAutoVarDecl(*S.getConditionVariable());
+    CilkForRAII CfRAII (this);
+    RunCleanupsScope Scope(*this);
+    const Expr *LoopCountExpr = S.getLoopCount();
+    if(!CapturedStmtInfo)
+      CapturedStmtInfo = &CSInfo;
+    llvm::Value *LoopCount = EmitAnyExpr(LoopCountExpr).getScalarVal();
+    // Initialize the captured struct.
+    LValue CapStruct = InitCapturedStruct(*CS);
+    llvm::LLVMContext &Ctx = CGM.getLLVMContext();
+    // Get or insert the cilk_for abi function.
+    llvm::Constant *CilkForABI = nullptr;
+    llvm::FunctionType *FTy = nullptr;
+    {
+      llvm::Module &M = CGM.getModule();
+      uint64_t SizeInBits =
+        getContext().getTypeSize(LoopCountExpr->getType());
+      // if (SizeInBits <= 32u) {
+      //   FTy = llvm::TypeBuilder<void(void(void *, uint32_t, uint32_t),
+      //                                void *, uint32_t, int), false>::get(Ctx);
+      //   CilkForABI = M.getOrInsertFunction("__cilkrts_cilk_for_32", FTy);
+      // } else
+      if (SizeInBits <= 64u) {
+        FTy = llvm::TypeBuilder<void(void(void *, uint64_t, uint64_t),
+                                     void *, uint64_t, int), false>::get(Ctx);
+        CilkForABI = M.getOrInsertFunction("__cilkrts_cilk_for_64", FTy);
+      } else
+        llvm_unreachable("unexpected loop count type size");
+    }
+
+    // Call __cilkrts_cilk_for_*(helper, captures, count, grainsize);
+    SmallVector<llvm::Value *, 4> Args(4);
+    Args[0] = Builder.CreateBitCast(Helper, FTy->getParamType(0));
+    Args[1] = Builder.CreatePointerCast(CapStruct.getAddress().getPointer(),
+                                        FTy->getParamType(1));
+    Args[2] = LoopCount;
+    Args[3] = llvm::Constant::getNullValue(FTy->getParamType(3));
+
+    EmitCallOrInvoke(CilkForABI, Args);
+
+    assert(isa<DeclStmt>(S.getInit()));
+    // // Update the Loop Control Variable
+    // if (!isa<DeclStmt>(S.getInit())) {
+    //   Address LCVAddr = Address::invalid();
+    //   auto I = LocalDeclMap.find(S.getLoopControlVar());
+    //   if (I != LocalDeclMap.end())
+    //     LCVAddr = I->second;
+    //   else if (CGCilkForStmtInfo *CFCSI =
+    //            dyn_cast<CGCilkForStmtInfo>(CapturedStmtInfo))
+    //     LCVAddr = CFCSI->getInnerLoopControlVarAddr();
+    //   assert(LCVAddr.getPointer() &&
+    //          "missing inner loop control variable address");
+    //   llvm::Value *LCVValue = Builder.CreateLoad(LCVAddr);
+
+    //   bool IsAdd = true;
+    //   llvm::Value *Delta = nullptr;
+    //   const Expr *IncExpr = S.getInc();
+    //   if (const UnaryOperator *Inc = dyn_cast<UnaryOperator>(IncExpr)) {
+    //     Delta = LoopCount;
+    //     IsAdd = Inc->isIncrementOp();
+    //   } else if (const BinaryOperator *Inc = dyn_cast<BinaryOperator>(IncExpr)) {
+    //     llvm::Value *RHS = EmitScalarExpr(Inc->getRHS());
+    //     assert(RHS->getType()->isIntegerTy() && "increment not integer type");
+    //     RHS = Builder.CreateSExtOrTrunc(RHS, LoopCount->getType());
+    //     Delta = Builder.CreateMul(RHS, LoopCount);
+    //     IsAdd = (Inc->getOpcode() == BO_AddAssign);
+    //   } else
+    //     llvm_unreachable("unexpected increment expression");
+
+    //   llvm::Value *Update = 0;
+    //   if (LCVValue->getType()->isPointerTy()) {
+    //     if (!IsAdd) Delta = Builder.CreateNeg(Delta);
+    //     Update = Builder.CreateGEP(LCVValue, Delta);
+    //   } else {
+    //     Delta = Builder.CreateSExtOrTrunc(Delta, LCVValue->getType());
+    //     llvm::Instruction::BinaryOps Op = (IsAdd) ? llvm::Instruction::Add
+    //       : llvm::Instruction::Sub;
+    //     Update = Builder.CreateBinOp(Op, LCVValue, Delta);
+    //   }
+    //   Builder.CreateStore(Update, LCVAddr);
     // }
 
+    EmitBranch(ContBlock);
+  }
+
+  EmitBlock(ContBlock, true);
+  return;
+//   }
+
+//   const Expr *Cond = S.getCond();
+//   assert(Cond && "_Cilk_for loop has no condition");
+
+//   // Start the loop with a block that tests the condition.
+//   // If there's an increment, the continue scope will be overwritten
+//   // later.
+//   JumpDest Continue = getJumpDestInCurrentScope("pfor.cond");
+//   llvm::BasicBlock *CondBlock = Continue.getBlock();
+//   EmitBlock(CondBlock);
+
+//   LoopStack.setSpawnStrategy(LoopAttributes::DAC);
+//   // LoopStack.push(CondBlock, CGM.getContext(), ForAttrs, DL);
+//   const SourceRange &R = S.getSourceRange();
+//   LoopStack.push(CondBlock, CGM.getContext(), ForAttrs,
+//                  SourceLocToDebugLoc(R.getBegin()),
+//                  SourceLocToDebugLoc(R.getEnd()));
+
+//   const Expr *Inc = S.getInc();
+//   assert(Inc && "_Cilk_for loop has no increment");
+//   //llvm::BasicBlock *Preattach = createBasicBlock("pfor.preattach");
+//   //llvm::errs() << (void*) Preattach << "\n";
+//   JumpDest Preattach = getJumpDestInCurrentScope("pfor.preattach");
+//   Continue = getJumpDestInCurrentScope("pfor.inc");
+
+//   // Store the blocks to use for break and continue.
+//   BreakContinueStack.push_back(BreakContinue(Preattach, Preattach));
+
+//   // Create a cleanup scope for the condition variable cleanups.
+//   LexicalScope ConditionScope(*this, S.getSourceRange());
+
+//   auto temp = AllocaInsertPt;
+
+//   llvm::BasicBlock *SyncContinueBlock = createBasicBlock("pfor.end.continue");
+//   bool madeSync = false;
+//   {
+//     // // If the for statement has a condition scope, emit the local variable
+//     // // declaration.
+//     // if (S.getConditionVariable()) {
+//     //   EmitAutoVarDecl(*S.getConditionVariable());
+//     // }
+
+//     llvm::BasicBlock *ExitBlock = LoopExit.getBlock();
+//     // If there are any cleanups between here and the loop-exit scope,
+//     // create a block to stage a loop exit along.
+//     if (ForScope.requiresCleanups())
+//       ExitBlock = createBasicBlock("pfor.cond.cleanup");
+
+//     // As long as the condition is true, iterate the loop.
+//     llvm::BasicBlock *DetachBlock = createBasicBlock("pfor.detach");
+//     llvm::BasicBlock *ForBody = createBasicBlock("pfor.body");
+
+//     // C99 6.8.5p2/p4: The first substatement is executed if the expression
+//     // compares unequal to 0.  The condition must be a scalar type.
+//     llvm::Value *BoolCondVal = EvaluateExprAsBool(S.getCond());
+//     Builder.CreateCondBr(
+//         BoolCondVal, DetachBlock, ExitBlock,
+//         createProfileWeightsForLoop(S.getCond(), getProfileCount(S.getBody())));
+
+//     if (ExitBlock != LoopExit.getBlock()) {
+//       EmitBlock(ExitBlock);
+//       Builder.CreateSync(SyncContinueBlock);
+//       EmitBlock(SyncContinueBlock);
+//       madeSync = true;
+//       EmitBranchThroughCleanup(LoopExit);
+//     }
+
+//     EmitBlock(DetachBlock);
+//     Builder.CreateDetach(ForBody, Continue.getBlock());
+
+
+//   llvm::Value *Undef = llvm::UndefValue::get(Int32Ty);
+//   AllocaInsertPt = new llvm::BitCastInst(Undef, Int32Ty, "", ForBody);
+// //  if (Builder.isNamePreserving())
+// //    AllocaInsertPt->setName("detallocapt");
+
+
+//     EmitBlock(ForBody);
+//   }
+
+//   incrementProfileCounter(&S);
+
+//   {
+//     // Create a separate cleanup scope for the body, in case it is not
+//     // a compound statement.
+//     RunCleanupsScope BodyScope(*this);
+//     EmitStmt(S.getBody());
+//     Builder.CreateBr(Preattach.getBlock());
+//   }
+
+//   {
+//     EmitBlock(Preattach.getBlock());
+//     Builder.CreateReattach(Continue.getBlock());
+
+//     //AllocaInsertPt->eraseFromParent();
+//     AllocaInsertPt = temp;
+//   }
+
+//   // Emit the increment next.
+//   EmitBlock(Continue.getBlock());
+//   EmitStmt(Inc);
+
+//   BreakContinueStack.pop_back();
+
+//   ConditionScope.ForceCleanup();
+
+//   EmitStopPoint(&S);
+//   EmitBranch(CondBlock);
+
+//   ForScope.ForceCleanup();
+
+//   LoopStack.pop();
+//   // Emit the fall-through block.
+//   EmitBlock(LoopExit.getBlock(), true);
+//   if (!madeSync) {
+//     Builder.CreateSync(SyncContinueBlock);
+//     EmitBlock(SyncContinueBlock);
+//   }
+}
+
+void CodeGenFunction::EmitCilkForHelperBody(const Stmt *S) {
+  // The outlined function for a Cilk for statement looks like
+  //
+  // void helper(context, low, high) {
+  //   for (index = low /*, other-initialization/;
+  //        index < high;
+  //        ++index /*, loop-increment*/) {
+  //     /* loop-body */
+  //   }
+  // }
+  //
+  // This function is a simplified version of EmitForStmt with the partial
+  // knowledge of the loop head structure. For example, the loop condition
+  // always exists and there is no loop condition variable declaration.
+
+  assert(CapturedStmtInfo && CapturedStmtInfo->getKind() == CR_CilkFor &&
+           "codegen info expected");
+  CGCilkForStmtInfo *CilkForInfo =
+      reinterpret_cast<CGCilkForStmtInfo*>(CapturedStmtInfo);
+  const CilkForStmt &CilkFor = CilkForInfo->getCilkForStmt();
+  const CapturedDecl *CD = cast<CapturedStmt>(CilkFor.getBody())->getCapturedDecl();
+  auto Low = LocalDeclMap.find(CD->getParam(1))->second;
+  auto High = LocalDeclMap.find(CD->getParam(2))->second;
+
+  // Find the type for the index variable.
+  llvm::Type *VarType = Low.getPointer()->getType();
+  assert(VarType->isPointerTy() && "pointer type expected");
+  VarType = cast<llvm::PointerType>(VarType)->getElementType();
+  assert((VarType->isIntegerTy(32) || VarType->isIntegerTy(64))
+         && "unexpected type size");
+
+  auto Index = CreateDefaultAlignTempAlloca(VarType, "__index.addr");
+  High = Address(Builder.CreatePointerCast(High.getPointer(), Index.getType()),
+                 High.getAlignment());
+
+  JumpDest LoopExit = getJumpDestInCurrentScope("loop.end");
+  RunCleanupsScope LoopScope(*this);
+
+  // Emit the loop initialization.
+  {
+    // Initialize Low.
+    Builder.CreateStore(Builder.CreateLoad(Low), Index);
+
+  //   // Initialize the inner loop control variable.
+  //   const VarDecl *D = CilkFor.getInnerLoopControlVar();
+  //   AutoVarEmission Emission = EmitAutoVarAlloca(*D);
+  //   EmitAutoVarInit(Emission);
+  //   EmitAutoVarCleanups(Emission);
+
+  //   // Keep track of the loop control variable and the address of its
+  //   // corresponding inner copy so that any reference to the loop control
+  //   // variable will reference its inner adjusted copy instead and this
+  //   // correction allows nested _Cilk_for statements.
+  //   auto Addr = Emission.getAllocatedAddress();
+  //   CilkForInfo->setInnerLoopControlVarAddr(Addr);
+
+  //   // Emit the adjustment on the inner loop control variable.
+  //   EmitStmt(CilkFor.getInnerLoopVarAdjust());
+  }
+
+  // Emit the loop condition.
+  llvm::BasicBlock *CondBlock = createBasicBlock("loop.cond");
+  {
+    EmitBlock(CondBlock);
     llvm::BasicBlock *ExitBlock = LoopExit.getBlock();
+
+    const SourceRange &R = S->getSourceRange();
+    LoopStack.setParallel();
+    LoopStack.push(CondBlock,
+                   SourceLocToDebugLoc(R.getBegin()),
+                   SourceLocToDebugLoc(R.getEnd()));
+
     // If there are any cleanups between here and the loop-exit scope,
     // create a block to stage a loop exit along.
-    if (ForScope.requiresCleanups())
-      ExitBlock = createBasicBlock("pfor.cond.cleanup");
+    if (LoopScope.requiresCleanups())
+      ExitBlock = createBasicBlock("loop.cond.cleanup");
 
     // As long as the condition is true, iterate the loop.
-    llvm::BasicBlock *DetachBlock = createBasicBlock("pfor.detach");
-    llvm::BasicBlock *ForBody = createBasicBlock("pfor.body");
+    llvm::BasicBlock *LoopBody = createBasicBlock("loop.body");
 
-    // C99 6.8.5p2/p4: The first substatement is executed if the expression
-    // compares unequal to 0.  The condition must be a scalar type.
-    llvm::Value *BoolCondVal = EvaluateExprAsBool(S.getCond());
-    Builder.CreateCondBr(
-        BoolCondVal, DetachBlock, ExitBlock,
-        createProfileWeightsForLoop(S.getCond(), getProfileCount(S.getBody())));
+    QualType CmpTy1 = CD->getParam(1)->getType();
+    llvm::Value *CondVal = nullptr;
+    if (CmpTy1->hasSignedIntegerRepresentation()) {
+      CondVal = Builder.CreateICmpSLT(Builder.CreateLoad(Index),
+                                      Builder.CreateLoad(High));
+    } else {
+      CondVal = Builder.CreateICmpULT(Builder.CreateLoad(Index),
+                                      Builder.CreateLoad(High));
+    }
+    Builder.CreateCondBr(CondVal, LoopBody, ExitBlock);
 
     if (ExitBlock != LoopExit.getBlock()) {
       EmitBlock(ExitBlock);
-      Builder.CreateSync(SyncContinueBlock);
-      EmitBlock(SyncContinueBlock);
-      madeSync = true;
       EmitBranchThroughCleanup(LoopExit);
     }
 
-    EmitBlock(DetachBlock);
-    Builder.CreateDetach(ForBody, Continue.getBlock());
-
-
-  llvm::Value *Undef = llvm::UndefValue::get(Int32Ty);
-  AllocaInsertPt = new llvm::BitCastInst(Undef, Int32Ty, "", ForBody);
-//  if (Builder.isNamePreserving())
-//    AllocaInsertPt->setName("detallocapt");
-
-
-    EmitBlock(ForBody);
+    EmitBlock(LoopBody);
   }
 
-  incrementProfileCounter(&S);
+  JumpDest Continue = getJumpDestInCurrentScope("loop.inc");
 
+  // Store the blocks to use for break and continue.
+  BreakContinueStack.push_back(BreakContinue(LoopExit, Continue));
+
+  // Emit the loop body.
   {
     // Create a separate cleanup scope for the body, in case it is not
     // a compound statement.
     RunCleanupsScope BodyScope(*this);
-    EmitStmt(S.getBody());
-    Builder.CreateBr(Preattach.getBlock());
+    EmitStmt(S);
   }
 
+  // Emit the loop increment.
   {
-    EmitBlock(Preattach.getBlock());
-    Builder.CreateReattach(Continue.getBlock());
+    EmitBlock(Continue.getBlock());
+    // EmitStmt(CilkFor.getInc());
+    // Increment low.
+    llvm::Value *IncLow = Builder.CreateAdd(Builder.CreateLoad(Low),
+                                            llvm::ConstantInt::get(VarType, 1));
+    Builder.CreateStore(IncLow, Low);
 
-    //AllocaInsertPt->eraseFromParent();
-    AllocaInsertPt = temp;
+    // Increment the loop variable and branch back the loop condition.
+    llvm::Value *Inc = Builder.CreateAdd(Builder.CreateLoad(Index),
+                                         llvm::ConstantInt::get(VarType, 1));
+    Builder.CreateStore(Inc, Index);
   }
-
-  // Emit the increment next.
-  EmitBlock(Continue.getBlock());
-  EmitStmt(Inc);
 
   BreakContinueStack.pop_back();
 
-  ConditionScope.ForceCleanup();
-
-  EmitStopPoint(&S);
   EmitBranch(CondBlock);
 
-  ForScope.ForceCleanup();
+  LoopScope.ForceCleanup();
 
   LoopStack.pop();
+
   // Emit the fall-through block.
   EmitBlock(LoopExit.getBlock(), true);
-  if (!madeSync) {
-    Builder.CreateSync(SyncContinueBlock);
-    EmitBlock(SyncContinueBlock);
-  }
 }
 
 void CodeGenFunction::EmitDeclStmt(const DeclStmt &S) {

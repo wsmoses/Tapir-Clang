@@ -1526,6 +1526,23 @@ CapturedRegionScopeInfo *Sema::getCurCapturedRegion() {
   return dyn_cast<CapturedRegionScopeInfo>(FunctionScopes.back());
 }
 
+// void Sema::PushCilkForScope(Scope *S, CapturedDecl *CD, RecordDecl *RD,
+//                             const VarDecl *LoopControlVariable) {
+//   CilkForScopeInfo *CSI =
+//       new CilkForScopeInfo(getDiagnostics(), S, CD, RD, CD->getContextParam(),
+//                            LoopControlVariable);
+
+//   CSI->ReturnType = Context.VoidTy;
+//   FunctionScopes.push_back(CSI);
+// }
+
+// CilkForScopeInfo *Sema::getCurCilkFor() {
+//   if (FunctionScopes.empty())
+//     return nullptr;
+
+//   return dyn_cast<CilkForScopeInfo>(FunctionScopes.back());
+// }
+
 const llvm::MapVector<FieldDecl *, Sema::DeleteLocs> &
 Sema::getMismatchingDeleteExpressions() const {
   return DeleteExprs;

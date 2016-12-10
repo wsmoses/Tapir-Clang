@@ -2777,554 +2777,6 @@ Sema::ActOnCilkSyncStmt(SourceLocation SyncLoc) {
   return new (Context) CilkSyncStmt(SyncLoc);
 }
 
-/// Return the stride expression from the increment portion of a _Cilk_for loop
-/// that satisfies one of the following formats:
-///
-///   var += <expr not using var>
-///   var -= <expr not using var>
-///
-/// Return null if the increment does not satisfy one of the specified formats.
-static Expr *GetCilkForStride(Sema &S, llvm::SmallPtrSetImpl<VarDecl *> &Decls,
-                              Expr *Third) {
-  if (const CompoundAssignOperator *CAO =
-      dyn_cast_or_null<CompoundAssignOperator>(Third)) {
-    // Only get an expression to extract if Third is in a canonical form with
-    // Decls only in the LHS.
-    bool DeclUseInRHS =
-      DeclFinder(S, Decls, CAO->getRHS()).FoundDeclInUse();
-    bool DeclUseInLHS =
-      DeclFinder(S, Decls, CAO->getLHS()).FoundDeclInUse();
-    if (!(DeclUseInLHS && !DeclUseInRHS))
-      return nullptr;
-
-    switch(CAO->getOpcode()) {
-    default: return nullptr;
-    case BO_AddAssign:
-    case BO_SubAssign:
-      return CAO->getRHS();
-    }
-  }
-  return nullptr;
-}
-
-/// Rewrite the loop control of simple _Cilk_for loops into a form that LLVM
-/// will have an easier time analyzing.  The transformation looks as follows:
-///
-///   _Cilk_for (loop-var = init-expr;
-///              loop-var relation-compare end-expr;
-///              loop-var compound-assign stride-expr)
-///     body-stmt
-///   =>
-///   _Cilk_for (__begin = 0, __end = modified-end-expr;
-///              __begin relation-compare __end;
-///              __begin-update-expr)
-///   { loop-var = __begin * stride-expr;  body-stmt }
-///
-/// where
-///
-///   modified-end-expr := (range-expr / stride-expr) + 1
-///
-/// and
-///
-///   range-expr := end-expr - init-expr - 1   if relation-compare is LT or GT
-///   range-expr := end-expr - init-expr       if relation-cpmpare is LE or GE
-///
-/// Essentially, we treat simple _Cilk_for loops as syntactic sugar for slightly
-/// more complex loops that often match the programmer's intuition as to how the
-/// loop should behave.
-StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
-                                         SourceLocation LParenLoc,
-                                         Stmt *First,
-                                         Expr *Condition,
-                                         Expr *Increment,
-                                         SourceLocation RParenLoc,
-                                         Stmt *Body) {
-  Scope *S = getCurScope();
-
-  // Get the single loop variable declared.
-  DeclStmt *LoopVarDS = cast<DeclStmt>(First);
-  if (!LoopVarDS->isSingleDecl())
-    return StmtEmpty();
-  VarDecl *LoopVar = dyn_cast<VarDecl>(LoopVarDS->getSingleDecl());
-  if (!LoopVar)
-    return StmtEmpty();
-
-  // Get the loop variable initialization.
-  Expr *LoopVarInit = LoopVar->getInit();
-  if (!LoopVarInit)
-    return StmtEmpty();
-
-  // Get the loop-limit expression, which the loop variable is compared against.
-  BinaryOperator *Cond = dyn_cast_or_null<BinaryOperator>(Condition);
-  if (!Cond || !Cond->isComparisonOp())
-    return StmtEmpty();
-
-  llvm::SmallPtrSet<VarDecl *, 1> Decls;
-  Decls.insert(LoopVar);
-  bool DeclUseInRHS =
-    DeclFinder(*this, Decls, Cond->getRHS()).FoundDeclInUse();
-  bool DeclUseInLHS =
-    DeclFinder(*this, Decls, Cond->getLHS()).FoundDeclInUse();
-  if ((DeclUseInLHS && DeclUseInRHS) || (!DeclUseInLHS && !DeclUseInRHS))
-    return StmtEmpty();
-
-  // Get the loop-limit expression.
-  Expr *LimitExpr;
-  if (DeclUseInLHS)
-    LimitExpr = Cond->getRHS();
-  else if (DeclUseInRHS)
-    LimitExpr = Cond->getLHS();
-
-  // Get the loop stride.
-  Expr *Stride = GetCilkForStride(*this, Decls, Increment);
-  if (!Stride)
-    return StmtEmpty();
-
-  const CompoundAssignOperator *CAO =
-    dyn_cast<CompoundAssignOperator>(Increment);
-  if (!CAO)
-    return StmtEmpty();
-
-  // Determine the type of comparison.
-  //
-  // TODO? For now, this function only recognizes relational comparisons (LT,
-  // GT, LE, GE), assuming that, if the programmer uses anything else, then they
-  // will do the right thing themselves.  This behavior might be worth
-  // generalizing in the future.
-  bool RelationCompare = false;
-  bool CompareWithCeiling = false;
-  switch(Cond->getOpcode()) {
-  default: break;
-  case BO_LT:
-  case BO_GT:
-    CompareWithCeiling = true;
-  case BO_LE:
-  case BO_GE:
-    RelationCompare = true;
-    break;
-  }
-  if (!RelationCompare)
-    return StmtEmpty();
-
-  // Compute the range of this _Cilk_for loop: limit - init.
-  ExprResult Range = BuildBinOp(S, CilkForLoc, BO_Sub, LimitExpr, LoopVarInit);
-  if (Range.isInvalid())
-    return StmtError();
-
-  // At this point, we have confirmed that this loop is a simple _Cilk_for loop.
-  // Now rewrite the loop control.
-  //
-  // TODO: Check the behavior of this routine in handling loops with negative
-  // strides, and fix it accordingly.
-
-  // If the comparison requires the ceiling of the range, replace Range with
-  // Range - 1.
-  if (CompareWithCeiling)
-    Range = BuildBinOp(S, CilkForLoc, BO_Sub, Range.get(),
-                       ActOnIntegerConstant(CilkForLoc, 1).get());
-
-  // Build Range/Stride.
-  ExprResult NewLimit = BuildBinOp(S, CilkForLoc, BO_Div, Range.get(), Stride);
-
-  // Build Range/Stride + 1
-  NewLimit = BuildBinOp(S, CilkForLoc, BO_Add, NewLimit.get(),
-                        ActOnIntegerConstant(CilkForLoc, 1).get());
-
-  // Add new declarations for replacement loop control variables.
-  QualType LoopVarTy = LoopVar->getType();
-  // Add declaration for new beginning loop control variable.
-  VarDecl *BeginVar = BuildForRangeVarDecl(*this, CilkForLoc, LoopVarTy,
-                                           "__begin");
-  AddInitializerToDecl(BeginVar, ActOnIntegerConstant(CilkForLoc, 0).get(),
-                       /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
-  FinalizeDeclaration(BeginVar);
-  CurContext->addHiddenDecl(BeginVar);
-  // Add declaration for new end loop control variable.
-  VarDecl *EndVar = BuildForRangeVarDecl(*this, CilkForLoc, LoopVarTy,
-                                         "__end");
-  AddInitializerToDecl(EndVar, NewLimit.get(), /*DirectInit=*/false,
-                       /*TypeMayContainAuto=*/false);
-  FinalizeDeclaration(EndVar);
-  CurContext->addHiddenDecl(EndVar);
-
-  // Combine declarations into a single DeclStmt.
-  SmallVector<Decl *, 2> NewDecls;
-  NewDecls.push_back(BeginVar);
-  NewDecls.push_back(EndVar);
-  DeclGroupPtrTy DG = BuildDeclaratorGroup(MutableArrayRef<Decl *>(NewDecls),
-                                           /*TypeMayContainAuto=*/false);
-  StmtResult NewInit = ActOnDeclStmt(DG, CilkForLoc, CilkForLoc);
-  if (NewInit.isInvalid())
-    return StmtError();
-
-  // Replace the comparison with a comparison on the new loop control variables.
-
-  // Create a new condition expression that uses the new VarDecl
-  // in place of the lifted expression.
-  ExprResult BeginRef = BuildDeclRefExpr(BeginVar, LoopVarTy, VK_LValue,
-                                         CilkForLoc);
-  ExprResult EndRef = BuildDeclRefExpr(EndVar, LoopVarTy, VK_LValue,
-                                       CilkForLoc);
-  ExprResult NewCond;
-  if (DeclUseInLHS)
-    NewCond = BuildBinOp(S, CilkForLoc, Cond->getOpcode(), BeginRef.get(),
-                         EndRef.get());
-  else // DeclUseInRHS
-    NewCond = BuildBinOp(S, CilkForLoc, Cond->getOpcode(), EndRef.get(),
-                         BeginRef.get());
-  if (NewCond.isInvalid())
-    return StmtError();
-
-  // Create a new increment operation on the new beginning variable, and add it
-  // to the existing increment operation.
-  ExprResult NewInc;
-  switch (CAO->getOpcode()) {
-  default: break;  // Should not reach this case if we have a Stride.
-  case BO_AddAssign:
-    NewInc = BuildUnaryOp(S, CilkForLoc, UO_PreInc, BeginRef.get());
-    break;
-  case BO_SubAssign:
-    NewInc = BuildUnaryOp(S, CilkForLoc, UO_PreDec, BeginRef.get());
-    break;
-  }
-  if (NewInc.isInvalid())
-    return StmtError();
-
-  // *First = NewInit.get();
-  // *Second = NewCond.get();
-  // *Third = NewInc.get();
-
-  // Return a new statement for initializing the old loop variable.
-  ExprResult NewLoopVarInit = BuildBinOp(S, CilkForLoc, BO_Mul,
-                                         BeginRef.get(), Stride);
-  AddInitializerToDecl(LoopVar, NewLoopVarInit.get(),
-                       /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
-
-  Stmt* NewBody;
-  if (isa<NullStmt>(Body))
-    NewBody = new (Context) CompoundStmt(Context, { LoopVarDS },
-                                         LParenLoc, RParenLoc);
-  else
-    NewBody = new (Context) CompoundStmt(Context, { LoopVarDS, Body },
-                                         LParenLoc, RParenLoc);
-
-  return new (Context) CilkForStmt(Context, NewInit.get(), nullptr,
-                                   NewCond.get(), NewInc.get(), NewBody,
-                                   CilkForLoc, LParenLoc, RParenLoc);
-}
-
-/// Examine the condition of the _Cilk_for loop to lift the evaluation of the
-/// end condition of a _Cilk_for loop out of the loop.  Intuitively, this
-/// routine transforms _Cilk_for loops as follows:
-///
-///   _Cilk_for(loop-var-decl;
-///             loop-var-expr comparison-op end-expr;
-///   =>
-///   _Cilk_for(loop-var-decl, __end = end-expr;
-///             loop-var-expr comparison-op __end;
-///
-/// Here, loop-var-expr can use variables declared in loop-var-decl, while
-/// end-expr must not use any such variables.  In general, the loop condition
-/// can swap the positions of loop-var-expr and end-expr.
-StmtResult Sema::LiftCilkForLoopLimit(SourceLocation CilkForLoc,
-                                      Stmt *First, Expr **Second) {
-  if (!First || !Second)
-    return StmtEmpty();
-
-  // Get the single loop variable declared.
-  DeclStmt *LoopVarDS = cast<DeclStmt>(First);
-  if (!LoopVarDS->isSingleDecl())
-    return StmtEmpty();
-  VarDecl *LoopVar = dyn_cast<VarDecl>(LoopVarDS->getSingleDecl());
-  if (!LoopVar)
-    return StmtEmpty();
-
-  // // Extract decls from First.  If First is not a decl statement, give
-  // // up.
-  // llvm::SmallPtrSet<VarDecl*, 8> Decls;
-  // if (DeclStmt *DS = dyn_cast<DeclStmt>(First)) {
-  //   for (auto *DI : DS->decls()) {
-  //     VarDecl *VD = dyn_cast<VarDecl>(DI);
-  //     Decls.insert(VD);
-  //   }
-  // } else {
-  //   return StmtEmpty();
-  // }
-
-  // Only get an expression to extract if Decl's appear in just one
-  // side of a comparison.
-  BinaryOperator *E = dyn_cast<BinaryOperator>(*Second);
-  if (!E || !E->isComparisonOp())
-    return StmtEmpty();
-
-  llvm::SmallPtrSet<VarDecl *, 1> Decls;
-  Decls.insert(LoopVar);
-  bool DeclUseInRHS = DeclFinder(*this, Decls, E->getRHS()).FoundDeclInUse();
-  bool DeclUseInLHS = DeclFinder(*this, Decls, E->getLHS()).FoundDeclInUse();
-  Expr *ToExtract;
-  if ((DeclUseInLHS && DeclUseInRHS) ||
-      (!DeclUseInLHS && !DeclUseInRHS))
-    return StmtEmpty();
-
-  // Get the expression to lift.
-  if (DeclUseInLHS)
-    ToExtract = E->getRHS();
-  else if (DeclUseInRHS)
-    ToExtract = E->getLHS();
-
-  // Create a new VarDecl that stores the result of the lifted
-  // expression.
-  Scope *S = getCurScope();
-  SourceLocation EndLoc = ToExtract->getLocStart();
-  QualType EndType = LoopVar->getType();
-  QualType EndInitType = ToExtract->getType();
-  // Hijacking this method for handling range loops to build the
-  // declaration for the end of the loop.
-  VarDecl *EndVar = BuildForRangeVarDecl(*this, EndLoc, EndType,
-                                         "__end");
-  AddInitializerToDecl(EndVar, ToExtract, /*DirectInit=*/false,
-                       /*TypeMayContainAuto=*/false);
-  FinalizeDeclaration(EndVar);
-  CurContext->addHiddenDecl(EndVar);
-
-  // Combine declarations into a single DeclStmt.
-  SmallVector<Decl *, 2> NewDecls;
-  NewDecls.push_back(LoopVar);
-  NewDecls.push_back(EndVar);
-  DeclGroupPtrTy DG = BuildDeclaratorGroup(MutableArrayRef<Decl *>(NewDecls),
-                                           /*TypeMayContainAuto=*/false);
-  StmtResult NewInit = ActOnDeclStmt(DG, CilkForLoc, CilkForLoc);
-  if (NewInit.isInvalid())
-    return StmtError();
-
-  // // Create a Decl statement for the new VarDecl.
-  // StmtResult EndDeclStmt =
-  //   ActOnDeclStmt(ConvertDeclToDeclGroup(EndVar), EndLoc, EndLoc);
-
-  // Create a new condition expression that uses the new VarDecl
-  // in place of the lifted expression.
-  ExprResult EndRef = BuildDeclRefExpr(EndVar, EndType,
-                                       VK_LValue, EndLoc);
-  ExprResult NewCondExpr;
-  if (DeclUseInLHS)
-    NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
-                             E->getLHS(), EndRef.get());
-  else if (DeclUseInRHS)
-    NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
-                             EndRef.get(), E->getRHS());
-
-  *Second = NewCondExpr.get();
-  return NewInit;
-}
-
-// /// Examine the condition of the _Cilk_for loop to lift the evaluation of the
-// /// end condition of a _Cilk_for loop out of the loop.  Intuitively, this
-// /// routine transforms _Cilk_for loops as follows:
-// ///
-// ///   _Cilk_for(loop-var-decl;
-// ///             loop-var-expr comparison-op end-expr;
-// ///   =>
-// ///   _Cilk_for(loop-var-decl, __end = end-expr;
-// ///             loop-var-expr comparison-op __end;
-// ///
-// /// Here, loop-var-expr can use variables declared in loop-var-decl, while
-// /// end-expr must not use any such variables.  In general, the loop condition
-// /// can swap the positions of loop-var-expr and end-expr.
-// StmtResult Sema::LiftCilkForLoopLimit(Stmt *First, Expr **Second) {
-//   if (!First || !Second)
-//     return StmtEmpty();
-
-//   // Extract decls from First.  If First is not a decl statement, give
-//   // up.
-//   llvm::SmallPtrSet<VarDecl*, 8> Decls;
-//   if (DeclStmt *DS = dyn_cast<DeclStmt>(First)) {
-//     for (auto *DI : DS->decls()) {
-//       VarDecl *VD = dyn_cast<VarDecl>(DI);
-//       Decls.insert(VD);
-//     }
-//   } else {
-//     return StmtEmpty();
-//   }
-
-//   // Only get an expression to extract if Decl's appear in just one
-//   // side of a comparison.
-//   if (BinaryOperator *E = dyn_cast<BinaryOperator>(*Second)) {
-//     if (!E->isComparisonOp())
-//       return StmtEmpty();
-
-//     bool DeclUseInRHS = DeclFinder(*this, Decls, E->getRHS()).FoundDeclInUse();
-//     bool DeclUseInLHS = DeclFinder(*this, Decls, E->getLHS()).FoundDeclInUse();
-//     Expr *ToExtract;
-//     if ((DeclUseInLHS && DeclUseInRHS) ||
-//         (!DeclUseInLHS && !DeclUseInRHS))
-//       return StmtEmpty();
-
-//     // Get the expression to lift.
-//     if (DeclUseInLHS)
-//       ToExtract = E->getRHS();
-//     else if (DeclUseInRHS)
-//       ToExtract = E->getLHS();
-
-//     // Create a new VarDecl that stores the result of the lifted
-//     // expression.
-//     Scope *S = getCurScope();
-//     SourceLocation EndLoc = ToExtract->getLocStart();
-//     QualType EndType = ToExtract->getType();
-//     // Hijacking this method for handling range loops to build the
-//     // declaration for the end of the loop.
-//     VarDecl *EndVar = BuildForRangeVarDecl(*this, EndLoc, EndType,
-//                                            "__end");
-//     // // Get the stride from the loop increment expression, if it exists.
-//     // Expr *Stride = GetCilkForStride(*this, Decls, *Third);
-//     // bool RelationCompare = false;
-//     // bool CompareWithCeiling = true;
-//     // switch(E->getOpcode()) {
-//     // default: break;
-//     // case BO_LE:
-//     // case BO_GE:
-//     //   CompareWithCeiling = false;
-//     // case BO_LT:
-//     // case BO_GT:
-//     //   RelationCompare = true;
-//     //   break;
-//     // }
-//     // // If we have a stride, modify the extracted loop limit to reflect the
-//     // // stride.
-//     // if (RelationCompare && Stride) {
-//     //   if (CompareWithCeiling) {
-//     //     ExprResult LiteralOne = ActOnIntegerConstant(EndLoc, 1);
-//     //     ExprResult Offset = BuildBinOp(S, EndLoc, BO_Sub,
-//     //                                    Stride, LiteralOne.get());
-//     //     ExprResult NewToExtract = BuildBinOp(S, EndLoc, BO_Add,
-//     //                                          ToExtract, Offset.get());
-//     //     ToExtract = NewToExtract.get();
-//     //   }
-
-//     //   ExprResult NewToExtract = BuildBinOp(S, EndLoc, BO_Div,
-//     //                                        ToExtract, Stride);
-//     //   ToExtract = NewToExtract.get();
-
-//     //   // Replace the strided loop increment expression with a preincrement or
-//     //   // predecrement.
-//     //   if (const CompoundAssignOperator *CAO =
-//     //       dyn_cast<CompoundAssignOperator>(*Third)) {
-//     //     SourceLocation CAOLoc = CAO->getLocStart();
-//     //     ExprResult ReplInc;
-//     //     switch (CAO->getOpcode()) {
-//     //     default: break;  // Should not reach this case if we have a Stride.
-//     //     case BO_AddAssign:
-//     //       ReplInc = BuildUnaryOp(S, CAOLoc, UO_PreInc, CAO->getLHS());
-//     //       break;
-//     //     case BO_SubAssign:
-//     //       ReplInc = BuildUnaryOp(S, CAOLoc, UO_PreDec, CAO->getLHS());
-//     //       break;
-//     //     }
-//     //     *Third = ReplInc.get();
-//     //   }
-//     // }
-//     AddInitializerToDecl(EndVar, ToExtract, /*DirectInit=*/false,
-//                          /*TypeMayContainAuto=*/false);
-//     FinalizeDeclaration(EndVar);
-//     CurContext->addHiddenDecl(EndVar);
-
-//     // Create a Decl statement for the new VarDecl.
-//     StmtResult EndDeclStmt =
-//       ActOnDeclStmt(ConvertDeclToDeclGroup(EndVar), EndLoc, EndLoc);
-
-//     // Create a new condition expression that uses the new VarDecl
-//     // in place of the lifted expression.
-//     ExprResult EndRef = BuildDeclRefExpr(EndVar, EndType,
-//                                          VK_LValue, EndLoc);
-//     ExprResult NewCondExpr;
-//     if (DeclUseInLHS)
-//       NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
-//                                E->getLHS(), EndRef.get());
-//     else if (DeclUseInRHS)
-//       NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
-//                                EndRef.get(), E->getRHS());
-
-//     *Second = NewCondExpr.get();
-//     return EndDeclStmt;
-//   }
-//   return StmtEmpty();
-// }
-
-StmtResult
-Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
-                       Stmt *First, ConditionResult Second, FullExprArg Third,
-                       SourceLocation RParenLoc, Stmt *Body) {
-  if (!getLangOpts().CPlusPlus) {
-    if (DeclStmt *DS = dyn_cast_or_null<DeclStmt>(First)) {
-      // C99 6.8.5p3: The declaration part of a 'for' statement shall only
-      // declare identifiers for objects having storage class 'auto' or
-      // 'register'.
-      for (auto *DI : DS->decls()) {
-        VarDecl *VD = dyn_cast<VarDecl>(DI);
-        if (VD && VD->isLocalVarDecl() && !VD->hasLocalStorage())
-          VD = nullptr;
-        if (!VD) {
-          Diag(DI->getLocation(), diag::err_non_local_variable_decl_in_for);
-          DI->setInvalidDecl();
-        }
-      }
-    }
-  }
-
-  CheckBreakContinueBinding(Second.get().second);
-  CheckBreakContinueBinding(Third.get());
-  Expr* Condition = Second.get().second;
-  CheckForLoopConditionalStatement(*this, Condition, Third.get(), Body);
-  CheckForRedundantIteration(*this, Third.get(), Body);
-
-  // ExprResult SecondResult(second.release());
-  // VarDecl *ConditionVar = nullptr;
-  // if (secondVar) {
-  //   ConditionVar = cast<VarDecl>(secondVar);
-  //   SecondResult = CheckConditionVariable(ConditionVar, CilkForLoc, true);
-  //   SecondResult = ActOnFinishFullExpr(SecondResult.get(), CilkForLoc);
-  //   if (SecondResult.isInvalid())
-  //     return StmtError();
-  // }
-
-  Expr *Increment = Third.release().getAs<Expr>();
-
-  DiagnoseUnusedExprResult(First);
-  DiagnoseUnusedExprResult(Increment);
-  DiagnoseUnusedExprResult(Body);
-
-  // Attempt to process this loop as a simple _Cilk_for loop.
-  StmtResult SimpleCilkFor =
-    HandleSimpleCilkForStmt(CilkForLoc, LParenLoc, First, Condition, Increment,
-                            RParenLoc, Body);
-  if (!SimpleCilkFor.isInvalid() && !SimpleCilkFor.isUnset())
-    return SimpleCilkFor;
-
-  // HandleSimpleCilkForLoop(CilkForLoc, &First, &Condition, &Increment);
-  // if (NewLoopVarDS) {
-  //   Stmt* NewBody = new (Context) CompoundStmt(Context,
-  //                                              { NewLoopVarDS, Body },
-  //                                              LParenLoc, RParenLoc);
-  //   return new (Context) CilkForStmt(Context, First, nullptr,
-  //                                    Condition, Increment, NewBody, CilkForLoc,
-  //                                    LParenLoc, RParenLoc);
-  // }
-
-  if (isa<NullStmt>(Body))
-    getCurCompoundScope().setHasEmptyLoopBodies();
-    
-  // Attempt to find the loop limit and extract it into its own
-  // declaration.
-  StmtResult NewInit = LiftCilkForLoopLimit(CilkForLoc, First, &Condition);
-  assert(!NewInit.isInvalid());
-  if (!NewInit.isUnset())
-    return new (Context) CilkForStmt(Context, NewInit.get(), nullptr, Condition,
-                                     Increment, Body, CilkForLoc, LParenLoc,
-                                     RParenLoc);
-  return new (Context) CilkForStmt(Context, First, nullptr, Condition,
-                                   Increment, Body, CilkForLoc, LParenLoc,
-                                   RParenLoc);
-}
-
 /// \brief Determine whether the given expression is a candidate for
 /// copy elision in either a return statement or a throw expression.
 ///
@@ -4647,4 +4099,750 @@ StmtResult Sema::ActOnCapturedRegionEnd(Stmt *S) {
   PopFunctionScopeInfo();
 
   return Res;
+}
+
+/// Return the stride expression from the increment portion of a _Cilk_for loop
+/// that satisfies one of the following formats:
+///
+///   var += <expr not using var>
+///   var -= <expr not using var>
+///
+/// Return null if the increment does not satisfy one of the specified formats.
+static Expr *GetCilkForStride(Sema &S, llvm::SmallPtrSetImpl<VarDecl *> &Decls,
+                              Expr *Increment) {
+  if (const CompoundAssignOperator *CAO =
+      dyn_cast_or_null<CompoundAssignOperator>(Increment)) {
+    // Only get an expression to extract if Increment is in a canonical form
+    // with Decls only in the LHS.
+    bool DeclUseInRHS =
+      DeclFinder(S, Decls, CAO->getRHS()).FoundDeclInUse();
+    bool DeclUseInLHS =
+      DeclFinder(S, Decls, CAO->getLHS()).FoundDeclInUse();
+    if (!(DeclUseInLHS && !DeclUseInRHS))
+      return nullptr;
+
+    switch(CAO->getOpcode()) {
+    default: return nullptr;
+    case BO_AddAssign:
+      return CAO->getRHS();
+    case BO_SubAssign:
+      return S.BuildUnaryOp(S.getCurScope(), Increment->getExprLoc(),
+                            UO_Minus, CAO->getRHS()).get();
+    }
+  }
+  return nullptr;
+}
+
+ExprResult Sema::CalculateCilkForLoopCount(SourceLocation CilkForLoc,
+                                           Expr *Span, Expr *Increment,
+                                           Expr *StrideExpr, int Dir,
+                                           BinaryOperatorKind Opcode) {
+  // Generate the loop count expression according to the following:
+  // ===========================================================================
+  // |     Condition syntax             |       Loop count                     |
+  // ===========================================================================
+  // | if var < limit or limit > var    | (span-1)/stride + 1                  |
+  // ---------------------------------------------------------------------------
+  // | if var > limit or limit < var    | (span-1)/-stride + 1                 |
+  // ---------------------------------------------------------------------------
+  // | if var <= limit or limit >= var  | span/stride + 1                      |
+  // ---------------------------------------------------------------------------
+  // | if var >= limit or limit <= var  | span/-stride + 1                     |
+  // ---------------------------------------------------------------------------
+  // | if var != limit or limit != var  | if stride is positive,               |
+  // |                                  |            span/stride               |
+  // |                                  | otherwise, span/-stride              |
+  // |                                  | We don't need "+(stride-1)" for the  |
+  // |                                  | span in this case since the incr/decr|
+  // |                                  | operator should add up to the        |
+  // |                                  | limit exactly for a valid loop.      |
+  // ---------------------------------------------------------------------------
+  // Build "-stride"
+  Expr *NegativeStride = BuildUnaryOp(getCurScope(), Increment->getExprLoc(),
+                                      UO_Minus, StrideExpr).get();
+
+  ExprResult LoopCount;
+  if (Opcode == BO_NE) {
+    if (StrideExpr->getType()->isSignedIntegerOrEnumerationType()) {
+      // Build "stride<0"
+      Expr *StrideLessThanZero =
+          BuildBinOp(getCurScope(), CilkForLoc, BO_LT, StrideExpr,
+                     ActOnIntegerConstant(CilkForLoc, 0).get()).get();
+      // Build "(stride<0)?-stride:stride"
+      ExprResult StrideCondExpr =
+          ActOnConditionalOp(CilkForLoc, CilkForLoc, StrideLessThanZero,
+                             NegativeStride, StrideExpr);
+      // Build "-span"
+      Expr *NegativeSpan =
+          BuildUnaryOp(getCurScope(), CilkForLoc, UO_Minus, Span).get();
+
+      // Updating span to be "(stride<0)?-span:span"
+      Span = ActOnConditionalOp(CilkForLoc, CilkForLoc, StrideLessThanZero,
+                                NegativeSpan, Span).get();
+      // Build "span/(stride<0)?-stride:stride"
+      LoopCount = BuildBinOp(getCurScope(), CilkForLoc, BO_Div, Span,
+                             StrideCondExpr.get());
+    } else
+      // Unsigned, no need to compare - Build "span/stride"
+      LoopCount =
+          BuildBinOp(getCurScope(), CilkForLoc, BO_Div, Span, StrideExpr);
+
+  } else {
+    if (Opcode == BO_LT || Opcode == BO_GT)
+      // Updating span to be "span-1"
+      Span =
+          CreateBuiltinBinOp(CilkForLoc, BO_Sub, Span,
+                             ActOnIntegerConstant(CilkForLoc, 1).get()).get();
+
+    // Build "span/stride" if Dir==1, otherwise "span/-stride"
+    LoopCount = BuildBinOp(getCurScope(), CilkForLoc, BO_Div, Span,
+                           (Dir == 1) ? StrideExpr : NegativeStride);
+
+    // Build "span/stride + 1"
+    LoopCount = BuildBinOp(getCurScope(), CilkForLoc, BO_Add, LoopCount.get(),
+                           ActOnIntegerConstant(CilkForLoc, 1).get());
+  }
+
+  QualType LoopCountExprType = LoopCount.get()->getType();
+  QualType LoopCountType = Context.UnsignedLongLongTy;
+  // Loop count should be either u32 or u64 in Cilk Plus.
+  if (Context.getTypeSize(LoopCountExprType) > 64)
+    Diag(CilkForLoc, diag::warn_cilk_for_loop_count_downcast)
+        << LoopCountExprType << LoopCountType;
+  // else if (Context.getTypeSize(LoopCountExprType) <= 32)
+  //   LoopCountType = Context.UnsignedIntTy;
+
+  // Implicitly casting LoopCount to u32/u64.
+  return ImpCastExprToType(LoopCount.get(), LoopCountType, CK_IntegralCast);
+}
+
+StmtResult Sema::HandleCilkForLoopCtl(SourceLocation CilkForLoc,
+                                      SourceLocation LParenLoc,
+                                      Stmt *First,
+                                      ConditionResult Second,
+                                      FullExprArg Third,
+                                      SourceLocation RParenLoc,
+                                      Expr **ReplCond, Expr **ReplInc,
+                                      VarDecl **InitVar, Expr **StrideExpr,
+                                      Expr **LoopCountExpr) {
+  ////////////////////////////////////////////////////////////////////////
+  /// Perform standard checks on start of loop.
+  if (!getLangOpts().CPlusPlus) {
+    if (DeclStmt *DS = dyn_cast_or_null<DeclStmt>(First)) {
+      // C99 6.8.5p3: The declaration part of a 'for' statement shall only
+      // declare identifiers for objects having storage class 'auto' or
+      // 'register'.
+      for (auto *DI : DS->decls()) {
+        VarDecl *VD = dyn_cast<VarDecl>(DI);
+        if (VD && VD->isLocalVarDecl() && !VD->hasLocalStorage())
+          VD = nullptr;
+        if (!VD) {
+          Diag(DI->getLocation(), diag::err_non_local_variable_decl_in_for);
+          DI->setInvalidDecl();
+        }
+      }
+    }
+  }
+
+  CheckBreakContinueBinding(Second.get().second);
+  CheckBreakContinueBinding(Third.get());
+
+  ////////////////////////////////////////////////////////////////////////
+  /// Analyze the control of the _Cilk_for loop.
+  Expr *Condition = Second.get().second;
+  Expr *Increment = Third.release().getAs<Expr>();
+
+  Scope *S = getCurScope();
+
+  // Get the single loop variable declared.
+  DeclStmt *LoopVarDS = cast<DeclStmt>(First);
+  if (!LoopVarDS->isSingleDecl())
+    return StmtEmpty();
+  VarDecl *LoopVar = dyn_cast<VarDecl>(LoopVarDS->getSingleDecl());
+  if (!LoopVar)
+    return StmtEmpty();
+
+  // Get the loop variable initialization.
+  Expr *LoopVarInit = LoopVar->getInit();
+  if (!LoopVarInit)
+    return StmtEmpty();
+  // llvm::errs() << "ActOnStartOfCilkForStmt got loop variable initialization.\n";
+
+  // Get the loop-limit expression, which the loop variable is compared against.
+  Expr *LHS = nullptr, *RHS = nullptr;
+  BinaryOperatorKind CondOp;
+  SourceLocation OpLoc;
+  if (BinaryOperator *BO = dyn_cast<BinaryOperator>(Condition)) {
+    CondOp = BO->getOpcode();
+    OpLoc = BO->getOperatorLoc();
+    LHS = BO->getLHS();
+    RHS = BO->getRHS();
+  } else if (CXXOperatorCallExpr *OO = dyn_cast<CXXOperatorCallExpr>(Condition)) {
+    CondOp = BinaryOperator::getOverloadedOpcode(OO->getOperator());
+    if (OO->getNumArgs() == 2) {
+      OpLoc = OO->getOperatorLoc();
+      LHS = OO->getArg(0);
+      RHS = OO->getArg(1);
+    }
+  }
+
+  if (!LHS || !RHS) {
+    // llvm::errs() << "ActOnStartOfCilkForStmt could not process condition.\n";
+    Condition->dump();
+    return StmtEmpty();
+  }
+
+  llvm::SmallPtrSet<VarDecl *, 1> Decls;
+  Decls.insert(LoopVar);
+  bool DeclUseInRHS =
+    DeclFinder(*this, Decls, RHS).FoundDeclInUse();
+  bool DeclUseInLHS =
+    DeclFinder(*this, Decls, LHS).FoundDeclInUse();
+  if ((DeclUseInLHS && DeclUseInRHS) || (!DeclUseInLHS && !DeclUseInRHS))
+    return StmtEmpty();
+
+  // Get the loop-limit expression.
+  Expr *LimitExpr;
+  if (DeclUseInLHS)
+    LimitExpr = RHS;
+  else if (DeclUseInRHS)
+    LimitExpr = LHS;
+  // llvm::errs() << "ActOnStartOfCilkForStmt found limit expression.\n";
+
+  // Get the loop stride.
+  // First see if Increment is a simple increment or decrement.
+  Expr *Stride = nullptr;
+  if (const UnaryOperator *UO =
+      dyn_cast_or_null<UnaryOperator>(Increment)) {
+    if (UO->isIncrementOp())
+      Stride = ActOnIntegerConstant(Increment->getExprLoc(), 1).get();
+    else if (UO->isDecrementOp())
+      Stride = ActOnIntegerConstant(Increment->getExprLoc(), -1).get();
+  }
+  // Now check if Increment has a stride.
+  if (!Stride)
+    Stride = GetCilkForStride(*this, Decls, Increment);
+  // Otherwise, give up.
+  if (!Stride)
+    return StmtEmpty();
+  // llvm::errs() << "ActOnStartOfCilkForStmt computed stride.\n";
+
+  ////////////////////////////////////////////////////////////////////////
+  /// At this point, we should have everything we need to construct a call to
+  /// the Cilk ABI to handle this _Cilk_for loop, unless we need to resolve
+  /// templates.
+
+  StmtResult NewInit = StmtEmpty();
+  *ReplCond = Condition;
+  *ReplInc = Increment;
+  *StrideExpr = Stride;
+
+  if (!CurContext->isDependentContext()) {
+    // llvm::errs() << "ActOnStartOfCilkForStmt rewriting loop control.\n";
+    // Compute the loop count of this _Cilk_for loop: limit - init.
+    ExprResult Range = BuildBinOp(S, CilkForLoc, BO_Sub, LimitExpr, LoopVarInit);
+
+    if (Range.isInvalid()) {
+      // error getting operator-()
+      Diag(CilkForLoc, diag::err_cilk_for_difference_ill_formed);
+      Diag(LoopVarInit->getLocStart(), diag::note_cilk_for_begin_expr)
+        << LoopVarInit->getSourceRange();
+      Diag(LimitExpr->getLocStart(), diag::note_cilk_for_end_expr)
+        << LimitExpr->getSourceRange();
+      return StmtError();
+    }
+
+    if (!Range.get()->getType()->isIntegralOrEnumerationType()) {
+      // non-integral type
+      Diag(CilkForLoc, diag::err_non_integral_cilk_for_difference_type)
+        << Range.get()->getType();
+      Diag(LoopVarInit->getLocStart(), diag::note_cilk_for_begin_expr)
+        << LoopVarInit->getSourceRange();
+      Diag(LimitExpr->getLocStart(), diag::note_cilk_for_end_expr)
+        << LimitExpr->getSourceRange();
+      return StmtError();
+    }
+
+    // Get direction of condition
+    int Direction = 0;
+    switch (CondOp) {
+    case BO_NE:
+      Direction = 0;
+      break;
+    case BO_LT:
+    case BO_LE:
+      Direction = 1;
+      break;
+    case BO_GT:
+    case BO_GE:
+      Direction = -1;
+      break;
+    default:
+      Diag(OpLoc, diag::err_cilk_for_invalid_cond_operator);
+      return StmtError();
+    }
+
+    // Get the loop count for this loop
+    ExprResult LoopCount = CalculateCilkForLoopCount(CilkForLoc, Range.get(),
+                                                     Increment, Stride,
+                                                     Direction, CondOp);
+
+    // Add new declarations for replacement loop control variables.
+    // QualType LoopVarTy = LoopVar->getType();
+    QualType LoopVarTy = LoopCount.get()->getType();
+    // llvm::errs() << "ActOnStartOfCilkForStmt creating InitVar.\n";
+    // Add declaration to store the old loop var initialization.
+    *InitVar = BuildForRangeVarDecl(*this, CilkForLoc, LoopVarTy,
+                                    "__init");
+    AddInitializerToDecl(*InitVar, LoopVarInit,
+                         /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
+    FinalizeDeclaration(*InitVar);
+    CurContext->addHiddenDecl(*InitVar);
+    // llvm::errs() << "ActOnStartOfCilkForStmt creating BeginVar.\n";
+    // Add declaration for new beginning loop control variable.
+    VarDecl *BeginVar = BuildForRangeVarDecl(*this, CilkForLoc, LoopVarTy,
+                                             "__begin");
+    AddInitializerToDecl(BeginVar, ActOnIntegerConstant(CilkForLoc, 0).get(),
+                         /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
+    FinalizeDeclaration(BeginVar);
+    CurContext->addHiddenDecl(BeginVar);
+    // llvm::errs() << "ActOnStartOfCilkForStmt creating EndVar.\n";
+    // Add declaration for new end loop control variable.
+    VarDecl *EndVar = BuildForRangeVarDecl(*this, CilkForLoc, LoopVarTy,
+                                           "__end");
+    AddInitializerToDecl(EndVar, LoopCount.get(), /*DirectInit=*/false,
+                         /*TypeMayContainAuto=*/false);
+    FinalizeDeclaration(EndVar);
+    CurContext->addHiddenDecl(EndVar);
+
+    // Combine declarations into a single DeclStmt.
+    // llvm::errs() << "ActOnStartOfCilkForStmt creating new initx.\n";
+    SmallVector<Decl *, 3> NewDecls;
+    NewDecls.push_back(*InitVar);
+    NewDecls.push_back(BeginVar);
+    NewDecls.push_back(EndVar);
+    DeclGroupPtrTy DG = BuildDeclaratorGroup(MutableArrayRef<Decl *>(NewDecls),
+                                             /*TypeMayContainAuto=*/false);
+    NewInit = ActOnDeclStmt(DG, CilkForLoc, CilkForLoc);
+    if (NewInit.isInvalid())
+      return StmtError();
+
+    // Replace the comparison with a comparison on the new loop control variables.
+
+    // Create a new condition expression that uses the new VarDecl
+    // in place of the lifted expression.
+    ExprResult BeginRef = BuildDeclRefExpr(BeginVar, LoopVarTy, VK_LValue,
+                                           CilkForLoc);
+    ExprResult EndRef = BuildDeclRefExpr(EndVar, LoopVarTy, VK_LValue,
+                                         CilkForLoc);
+    ExprResult NewCond;
+    if (DeclUseInLHS)
+      NewCond = BuildBinOp(S, CilkForLoc, CondOp, BeginRef.get(),
+                           EndRef.get());
+    else // DeclUseInRHS
+      NewCond = BuildBinOp(S, CilkForLoc, CondOp, EndRef.get(),
+                           BeginRef.get());
+    if (NewCond.isInvalid())
+      return StmtError();
+
+    // Create a new increment operation on the new beginning variable.
+    Expr *NewIncExpr = Increment;
+    if (const CompoundAssignOperator *CAO =
+        dyn_cast<CompoundAssignOperator>(Increment)) {
+      ExprResult NewInc;
+      switch (CAO->getOpcode()) {
+      default: break;  // Should not reach this case if we have a Stride.
+      case BO_AddAssign:
+        NewInc = BuildUnaryOp(S, CilkForLoc, UO_PreInc, BeginRef.get());
+        break;
+      case BO_SubAssign:
+        assert(0 && "Fix this routine to handle loops that decrement");
+        NewInc = BuildUnaryOp(S, CilkForLoc, UO_PreDec, BeginRef.get());
+        break;
+      }
+      if (NewInc.isInvalid())
+        return StmtError();
+      NewIncExpr = NewInc.get();
+    }
+
+    *ReplCond = NewCond.get();
+    *ReplInc = NewIncExpr;
+    *StrideExpr = Stride;
+    *LoopCountExpr = EndRef.get();
+  }
+
+  return NewInit;
+}
+
+StmtResult Sema::ActOnStartOfCilkForStmt(SourceLocation CilkForLoc,
+                                         SourceLocation LParenLoc,
+                                         Stmt *First,
+                                         ConditionResult Second,
+                                         FullExprArg Third,
+                                         SourceLocation RParenLoc,
+                                         Expr **ReplCond, Expr **ReplInc,
+                                         VarDecl **InitVar, Expr **StrideExpr,
+                                         Expr **LoopCountExpr) {
+  StmtResult NewInit = HandleCilkForLoopCtl(CilkForLoc, LParenLoc, First,
+                                            Second, Third, RParenLoc,
+                                            ReplCond, ReplInc, InitVar,
+                                            StrideExpr, LoopCountExpr);
+  if (!CurContext->isDependentContext()) {
+    Scope *S = getCurScope();
+    // Create and enter the captured region for the loop body.
+    QualType Ty = Context.UnsignedLongLongTy;
+    // QualType Ty = LoopCount.get()->getType().getNonReferenceType();
+    Sema::CapturedParamNameType Params[] = {
+      std::make_pair(StringRef(), QualType()), // __context with shared vars
+      std::make_pair("__low", Ty),
+      std::make_pair("__high", Ty),
+    };
+    ActOnCapturedRegionStart(CilkForLoc, S, CR_CilkFor, Params);
+    // ActOnCilkForCapturedRegionStart(CilkForLoc, S, Params, LoopVar);
+  }
+  return NewInit;
+}
+
+// Create new variable declaration at for the loop variable.  This declaration
+// will be inserted at the beginning of the loop body.
+//
+// TODO: Fix this code to work with strides that are arbitrary expressions.
+ExprResult Sema::CreateNewCilkForLVInit(SourceLocation CilkForLoc,
+                                        Stmt *OldLVInit,
+                                        VarDecl *InitVar, Expr *Stride) {
+  Scope *S = getCurScope();
+
+  // Get the single loop variable declared.
+  DeclStmt *LoopVarDS = cast<DeclStmt>(OldLVInit);
+  if (!LoopVarDS->isSingleDecl())
+    return ExprEmpty();
+  VarDecl *LoopVar = dyn_cast<VarDecl>(LoopVarDS->getSingleDecl());
+  if (!LoopVar)
+    return ExprEmpty();
+
+  // Get current capture region
+  CapturedRegionScopeInfo *SI = getCurCapturedRegion();
+  // CilkForScopeInfo *SI = getCurCilkFor();
+  assert(CR_CilkFor == SI->CapRegionKind);
+  CapturedDecl *CD = SI->TheCapturedDecl;
+  // RecordDecl *RD = SI->TheRecordDecl;
+  DeclContext *DC = CapturedDecl::castToDeclContext(CD);
+  bool IsDependent = DC->isDependentContext();
+  // assert(!IsDependent && "_Cilk_for is dependent");
+
+  LoopVar->setDeclContext(DC);
+
+  if (!IsDependent) {
+    // Create new declaration for original loop variable.
+    QualType Ty = LoopVar->getType();
+    ExprResult NewLoopVarInit;
+    EnterExpressionEvaluationContext EvalScope(*this, PotentiallyEvaluated);
+    {
+      SourceLocation VarLoc = LoopVar->getLocation();
+      ImplicitParamDecl *Low = CD->getParam(1);
+      ExprResult LowExpr = BuildDeclRefExpr(Low, Low->getType(), VK_LValue,
+                                            VarLoc);
+      assert(!LowExpr.isInvalid() && "invalid expr");
+
+      ExprResult StepExpr =
+        BuildBinOp(S, VarLoc, BO_Mul, LowExpr.get(), Stride);
+      assert(!StepExpr.isInvalid() && "invalid expression");
+      Expr *Step = StepExpr.get();
+      Step = ImplicitCastExpr::Create(Context, Ty,
+                                      CK_IntegralCast, Step, 0, VK_LValue);
+      Step = DefaultLvalueConversion(Step).get();
+
+      // Use StepExpr to initialize the old loop variable.
+      ExprResult InitRef = BuildDeclRefExpr(InitVar, Ty, VK_LValue,
+                                            CilkForLoc);
+      NewLoopVarInit =
+        BuildBinOp(S, CilkForLoc, BO_Add, InitRef.get(), StepExpr.get());
+      // ExprResult NewLoopVarInit = StepExpr;
+      assert(!NewLoopVarInit.isInvalid() && "invalid expression");
+      AddInitializerToDecl(LoopVar, NewLoopVarInit.get(),
+                           /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
+      // FinalizeDeclaration(LoopVar);
+    }
+    PopExpressionEvaluationContext();
+    return NewLoopVarInit;
+  }
+  return ExprEmpty();
+}
+
+StmtResult Sema::ActOnEndOfCilkForStmt(SourceLocation CilkForLoc,
+                                       SourceLocation LParenLoc,
+                                       Stmt *First,
+                                       Expr *Condition,
+                                       Expr *Increment,
+                                       SourceLocation RParenLoc,
+                                       Stmt *Body,
+                                       Stmt *LoopVarDS, Expr *LoopCount) {
+  CapturedStmt *CapturedBody;
+  // llvm::errs() << "ActOnEndOfCilkForStmt\n";
+  if (LoopCount) {
+    CapturedRegionScopeInfo *SI = getCurCapturedRegion();
+    assert(CR_CilkFor == SI->CapRegionKind);
+    // CilkForScopeInfo *SI = getCurCilkFor();
+    // assert(CR_CilkFor == SI->CapRegionKind);
+
+    CapturedDecl *CD = SI->TheCapturedDecl;
+    RecordDecl *RD = SI->TheRecordDecl;
+    SmallVector<CapturedStmt::Capture, 4> Captures;
+    SmallVector<Expr *, 4> CaptureInits;
+    DeclContext *DC = CapturedDecl::castToDeclContext(CD);
+    bool IsDependent = DC->isDependentContext();
+
+    buildCapturedStmtCaptureList(Captures, CaptureInits, SI->Captures);
+
+    // Add loop-variable declaration to the start of the loop body.
+    Stmt* NewBody = Body;
+    // if (LoopCount) {
+    if (isa<NullStmt>(Body))
+      NewBody = new (Context) CompoundStmt(Context, { LoopVarDS },
+                                           LParenLoc, RParenLoc);
+    else
+      NewBody = new (Context) CompoundStmt(Context, { LoopVarDS, Body },
+                                           LParenLoc, RParenLoc);
+    // } else {
+    //   VarDecl *LoopVar =
+    //     dyn_cast<VarDecl>(cast<DeclStmt>(LoopVarDS)->getSingleDecl());
+    //   LoopVar->setDeclContext(getContainingDC(DC));
+    // }
+
+    CapturedBody =
+      CapturedStmt::Create(getASTContext(), NewBody,
+                           CR_CilkFor,
+                           // static_cast<CapturedRegionKind>(SI->CapRegionKind),
+                           Captures, CaptureInits,
+                           CD, RD);
+
+    CD->setBody(CapturedBody->getCapturedStmt());
+    RD->completeDefinition();
+  }
+  CheckForLoopConditionalStatement(*this, Condition, Increment, Body);
+  CheckForRedundantIteration(*this, Increment, Body);
+
+  DiagnoseUnusedExprResult(First);
+  DiagnoseUnusedExprResult(Increment);
+  DiagnoseUnusedExprResult(Body);
+
+  // ExprResult AdjustExpr;
+  // // Set parameters for the outlined function.
+  // // Build the initial value for the inner loop control variable.
+  // if (!IsDependent) {
+  //   assert(LoopCount && "invalid null loop count expression");
+  //   QualType Ty = LoopCount.get()->getType().getNonReferenceType();
+
+  //   // In the following, the source location of the loop control variable
+  //   // will be used for diagnostics.
+  //   // SourceLocation VarLoc = FSI->LoopControlVar->getLocation();
+  //   SourceLocation VarLoc = LoopVar->getLocation();
+  //   assert(VarLoc.isValid() && "invalid source location");
+  //   assert(CD->getNumParams() == 3 && "bad signature");
+
+  //   ImplicitParamDecl *Low
+  //     = ImplicitParamDecl::Create(Context, DC, VarLoc,
+  //                                 &Context.Idents.get("__low"), Ty);
+  //   DC->addDecl(Low);
+  //   CD->setParam(1, Low);
+
+  //   ImplicitParamDecl *High
+  //     = ImplicitParamDecl::Create(Context, DC, VarLoc,
+  //                                 &Context.Idents.get("__high"), Ty);
+  //   DC->addDecl(High);
+  //   CD->setParam(2, High);
+
+  //   // Build a full expression "inner_loop_var += stride * low"
+  //   {
+  //     EnterExpressionEvaluationContext EvalScope(*this, PotentiallyEvaluated);
+
+  //     // Both low and stride experssions are of type integral.
+  //     ExprResult LowExpr = BuildDeclRefExpr(Low, Ty, VK_LValue, VarLoc);
+  //     assert(!LowExpr.isInvalid() && "invalid expr");
+
+  //     assert(Stride && "invalid null stride expression");
+  //     // // Need to keep the orginal stride unmodified, since it has been part
+  //     // // of the LoopCount expression. If Stride is already an implicit cast
+  //     // // expression, then BuildBinOp may replace this cast into another type.
+  //     // // E.g.
+  //     // //
+  //     // // short s = 2;
+  //     // // _Cilk_for (int *p = a; p != b; p += s);
+  //     // //
+  //     // // During the loop count calculation, Stride is an implicit cast
+  //     // // expression of type int. Since LowExpr has type unsigned long,
+  //     // // BuildBinOp will try cast Stride into unsigned long, by replacing
+  //     // // the int implicit cast into unsigned long implicit cast, this
+  //     // // invalidates the loop count expression built.
+  //     // //
+  //     // // The solution is to get the raw Stride expression from the source
+  //     // // and create a new implicit cast expression of desired type,
+  //     // // if necessary.
+  //     // //
+  //     // Stride = Stride->IgnoreImpCastsAsWritten();
+
+  //     ExprResult StepExpr =
+  //         BuildBinOp(CurScope, VarLoc, BO_Mul, LowExpr.get(), Stride);
+  //     assert(!StepExpr.isInvalid() && "invalid expression");
+  //     Expr *Step = StepExpr.get();
+  //     Step = ImplicitCastExpr::Create(Context, SpanType, CK_IntegralCast, Step,
+  //                                     0, VK_LValue);
+  //     Step = DefaultLvalueConversion(Step).get();
+
+  //     // Use StepExpr to initialize the old loop variable.
+  //     ExprResult NewLoopVarInit =
+  //       BuildBinOp(S, CilkForLoc, BO_Add, InitRef.get(), StepExpr.get());
+  //     assert(!NewLoopVarInit.isInvalid() && "invalid expression");
+  //     AddInitializerToDecl(LoopVar, NewLoopVarInit.get(),
+  //                          /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
+
+  //     // VarDecl *InnerVar = FSI->InnerLoopControlVar;
+  //     // ExprResult InnerVarExpr
+  //     //   = BuildDeclRefExpr(InnerVar, InnerVar->getType(), VK_LValue, VarLoc);
+  //     // assert(!InnerVarExpr.isInvalid() && "invalid expression");
+
+  //     // // The '+=' operation could fail if the loop control variable is of
+  //     // // class type and this may introduce cleanups.
+  //     // AdjustExpr = BuildBinOp(CurScope, VarLoc, BO_AddAssign,
+  //     //                         InnerVarExpr.get(), Step);
+  //     // if (!AdjustExpr.isInvalid()) {
+  //     //   // ExprNeedsCleanups |= Step->hasNonTrivialCall(Context);
+  //     //   if (Step->hasNonTrivialCall(Context))
+  //     //     Cleanup.setExprNeedsCleanups(false);
+  //     //   AdjustExpr = MaybeCreateExprWithCleanups(AdjustExpr);
+  //     // }
+  //     // FIXME: Should mark the CilkForDecl as invalid?
+  //     // FIXME: Should install the adjustment expression into the CilkForStmt?
+  //   }
+  // }
+
+  // CilkForStmt *Result = new (Context)
+  //     CilkForStmt(Init, Cond, Inc, CapturedBody, LoopCount,
+  //                 CilkForLoc, LParenLoc, RParenLoc);
+
+  // // TODO: move into constructor?
+  // Result->setLoopControlVar(FSI->LoopControlVar);
+  // Result->setInnerLoopControlVar(FSI->InnerLoopControlVar);
+  // Result->setInnerLoopVarAdjust(AdjustExpr.get());
+
+  CilkForStmt *Result;
+  if (LoopCount) 
+    Result = new (Context)
+      CilkForStmt(Context, First, // nullptr,
+                  Condition, Increment, CapturedBody,
+                  LoopCount, LoopVarDS,
+                  CilkForLoc, LParenLoc, RParenLoc);
+  else
+    Result = new (Context)
+      CilkForStmt(Context, First, // nullptr,
+                  Condition, Increment, Body,
+                  LoopCount, LoopVarDS,
+                  CilkForLoc, LParenLoc, RParenLoc);
+    
+  // ExprNeedsCleanups = FSI->ExprNeedsCleanups;
+  // if (SI->ExprNeedsCleanups)
+  //   Cleanup.setExprNeedsCleanups(false);
+
+  if (LoopCount) {
+    DiscardCleanupsInEvaluationContext();
+    // PopExpressionEvaluationContext();
+    PopDeclContext();
+    // // Pop the compound scope we inserted implicitly.
+    // PopCompoundScope();
+    PopFunctionScopeInfo();
+  }
+
+  return Result;
+}
+
+StmtResult
+Sema::BuildCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
+                       Stmt *First, ConditionResult Second, FullExprArg Third,
+                       SourceLocation RParenLoc, Stmt *Body,
+                       Expr *LoopCount, Stmt *StoredLV) {
+
+  Expr *Condition = Second.get().second;
+  Expr *Increment = Third.release().getAs<Expr>();
+
+  return new (Context) CilkForStmt(Context, First, Condition,
+                                   Increment, Body, LoopCount, StoredLV,
+                                   CilkForLoc, LParenLoc, RParenLoc);
+  // Scope *S = getCurScope();
+
+  // // This processing of First will fail after the loop has been properly
+  // // transformed, which is the desired behavior.
+  // DeclStmt *LoopVarDS = dyn_cast<DeclStmt>(First);
+  // if (!LoopVarDS)
+  //   return StmtEmpty();
+  // VarDecl *LoopVar = dyn_cast<VarDecl>(LoopVarDS->getSingleDecl());
+  // if (!LoopVar)
+  //   return StmtEmpty();
+
+  // Expr *Cond = nullptr;
+  // Expr *Inc = nullptr;
+  // VarDecl *InitVar = nullptr;
+  // Expr *Stride = nullptr;
+  // Expr *LoopCountExpr = nullptr;
+
+  // StmtResult NewInit = HandleCilkForLoopCtl(CilkForLoc, LParenLoc, First,
+  //                                           Second, Third, RParenLoc,
+  //                                           &Cond, &Inc, &InitVar,
+  //                                           &Stride, &LoopCountExpr);
+  // if (NewInit.isInvalid())
+  //   return StmtError();
+
+  // if (LoopCountExpr) {
+  //   // Create new declaration for original loop variable.
+  //   CapturedDecl *CD = cast<CapturedStmt>(Body)->getCapturedDecl();
+  //   // EnterDeclaratorContext(S, CD);
+  //   PushDeclContext(S, CD);
+
+  //   QualType Ty = LoopVar->getType();
+  //   ExprResult NewLoopVarInit;
+  //   EnterExpressionEvaluationContext EvalScope(*this, PotentiallyEvaluated);
+  //   {
+  //     SourceLocation VarLoc = LoopVar->getLocation();
+  //     ImplicitParamDecl *Low = CD->getParam(1);
+  //     ExprResult LowExpr = BuildDeclRefExpr(Low, Low->getType(), VK_LValue,
+  //                                           VarLoc);
+  //     assert(!LowExpr.isInvalid() && "invalid expr");
+
+  //     ExprResult StepExpr =
+  //       BuildBinOp(S, VarLoc, BO_Mul, LowExpr.get(), Stride);
+  //     assert(!StepExpr.isInvalid() && "invalid expression");
+  //     Expr *Step = StepExpr.get();
+  //     Step = ImplicitCastExpr::Create(Context, Ty,
+  //                                     CK_IntegralCast, Step, 0, VK_LValue);
+  //     Step = DefaultLvalueConversion(Step).get();
+
+  //     // Use StepExpr to initialize the old loop variable.
+  //     ExprResult InitRef = BuildDeclRefExpr(InitVar, Ty, VK_LValue,
+  //                                           CilkForLoc);
+  //     Expr *Init = InitRef.get();
+  //     Init = ImplicitCastExpr::Create(Context, Ty,
+  //                                     CK_IntegralCast, Init, 0, VK_LValue);
+  //     Init = DefaultLvalueConversion(Step).get();
+  //     ExprResult NewLoopVarInit = BuildBinOp(S, CilkForLoc, BO_Add, Init, Step);
+  //     // ExprResult NewLoopVarInit = StepExpr;
+  //     assert(!NewLoopVarInit.isInvalid() && "invalid expression");
+  //     AddInitializerToDecl(LoopVar, NewLoopVarInit.get(),
+  //                          /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
+  //     // FinalizeDeclaration(LoopVar);
+  //   }
+  //   PopExpressionEvaluationContext();
+
+  //   // Add the new loop variable declaration to the body.
+  //   if (isa<NullStmt>(Body))
+  //     Body = new (Context) CompoundStmt(Context, { LoopVarDS },
+  //                                       LParenLoc, RParenLoc);
+  //   else
+  //     Body = new (Context) CompoundStmt(Context, { LoopVarDS, Body },
+  //                                       LParenLoc, RParenLoc);
+  //   // ExitDeclaratorContext(S);
+  //   PopDeclContext();
+  // }
+
+  // return new (Context) CilkForStmt(Context, First, Cond,
+  //                                  Inc, Body, LoopCountExpr, LoopVarDS,
+  //                                  CilkForLoc, LParenLoc, RParenLoc);
 }

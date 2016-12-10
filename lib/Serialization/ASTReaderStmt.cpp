@@ -2894,12 +2894,13 @@ void ASTStmtReader::VisitCilkSyncStmt(CilkSyncStmt *S) {
 void ASTStmtReader::VisitCilkForStmt(CilkForStmt *S) {
   VisitStmt(S);
   S->setInit(Reader.ReadSubStmt());
-  S->setCondDecl(Reader.ReadSubStmt());
   S->setCond(Reader.ReadSubExpr());
   // S->setConditionVariable(Reader.getContext(),
   //                         ReadDeclAs<VarDecl>(Record, Idx));
   S->setInc(Reader.ReadSubExpr());
   S->setBody(Reader.ReadSubStmt());
+  S->setLoopCount(Reader.ReadSubExpr());
+  S->setLoopVar(Reader.ReadSubStmt());
   S->setCilkForLoc(ReadSourceLocation(Record, Idx));
   S->setLParenLoc(ReadSourceLocation(Record, Idx));
   S->setRParenLoc(ReadSourceLocation(Record, Idx));

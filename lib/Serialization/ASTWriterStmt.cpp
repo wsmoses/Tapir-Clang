@@ -1724,11 +1724,12 @@ void ASTStmtWriter::VisitCilkSyncStmt(CilkSyncStmt *S) {
 void ASTStmtWriter::VisitCilkForStmt(CilkForStmt *S) {
   VisitStmt(S);
   Record.AddStmt(S->getInit());
-  Record.AddStmt(S->getCondDecl());
   Record.AddStmt(S->getCond());
   // Record.AddDeclRef(S->getConditionVariable());
   Record.AddStmt(S->getInc());
   Record.AddStmt(S->getBody());
+  Record.AddStmt(S->getLoopCount());
+  Record.AddStmt(S->getLoopVar());
   Record.AddSourceLocation(S->getCilkForLoc());
   Record.AddSourceLocation(S->getLParenLoc());
   Record.AddSourceLocation(S->getRParenLoc());

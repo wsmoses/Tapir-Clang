@@ -258,6 +258,44 @@ public:
   };
   CGCapturedStmtInfo *CapturedStmtInfo;
 
+  /// \brief API for Cilk for statement code generation.
+  class CGCilkForStmtInfo : public CGCapturedStmtInfo {
+  public:
+    explicit CGCilkForStmtInfo(const CilkForStmt &S)
+        : CGCapturedStmtInfo(cast<CapturedStmt>(*S.getBody()), CR_CilkFor),
+          TheCilkFor(S),
+          InnerLoopControlVarAddr(Address::invalid()) { }
+
+    virtual StringRef getHelperName() const override {
+      return "__cilk_for_helper";
+    }
+
+    virtual void EmitBody(CodeGenFunction &CGF, const Stmt *S) override {
+      CGF.EmitCilkForHelperBody(S);
+    }
+
+    const CilkForStmt &getCilkForStmt() const { return TheCilkFor; }
+
+    void setInnerLoopControlVarAddr(Address Addr) {
+      InnerLoopControlVarAddr = Addr;
+    }
+    Address getInnerLoopControlVarAddr() const {
+      return InnerLoopControlVarAddr;
+    }
+
+    static bool classof(const CGCilkForStmtInfo *) { return true; }
+    static bool classof(const CGCapturedStmtInfo *I) {
+      return I->getKind() == CR_CilkFor;
+    }
+  private:
+    /// \brief
+    const CilkForStmt &TheCilkFor;
+
+    /// \brief The address of the inner loop control variable. Any reference
+    /// to the loop control variable needs to load this the value instead.
+    Address InnerLoopControlVarAddr;
+  };
+
   /// \brief RAII for correct setting/restoring of CapturedStmtInfo.
   class CGCapturedStmtRAII {
   private:
@@ -2401,6 +2439,7 @@ public:
   void EmitCilkSyncStmt(const CilkSyncStmt &S);
   void EmitCilkForStmt(const CilkForStmt &S,
                        ArrayRef<const Attr *> Attrs = None);
+  void EmitCilkForHelperBody(const Stmt *S);
 
   void EmitObjCForCollectionStmt(const ObjCForCollectionStmt &S);
   void EmitObjCAtTryStmt(const ObjCAtTryStmt &S);

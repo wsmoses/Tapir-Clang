@@ -2075,7 +2075,7 @@ private:
 
   /// \brief The pointer part is the implicit the outlined function and the 
   /// int part is the captured region kind, 'CR_Default' etc.
-  llvm::PointerIntPair<CapturedDecl *, 1, CapturedRegionKind> CapDeclAndKind;
+  llvm::PointerIntPair<CapturedDecl *, 2, CapturedRegionKind> CapDeclAndKind;
 
   /// \brief The record for captured variables, a RecordDecl or CXXRecordDecl.
   RecordDecl *TheRecordDecl;
@@ -2287,16 +2287,16 @@ public:
 /// CilkForStmt - This represents a '_Cilk_for(init;cond;int)' stmt.
 class CilkForStmt : public Stmt {
   SourceLocation CilkForLoc;
-  enum { INIT, CONDDECL, COND, INC, BODY,
-         /* LOOP_COUNT, */
+  enum { INIT, COND, INC, BODY, LOOP_COUNT, LOOP_VAR,
          END_EXPR };
   Stmt* SubExprs[END_EXPR]; // SubExprs[INIT] is an expression or declstmt.
   SourceLocation LParenLoc, RParenLoc;
 
 public:
-  CilkForStmt(const ASTContext &C, Stmt *Init, Stmt *CondVarDecl,
+  CilkForStmt(const ASTContext &C, Stmt *Init,
               Expr *Cond, /* VarDecl *condVar, */
-              Expr *Inc, Stmt *Body, /* Expr *LoopCount, */
+              Expr *Inc, Stmt *Body, Expr *LoopCount,
+              Stmt *LoopVar,
               SourceLocation CFL, SourceLocation LP, SourceLocation RP);
 
   /// \brief Build an empty for statement.
@@ -2321,27 +2321,28 @@ public:
   //   return reinterpret_cast<DeclStmt*>(SubExprs[CONDVAR]);
   // }
 
-  Stmt *getCondDecl() { return SubExprs[CONDDECL]; }
   Expr *getCond() { return reinterpret_cast<Expr*>(SubExprs[COND]); }
   Expr *getInc()  { return reinterpret_cast<Expr*>(SubExprs[INC]); }
   Stmt *getBody() { return SubExprs[BODY]; }
-  // /// \brief Retrieve the loop count expression.
-  // Expr *getLoopCount() { return reinterpret_cast<Expr*>(SubExprs[LOOP_COUNT]);}
+  /// \brief Retrieve the loop count expression.
+  Expr *getLoopCount() { return reinterpret_cast<Expr*>(SubExprs[LOOP_COUNT]); }
+  Stmt *getLoopVar() { return SubExprs[LOOP_VAR]; }
 
   const Stmt *getInit() const { return SubExprs[INIT]; }
-  const Stmt *getCondDecl() const { return SubExprs[CONDDECL]; }
-  const Expr *getCond() const { return reinterpret_cast<Expr*>(SubExprs[COND]);}
+  const Expr *getCond() const { return reinterpret_cast<Expr*>(SubExprs[COND]); }
   const Expr *getInc()  const { return reinterpret_cast<Expr*>(SubExprs[INC]); }
   const Stmt *getBody() const { return SubExprs[BODY]; }
-  // const Expr *getLoopCount() const {
-  //   return reinterpret_cast<Expr *>(SubExprs[LOOP_COUNT]);
-  // }
+  const Expr *getLoopCount() const {
+    return reinterpret_cast<Expr *>(SubExprs[LOOP_COUNT]);
+  }
+  const Stmt *getLoopVar() const { return SubExprs[LOOP_VAR]; }
 
   void setInit(Stmt *S) { SubExprs[INIT] = S; }
-  void setCondDecl(Stmt *S) { SubExprs[CONDDECL] = S; }
   void setCond(Expr *E) { SubExprs[COND] = reinterpret_cast<Stmt*>(E); }
   void setInc(Expr *E) { SubExprs[INC] = reinterpret_cast<Stmt*>(E); }
   void setBody(Stmt *S) { SubExprs[BODY] = S; }
+  void setLoopCount(Expr *E) { SubExprs[LOOP_COUNT] = reinterpret_cast<Stmt*>(E); }
+  void setLoopVar(Stmt *S) { SubExprs[LOOP_VAR] = S; }
 
   SourceLocation getCilkForLoc() const { return CilkForLoc; }
   void setCilkForLoc(SourceLocation L) { CilkForLoc = L; }

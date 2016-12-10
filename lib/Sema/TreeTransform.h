@@ -1241,9 +1241,9 @@ public:
   StmtResult RebuildCilkForStmt(SourceLocation ForLoc, SourceLocation LParenLoc,
                                 Stmt *Init, Sema::ConditionResult Cond,
                                 Sema::FullExprArg Inc, SourceLocation RParenLoc,
-                                Stmt *Body) {
-    return getSema().ActOnCilkForStmt(ForLoc, LParenLoc, Init, Cond,
-                                      Inc, RParenLoc, Body);
+                                Stmt *Body, Expr *LoopCount, Stmt *LoopVar) {
+    return getSema().BuildCilkForStmt(ForLoc, LParenLoc, Init, Cond,
+                                      Inc, RParenLoc, Body, LoopCount, LoopVar);
   }
 
   /// \brief Build a new goto statement.
@@ -12147,10 +12147,10 @@ TreeTransform<Derived>::TransformCilkForStmt(CilkForStmt *S) {
   if (Init.isInvalid())
     return StmtError();
 
-  // In OpenMP loop region loop control variable must be captured and be
-  // private. Perform analysis of first part (if any).
-  if (getSema().getLangOpts().OpenMP && Init.isUsable())
-    getSema().ActOnOpenMPLoopInitialization(S->getCilkForLoc(), Init.get());
+  // // In OpenMP loop region loop control variable must be captured and be
+  // // private. Perform analysis of first part (if any).
+  // if (getSema().getLangOpts().OpenMP && Init.isUsable())
+  //   getSema().ActOnOpenMPLoopInitialization(S->getCilkForLoc(), Init.get());
 
   // Transform the condition
   Sema::ConditionResult Cond = getDerived().TransformCondition(
@@ -12168,21 +12168,94 @@ TreeTransform<Derived>::TransformCilkForStmt(CilkForStmt *S) {
   if (S->getInc() && !FullInc.get())
     return StmtError();
 
+  bool TryToCaptureBody =
+    !S->getLoopCount() && !getSema().CurContext->isDependentContext();
+
+  Expr *NewCond = nullptr;
+  Expr *NewInc = nullptr;
+  VarDecl *InitVar = nullptr;
+  Expr *Stride = nullptr;
+  Expr *LoopCountExpr = nullptr;
+  StmtResult NewInit;
+  if (TryToCaptureBody) {
+    // llvm::errs() << "TreeTransform: recapturing _Cilk_for body\n";
+    // // This processing of First will fail after the loop has been properly
+    // // transformed, which is the desired behavior.
+    // DeclStmt *LoopVarDS = dyn_cast<DeclStmt>(Init.get());
+    // if (!LoopVarDS)
+    //   return StmtError();
+    // VarDecl *LoopVar = dyn_cast<VarDecl>(LoopVarDS->getSingleDecl());
+    // if (!LoopVar)
+    //   return StmtError();
+
+    // Process the _Cilk_for loop control
+    NewInit = getSema().ActOnStartOfCilkForStmt(S->getCilkForLoc(),
+                                                S->getLParenLoc(), Init.get(),
+                                                Cond, FullInc, S->getRParenLoc(),
+                                                &NewCond, &NewInc, &InitVar,
+                                                &Stride, &LoopCountExpr);
+    if (!NewInit.isUsable())
+      return StmtError();
+
+    // llvm::errs() << "TreeTransform: creating new loop var\n";
+
+    // Create new declaration for loop variable.
+    ExprResult NewLVInit = getSema().CreateNewCilkForLVInit(S->getCilkForLoc(),
+                                                            Init.get(),
+                                                            InitVar, Stride);
+    if (!NewLVInit.isUsable())
+      return StmtError();
+    // llvm::errs() << "TreeTransform: successfully created new loop var\n";
+
+    // CapturedStmt *CapBody = dyn_cast<CapturedStmt>(S->getBody());
+    // CapturedDecl *CD = CapBody->getCapturedDecl();
+    // VarDecl *LoopVar =
+    //   dyn_cast<VarDecl>(cast<DeclStmt>(S->getLoopVar())->getSingleDecl());
+    // LoopVar->setDeclContext(CapturedDecl::castToDeclContext(CD));
+  }
+
   // Transform loop body.
-  StmtResult Body = getDerived().TransformStmt(S->getBody());
+  StmtResult Body;
+  {
+    Sema::CompoundScopeRAII CompoundScope(getSema());
+    Body = getDerived().TransformStmt(S->getBody());
+  }
   if (Body.isInvalid())
     return StmtError();
+
+  if (TryToCaptureBody) {
+    // llvm::errs() << "TreeTransform: calling ActOnEndOfCilkForStmt\n";
+    assert(LoopCountExpr && "Could not compute loop count for _Cilk_for loop.");
+    return getSema().ActOnEndOfCilkForStmt(S->getCilkForLoc(), S->getLParenLoc(),
+                                           NewInit.get(),
+                                           NewCond, NewInc, S->getRParenLoc(),
+                                           Body.get(), Init.get(), LoopCountExpr);
+
+  }
+
+  // Transform loop count.
+  ExprResult LoopCount = getDerived().TransformExpr(S->getLoopCount());
+  if (LoopCount.isInvalid())
+    return StmtError();
+
+  // Already handled when processing the body.
+  // // Transform loop variable.
+  // StmtResult LoopVar = getDerived().TransformStmt(S->getLoopVar());
+  // if (LoopVar.isInvalid())
+  //   return StmtError();
 
   if (!getDerived().AlwaysRebuild() &&
       Init.get() == S->getInit() &&
       Cond.get() == std::make_pair((clang::VarDecl*)nullptr, S->getCond()) &&
       Inc.get() == S->getInc() &&
-      Body.get() == S->getBody())
+      Body.get() == S->getBody() &&
+      LoopCount.get() == S->getLoopCount())
     return S;
 
   return getDerived().RebuildCilkForStmt(S->getCilkForLoc(), S->getLParenLoc(),
-                                     Init.get(), Cond, FullInc,
-                                     S->getRParenLoc(), Body.get());
+                                         Init.get(), Cond, FullInc,
+                                         S->getRParenLoc(), Body.get(),
+                                         LoopCount.get(), S->getLoopVar());
 }
 
 } // end namespace clang

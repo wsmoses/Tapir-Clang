@@ -2159,6 +2159,8 @@ StmtResult Parser::ParseCilkForStatement(SourceLocation *TrailingElseLoc) {
   // Match the ')'.
   T.consumeClose();
 
+  // llvm::errs() << "Parsing _Cilk_for, after processing loop control.\n";
+
   // C++ Coroutines [stmt.iter]:
   //   'co_await' can only be used for a range-based for statement.
   if (CoawaitLoc.isValid() && !ForRange) {
@@ -2195,6 +2197,21 @@ StmtResult Parser::ParseCilkForStatement(SourceLocation *TrailingElseLoc) {
   //   }
   // }
 
+  Expr *Cond = nullptr;
+  Expr *Inc = nullptr;
+  VarDecl *InitVar = nullptr;
+  Expr *Stride = nullptr;
+  Expr *LoopCount = nullptr;
+  StmtResult NewInit = Actions.ActOnStartOfCilkForStmt(ForLoc,
+                                                       T.getOpenLocation(),
+                                                       FirstPart.get(),
+                                                       SecondPart, ThirdPart,
+                                                       T.getCloseLocation(),
+                                                       &Cond, &Inc, &InitVar,
+                                                       &Stride, &LoopCount);
+  if (NewInit.isInvalid())
+    return StmtError();
+
   // C99 6.8.5p5 - In C99, the body of the for statement is a scope, even if
   // there is no compound stmt.  C90 does not have this clause.  We only do this
   // if the body isn't a compound statement to avoid push/pop in common cases.
@@ -2215,6 +2232,16 @@ StmtResult Parser::ParseCilkForStatement(SourceLocation *TrailingElseLoc) {
   // normally increment the mangling number (like a compound statement).
   if (C99orCXXorObjC)
     getCurScope()->decrementMSManglingNumber();
+
+  // If successful, this call will modify the declaration in FirstPart.
+  ExprResult NewLVInit = ExprEmpty();
+  if (LoopCount) {
+    ExprResult NewLVInit = Actions.CreateNewCilkForLVInit(ForLoc,
+                                                          FirstPart.get(),
+                                                          InitVar, Stride);
+    if (NewLVInit.isInvalid())
+      return StmtError();
+  }
 
   // Read the body statement.
   StmtResult Body(ParseStatement(TrailingElseLoc));
@@ -2240,9 +2267,16 @@ StmtResult Parser::ParseCilkForStatement(SourceLocation *TrailingElseLoc) {
     //return Actions.FinishCXXForRangeStmt(ForRangeStmt.get(), Body.get());
   }
 
-  return Actions.ActOnCilkForStmt(ForLoc, T.getOpenLocation(), FirstPart.get(),
-                                  SecondPart, ThirdPart, T.getCloseLocation(),
-                                  Body.get());
+  if (NewInit.isUsable())
+    return Actions.ActOnEndOfCilkForStmt(ForLoc, T.getOpenLocation(), NewInit.get(),
+                                         Cond, Inc, T.getCloseLocation(),
+                                         Body.get(), FirstPart.get(), LoopCount);
+  return Actions.ActOnEndOfCilkForStmt(ForLoc, T.getOpenLocation(), FirstPart.get(),
+                                       Cond, Inc, T.getCloseLocation(),
+                                       Body.get(), FirstPart.get(), LoopCount);
+  // return Actions.ActOnCilkForStmt(ForLoc, T.getOpenLocation(), FirstPart.get(),
+  //                                 SecondPart, ThirdPart, T.getCloseLocation(),
+  //                                 Body.get());
 }
 
 StmtResult Parser::ParsePragmaLoopHint(StmtVector &Stmts,
