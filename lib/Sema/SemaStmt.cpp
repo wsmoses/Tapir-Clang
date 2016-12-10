@@ -2785,11 +2785,11 @@ Sema::ActOnCilkSyncStmt(SourceLocation SyncLoc) {
 ///
 /// Return null if the increment does not satisfy one of the specified formats.
 static Expr *GetCilkForStride(Sema &S, llvm::SmallPtrSetImpl<VarDecl *> &Decls,
-                              Expr *Third) {
+                              Expr *Increment) {
   if (const CompoundAssignOperator *CAO =
-      dyn_cast_or_null<CompoundAssignOperator>(Third)) {
-    // Only get an expression to extract if Third is in a canonical form with
-    // Decls only in the LHS.
+      dyn_cast_or_null<CompoundAssignOperator>(Increment)) {
+    // Only get an expression to extract if Increment is in a canonical form
+    // with Decls only in the LHS.
     bool DeclUseInRHS =
       DeclFinder(S, Decls, CAO->getRHS()).FoundDeclInUse();
     bool DeclUseInLHS =
@@ -2932,6 +2932,13 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
 
   // Add new declarations for replacement loop control variables.
   QualType LoopVarTy = LoopVar->getType();
+  // Add declaration to store the old loop var initialization.
+  VarDecl *InitVar = BuildForRangeVarDecl(*this, CilkForLoc, LoopVarTy,
+                                           "__init");
+  AddInitializerToDecl(InitVar, LoopVarInit,
+                       /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
+  FinalizeDeclaration(InitVar);
+  CurContext->addHiddenDecl(InitVar);
   // Add declaration for new beginning loop control variable.
   VarDecl *BeginVar = BuildForRangeVarDecl(*this, CilkForLoc, LoopVarTy,
                                            "__begin");
@@ -2948,7 +2955,8 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
   CurContext->addHiddenDecl(EndVar);
 
   // Combine declarations into a single DeclStmt.
-  SmallVector<Decl *, 2> NewDecls;
+  SmallVector<Decl *, 3> NewDecls;
+  NewDecls.push_back(InitVar);
   NewDecls.push_back(BeginVar);
   NewDecls.push_back(EndVar);
   DeclGroupPtrTy DG = BuildDeclaratorGroup(MutableArrayRef<Decl *>(NewDecls),
@@ -2990,13 +2998,13 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
   if (NewInc.isInvalid())
     return StmtError();
 
-  // *First = NewInit.get();
-  // *Second = NewCond.get();
-  // *Third = NewInc.get();
-
   // Return a new statement for initializing the old loop variable.
-  ExprResult NewLoopVarInit = BuildBinOp(S, CilkForLoc, BO_Mul,
-                                         BeginRef.get(), Stride);
+  ExprResult InitRef = BuildDeclRefExpr(InitVar, LoopVarTy, VK_LValue,
+                                        CilkForLoc);
+  ExprResult NewLoopVarInit =
+    BuildBinOp(S, CilkForLoc, BO_Add, InitRef.get(),
+               BuildBinOp(S, CilkForLoc, BO_Mul,
+                          BeginRef.get(), Stride).get());
   AddInitializerToDecl(LoopVar, NewLoopVarInit.get(),
                        /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
 
