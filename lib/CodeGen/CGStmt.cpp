@@ -1214,12 +1214,11 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
       llvm::Module &M = CGM.getModule();
       uint64_t SizeInBits =
         getContext().getTypeSize(LoopCountExpr->getType());
-      // if (SizeInBits <= 32u) {
-      //   FTy = llvm::TypeBuilder<void(void(void *, uint32_t, uint32_t),
-      //                                void *, uint32_t, int), false>::get(Ctx);
-      //   CilkForABI = M.getOrInsertFunction("__cilkrts_cilk_for_32", FTy);
-      // } else
-      if (SizeInBits <= 64u) {
+      if (SizeInBits <= 32u) {
+        FTy = llvm::TypeBuilder<void(void(void *, uint32_t, uint32_t),
+                                     void *, uint32_t, int), false>::get(Ctx);
+        CilkForABI = M.getOrInsertFunction("__cilkrts_cilk_for_32", FTy);
+      } else if (SizeInBits <= 64u) {
         FTy = llvm::TypeBuilder<void(void(void *, uint64_t, uint64_t),
                                      void *, uint64_t, int), false>::get(Ctx);
         CilkForABI = M.getOrInsertFunction("__cilkrts_cilk_for_64", FTy);

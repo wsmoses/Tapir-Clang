@@ -4209,8 +4209,8 @@ ExprResult Sema::CalculateCilkForLoopCount(SourceLocation CilkForLoc,
   if (Context.getTypeSize(LoopCountExprType) > 64)
     Diag(CilkForLoc, diag::warn_cilk_for_loop_count_downcast)
         << LoopCountExprType << LoopCountType;
-  // else if (Context.getTypeSize(LoopCountExprType) <= 32)
-  //   LoopCountType = Context.UnsignedIntTy;
+  else if (Context.getTypeSize(LoopCountExprType) <= 32)
+    LoopCountType = Context.UnsignedIntTy;
 
   // Implicitly casting LoopCount to u32/u64.
   return ImpCastExprToType(LoopCount.get(), LoopCountType, CK_IntegralCast);
