@@ -42,6 +42,7 @@ def Nullability : Package<"nullability">;
 
 def Cplusplus : Package<"cplusplus">;
 def CplusplusAlpha : Package<"cplusplus">, InPackage<Alpha>, Hidden;
+def CplusplusOptIn : Package<"cplusplus">, InPackage<OptIn>;
 
 def Valist : Package<"valist">;
 def ValistAlpha : Package<"valist">, InPackage<Alpha>, Hidden;
@@ -262,13 +263,13 @@ def CXXSelfAssignmentChecker : Checker<"SelfAssignment">,
 
 } // end: "cplusplus"
 
-let ParentPackage = CplusplusAlpha in {
+let ParentPackage = CplusplusOptIn in {
 
 def VirtualCallChecker : Checker<"VirtualCall">,
   HelpText<"Check virtual function calls during construction or destruction">,
   DescFile<"VirtualCallChecker.cpp">;
 
-} // end: "alpha.cplusplus"
+} // end: "optin.cplusplus"
 
 
 //===----------------------------------------------------------------------===//
@@ -479,19 +480,20 @@ def CStringNotNullTerm : Checker<"NotNullTerminated">,
 let ParentPackage = OSX in {
 
 def NumberObjectConversionChecker : Checker<"NumberObjectConversion">,
-  InPackage<OSX>,
   HelpText<"Check for erroneous conversions of objects representing numbers into numbers">,
   DescFile<"NumberObjectConversionChecker.cpp">;
 
 def MacOSXAPIChecker : Checker<"API">,
-  InPackage<OSX>,
   HelpText<"Check for proper uses of various Apple APIs">,
   DescFile<"MacOSXAPIChecker.cpp">;
 
 def MacOSKeychainAPIChecker : Checker<"SecKeychainAPI">,
-  InPackage<OSX>,
   HelpText<"Check for proper uses of Secure Keychain APIs">,
   DescFile<"MacOSKeychainAPIChecker.cpp">;
+
+def ObjCPropertyChecker : Checker<"ObjCProperty">,
+  HelpText<"Check for proper uses of Objective-C properties">,
+  DescFile<"ObjCPropertyChecker.cpp">;
 
 } // end "osx"
 

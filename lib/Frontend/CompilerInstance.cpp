@@ -141,6 +141,46 @@ void CompilerInstance::setModuleDepCollector(
   ModuleDepCollector = std::move(Collector);
 }
 
+static void collectHeaderMaps(const HeaderSearch &HS,
+                              std::shared_ptr<ModuleDependencyCollector> MDC) {
+  SmallVector<std::string, 4> HeaderMapFileNames;
+  HS.getHeaderMapFileNames(HeaderMapFileNames);
+  for (auto &Name : HeaderMapFileNames)
+    MDC->addFile(Name);
+}
+
+static void collectIncludePCH(CompilerInstance &CI,
+                              std::shared_ptr<ModuleDependencyCollector> MDC) {
+  const PreprocessorOptions &PPOpts = CI.getPreprocessorOpts();
+  if (PPOpts.ImplicitPCHInclude.empty())
+    return;
+
+  StringRef PCHInclude = PPOpts.ImplicitPCHInclude;
+  FileManager &FileMgr = CI.getFileManager();
+  const DirectoryEntry *PCHDir = FileMgr.getDirectory(PCHInclude);
+  if (!PCHDir) {
+    MDC->addFile(PCHInclude);
+    return;
+  }
+
+  std::error_code EC;
+  SmallString<128> DirNative;
+  llvm::sys::path::native(PCHDir->getName(), DirNative);
+  vfs::FileSystem &FS = *FileMgr.getVirtualFileSystem();
+  SimpleASTReaderListener Validator(CI.getPreprocessor());
+  for (vfs::directory_iterator Dir = FS.dir_begin(DirNative, EC), DirEnd;
+       Dir != DirEnd && !EC; Dir.increment(EC)) {
+    // Check whether this is an AST file. ASTReader::isAcceptableASTFile is not
+    // used here since we're not interested in validating the PCH at this time,
+    // but only to check whether this is a file containing an AST.
+    if (!ASTReader::readASTFileControlBlock(
+            Dir->getName(), FileMgr, CI.getPCHContainerReader(),
+            /*FindModuleFileExtensions=*/false, Validator,
+            /*ValidateDiagnosticOptions=*/false))
+      MDC->addFile(Dir->getName());
+  }
+}
+
 // Diagnostics
 static void SetUpDiagnosticLog(DiagnosticOptions *DiagOpts,
                                const CodeGenOptions *CodeGenOpts,
@@ -366,8 +406,13 @@ void CompilerInstance::createPreprocessor(TranslationUnitKind TUKind) {
         DepOpts.ModuleDependencyOutputDir);
   }
 
-  if (ModuleDepCollector)
+  // If there is a module dep collector, register with other dep collectors
+  // and also (a) collect header maps and (b) TODO: input vfs overlay files.
+  if (ModuleDepCollector) {
     addDependencyCollector(ModuleDepCollector);
+    collectHeaderMaps(PP->getHeaderSearchInfo(), ModuleDepCollector);
+    collectIncludePCH(*this, ModuleDepCollector);
+  }
 
   for (auto &Listener : DependencyCollectors)
     Listener->attachToPreprocessor(*PP);
@@ -1393,8 +1438,21 @@ bool CompilerInstance::loadModuleFile(StringRef FileName) {
         if (Module *M = CI.getPreprocessor()
                             .getHeaderSearchInfo()
                             .getModuleMap()
-                            .findModule(II->getName()))
+                            .findModule(II->getName())) {
           M->HasIncompatibleModuleFile = true;
+
+          // Mark module as available if the only reason it was unavailable
+          // was missing headers.
+          SmallVector<Module *, 2> Stack;
+          Stack.push_back(M);
+          while (!Stack.empty()) {
+            Module *Current = Stack.pop_back_val();
+            if (Current->IsMissingRequirement) continue;
+            Current->IsAvailable = true;
+            Stack.insert(Stack.end(),
+                         Current->submodule_begin(), Current->submodule_end());
+          }
+        }
       }
       LoadedModules.clear();
     }
@@ -1498,7 +1556,7 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
       if (Module && Module->HasIncompatibleModuleFile) {
         // We tried and failed to load a module file for this module. Fall
         // back to textual inclusion for its headers.
-        return ModuleLoadResult(nullptr, /*missingExpected*/true);
+        return ModuleLoadResult::ConfigMismatch;
       }
 
       getDiagnostics().Report(ModuleNameLoc, diag::err_module_build_disabled)
@@ -1705,7 +1763,7 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
         << Module->getFullModuleName()
         << SourceRange(Path.front().second, Path.back().second);
 
-      return ModuleLoadResult(nullptr, true);
+      return ModuleLoadResult::MissingExpected;
     }
 
     // Check whether this module is available.
@@ -1739,7 +1797,7 @@ CompilerInstance::loadModule(SourceLocation ImportLoc,
   }
 
   LastModuleImportLoc = ImportLoc;
-  LastModuleImportResult = ModuleLoadResult(Module, false);
+  LastModuleImportResult = ModuleLoadResult(Module);
   return LastModuleImportResult;
 }
 

@@ -112,15 +112,15 @@ template <typename T>
 static T PickFP(const llvm::fltSemantics *Sem, T IEEESingleVal,
                 T IEEEDoubleVal, T X87DoubleExtendedVal, T PPCDoubleDoubleVal,
                 T IEEEQuadVal) {
-  if (Sem == (const llvm::fltSemantics*)&llvm::APFloat::IEEEsingle)
+  if (Sem == (const llvm::fltSemantics*)&llvm::APFloat::IEEEsingle())
     return IEEESingleVal;
-  if (Sem == (const llvm::fltSemantics*)&llvm::APFloat::IEEEdouble)
+  if (Sem == (const llvm::fltSemantics*)&llvm::APFloat::IEEEdouble())
     return IEEEDoubleVal;
-  if (Sem == (const llvm::fltSemantics*)&llvm::APFloat::x87DoubleExtended)
+  if (Sem == (const llvm::fltSemantics*)&llvm::APFloat::x87DoubleExtended())
     return X87DoubleExtendedVal;
-  if (Sem == (const llvm::fltSemantics*)&llvm::APFloat::PPCDoubleDouble)
+  if (Sem == (const llvm::fltSemantics*)&llvm::APFloat::PPCDoubleDouble())
     return PPCDoubleDoubleVal;
-  assert(Sem == (const llvm::fltSemantics*)&llvm::APFloat::IEEEquad);
+  assert(Sem == (const llvm::fltSemantics*)&llvm::APFloat::IEEEquad());
   return IEEEQuadVal;
 }
 
@@ -510,14 +510,16 @@ static void InitializeCPlusPlusFeatureTestMacros(const LangOptions &LangOpts,
   if (LangOpts.CPlusPlus1z) {
     Builder.defineMacro("__cpp_hex_float", "201603");
     Builder.defineMacro("__cpp_inline_variables", "201606");
-    //Builder.defineMacro("__cpp_noexcept_function_type", "201510");
+    Builder.defineMacro("__cpp_noexcept_function_type", "201510");
     Builder.defineMacro("__cpp_capture_star_this", "201603");
     Builder.defineMacro("__cpp_if_constexpr", "201606");
     Builder.defineMacro("__cpp_template_auto", "201606");
     Builder.defineMacro("__cpp_namespace_attributes", "201411");
     Builder.defineMacro("__cpp_enumerator_attributes", "201411");
     Builder.defineMacro("__cpp_nested_namespace_definitions", "201411");
+    Builder.defineMacro("__cpp_variadic_using", "201611");
     Builder.defineMacro("__cpp_aggregate_bases", "201603");
+    Builder.defineMacro("__cpp_structured_bindings", "201606");
     Builder.defineMacro("__cpp_nontype_template_args", "201411");
     Builder.defineMacro("__cpp_fold_expressions", "201603");
   }
@@ -992,7 +994,7 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   // OpenCL definitions.
   if (LangOpts.OpenCL) {
 #define OPENCLEXT(Ext) \
-    if (TI.getSupportedOpenCLOpts().is_##Ext##_supported( \
+    if (TI.getSupportedOpenCLOpts().isSupported(#Ext, \
         LangOpts.OpenCLVersion)) \
       Builder.defineMacro(#Ext);
 #include "clang/Basic/OpenCLExtensions.def"

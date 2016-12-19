@@ -466,7 +466,8 @@ void CGDebugInfo::CreateCompileUnit() {
   // Create new compile unit.
   // FIXME - Eliminate TheCU.
   TheCU = DBuilder.createCompileUnit(
-      LangTag, remapDIPath(MainFileName), remapDIPath(getCurrentDirname()),
+      LangTag, DBuilder.createFile(remapDIPath(MainFileName),
+                                    remapDIPath(getCurrentDirname())),
       Producer, LO.Optimize, CGM.getCodeGenOpts().DwarfDebugFlags, RuntimeVers,
       CGM.getCodeGenOpts().SplitDwarfFile, EmissionKind, 0 /* DWOid */,
       CGM.getCodeGenOpts().SplitDwarfInlining);
@@ -1977,10 +1978,11 @@ CGDebugInfo::getOrCreateModuleRef(ExternalASTSource::ASTSourceDescriptor Mod,
     // but LLVM detects skeleton CUs by looking for a non-zero DWO id.
     uint64_t Signature = Mod.getSignature() ? Mod.getSignature() : ~1ULL;
     llvm::DIBuilder DIB(CGM.getModule());
-    DIB.createCompileUnit(TheCU->getSourceLanguage(), Mod.getModuleName(),
-                          Mod.getPath(), TheCU->getProducer(), true,
-                          StringRef(), 0, Mod.getASTFile(),
-                          llvm::DICompileUnit::FullDebug, Signature);
+    DIB.createCompileUnit(TheCU->getSourceLanguage(),
+                          DIB.createFile(Mod.getModuleName(), Mod.getPath()),
+                          TheCU->getProducer(), true, StringRef(), 0,
+                          Mod.getASTFile(), llvm::DICompileUnit::FullDebug,
+                          Signature);
     DIB.finalize();
   }
   llvm::DIModule *Parent =
@@ -3757,9 +3759,15 @@ void CGDebugInfo::EmitGlobalVariable(const ValueDecl *VD, const APValue &Init) {
   if (GV)
     return;
   llvm::DIExpression *InitExpr = nullptr;
-  if (Init.isInt())
-    InitExpr =
-        DBuilder.createConstantValueExpression(Init.getInt().getExtValue());
+  if (CGM.getContext().getTypeSize(VD->getType()) <= 64) {
+    // FIXME: Add a representation for integer constants wider than 64 bits.
+    if (Init.isInt())
+      InitExpr =
+          DBuilder.createConstantValueExpression(Init.getInt().getExtValue());
+    else if (Init.isFloat())
+      InitExpr = DBuilder.createConstantValueExpression(
+          Init.getFloat().bitcastToAPInt().getZExtValue());
+  }
   GV.reset(DBuilder.createGlobalVariable(
       DContext, Name, StringRef(), Unit, getLineNumber(VD->getLocation()), Ty,
       true, InitExpr, getOrCreateStaticDataMemberDeclarationOrNull(VarD),

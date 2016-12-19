@@ -312,6 +312,17 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
     EmitOMPTeamsDistributeSimdDirective(
         cast<OMPTeamsDistributeSimdDirective>(*S));
     break;
+  case Stmt::OMPTeamsDistributeParallelForSimdDirectiveClass:
+    EmitOMPTeamsDistributeParallelForSimdDirective(
+        cast<OMPTeamsDistributeParallelForSimdDirective>(*S));
+    break;
+  case Stmt::OMPTeamsDistributeParallelForDirectiveClass:
+    EmitOMPTeamsDistributeParallelForDirective(
+        cast<OMPTeamsDistributeParallelForDirective>(*S));
+    break;
+  case Stmt::OMPTargetTeamsDirectiveClass:
+    EmitOMPTargetTeamsDirective(cast<OMPTargetTeamsDirective>(*S));
+    break;
   }
 }
 
@@ -2423,7 +2434,7 @@ LValue CodeGenFunction::InitCapturedStruct(const CapturedStmt &S) {
       auto VAT = CurField->getCapturedVLAType();
       EmitStoreThroughLValue(RValue::get(VLASizeMap[VAT->getSizeExpr()]), LV);
     } else {
-      EmitInitializerForField(*CurField, LV, *I, None);
+      EmitInitializerForField(*CurField, LV, *I);
     }
   }
 

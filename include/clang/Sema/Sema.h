@@ -1330,11 +1330,7 @@ public:
   bool CheckEquivalentExceptionSpec(
       const PartialDiagnostic &DiagID, const PartialDiagnostic & NoteID,
       const FunctionProtoType *Old, SourceLocation OldLoc,
-      const FunctionProtoType *New, SourceLocation NewLoc,
-      bool *MissingExceptionSpecification = nullptr,
-      bool *MissingEmptyExceptionSpecification = nullptr,
-      bool AllowNoexceptAllMatchWithNoSpec = false,
-      bool IsOperatorNew = false);
+      const FunctionProtoType *New, SourceLocation NewLoc);
   bool CheckExceptionSpecSubset(const PartialDiagnostic &DiagID,
                                 const PartialDiagnostic &NestedDiagID,
                                 const PartialDiagnostic &NoteID,
@@ -1530,12 +1526,6 @@ public:
     bool ShouldSkip;
     NamedDecl *Previous;
   };
-
-  /// List of decls defined in a function prototype. This contains EnumConstants
-  /// that incorrectly end up in translation unit scope because there is no
-  /// function to pin them on. ActOnFunctionDeclarator reads this list and patches
-  /// them into the FunctionDecl.
-  std::vector<NamedDecl*> DeclsInPrototypeScope;
 
   DeclGroupPtrTy ConvertDeclToDeclGroup(Decl *Ptr, Decl *OwnedType = nullptr);
 
@@ -1912,10 +1902,6 @@ public:
   /// \brief The parser has left a submodule.
   void ActOnModuleEnd(SourceLocation DirectiveLoc, Module *Mod);
 
-  /// \brief Check if module import may be found in the current context,
-  /// emit error if not.
-  void diagnoseMisplacedModuleImport(Module *M, SourceLocation ImportLoc);
-
   /// \brief Create an implicit import of the given module at the given
   /// source location, for error recovery, if possible.
   ///
@@ -1990,7 +1976,10 @@ public:
   /// Common ways to introduce type names without a tag for use in diagnostics.
   /// Keep in sync with err_tag_reference_non_tag.
   enum NonTagKind {
-    NTK_Unknown,
+    NTK_NonStruct,
+    NTK_NonClass,
+    NTK_NonUnion,
+    NTK_NonEnum,
     NTK_Typedef,
     NTK_TypeAlias,
     NTK_Template,
@@ -2000,7 +1989,7 @@ public:
 
   /// Given a non-tag type declaration, returns an enum useful for indicating
   /// what kind of non-tag type this is.
-  NonTagKind getNonTagTypeDeclKind(const Decl *D);
+  NonTagKind getNonTagTypeDeclKind(const Decl *D, TagTypeKind TTK);
 
   bool isAcceptableTagRedeclaration(const TagDecl *Previous,
                                     TagTypeKind NewTag, bool isDefinition,
@@ -4368,6 +4357,7 @@ public:
                                    SourceLocation NameLoc,
                                    const LookupResult &Previous);
   bool CheckUsingDeclQualifier(SourceLocation UsingLoc,
+                               bool HasTypename,
                                const CXXScopeSpec &SS,
                                const DeclarationNameInfo &NameInfo,
                                SourceLocation NameLoc);
@@ -4392,12 +4382,10 @@ public:
 
   Decl *ActOnUsingDeclaration(Scope *CurScope,
                               AccessSpecifier AS,
-                              bool HasUsingKeyword,
                               SourceLocation UsingLoc,
                               CXXScopeSpec &SS,
                               UnqualifiedId &Name,
                               AttributeList *AttrList,
-                              bool HasTypenameKeyword,
                               SourceLocation TypenameLoc);
   Decl *ActOnAliasDeclaration(Scope *CurScope,
                               AccessSpecifier AS,
@@ -6559,7 +6547,12 @@ public:
   // C++ Template Argument Deduction (C++ [temp.deduct])
   //===--------------------------------------------------------------------===//
 
-  QualType adjustCCAndNoReturn(QualType ArgFunctionType, QualType FunctionType);
+  /// Adjust the type \p ArgFunctionType to match the calling convention,
+  /// noreturn, and optionally the exception specification of \p FunctionType.
+  /// Deduction often wants to ignore these properties when matching function
+  /// types.
+  QualType adjustCCAndNoReturn(QualType ArgFunctionType, QualType FunctionType,
+                               bool AdjustExceptionSpec = false);
 
   /// \brief Describes the result of template argument deduction.
   ///
@@ -6611,7 +6604,9 @@ public:
     /// not be resolved to a suitable function.
     TDK_FailedOverloadResolution,
     /// \brief Deduction failed; that's all we know.
-    TDK_MiscellaneousDeductionFailure
+    TDK_MiscellaneousDeductionFailure,
+    /// \brief CUDA Target attributes do not match.
+    TDK_CUDATargetMismatch
   };
 
   TemplateDeductionResult
@@ -6668,7 +6663,7 @@ public:
                           QualType ArgFunctionType,
                           FunctionDecl *&Specialization,
                           sema::TemplateDeductionInfo &Info,
-                          bool InOverloadResolution = false);
+                          bool IsAddressOfFunction = false);
 
   TemplateDeductionResult
   DeduceTemplateArguments(FunctionTemplateDecl *FunctionTemplate,
@@ -6681,7 +6676,7 @@ public:
                           TemplateArgumentListInfo *ExplicitTemplateArgs,
                           FunctionDecl *&Specialization,
                           sema::TemplateDeductionInfo &Info,
-                          bool InOverloadResolution = false);
+                          bool IsAddressOfFunction = false);
 
   /// \brief Substitute Replacement for \p auto in \p TypeWithAuto
   QualType SubstAutoType(QualType TypeWithAuto, QualType Replacement);
@@ -8097,6 +8092,58 @@ public:
   void CheckCompletedCoroutineBody(FunctionDecl *FD, Stmt *&Body);
 
   //===--------------------------------------------------------------------===//
+  // OpenCL extensions.
+  //
+private:
+  std::string CurrOpenCLExtension;
+  /// Extensions required by an OpenCL type.
+  llvm::DenseMap<const Type*, std::set<std::string>> OpenCLTypeExtMap;
+  /// Extensions required by an OpenCL declaration.
+  llvm::DenseMap<const Decl*, std::set<std::string>> OpenCLDeclExtMap;
+public:
+  llvm::StringRef getCurrentOpenCLExtension() const {
+    return CurrOpenCLExtension;
+  }
+  void setCurrentOpenCLExtension(llvm::StringRef Ext) {
+    CurrOpenCLExtension = Ext;
+  }
+
+  /// \brief Set OpenCL extensions for a type which can only be used when these
+  /// OpenCL extensions are enabled. If \p Exts is empty, do nothing.
+  /// \param Exts A space separated list of OpenCL extensions.
+  void setOpenCLExtensionForType(QualType T, llvm::StringRef Exts);
+
+  /// \brief Set OpenCL extensions for a declaration which can only be
+  /// used when these OpenCL extensions are enabled. If \p Exts is empty, do
+  /// nothing.
+  /// \param Exts A space separated list of OpenCL extensions.
+  void setOpenCLExtensionForDecl(Decl *FD, llvm::StringRef Exts);
+
+  /// \brief Set current OpenCL extensions for a type which can only be used
+  /// when these OpenCL extensions are enabled. If current OpenCL extension is
+  /// empty, do nothing.
+  void setCurrentOpenCLExtensionForType(QualType T);
+
+  /// \brief Set current OpenCL extensions for a declaration which
+  /// can only be used when these OpenCL extensions are enabled. If current
+  /// OpenCL extension is empty, do nothing.
+  void setCurrentOpenCLExtensionForDecl(Decl *FD);
+
+  bool isOpenCLDisabledDecl(Decl *FD);
+
+  /// \brief Check if type \p T corresponding to declaration specifier \p DS
+  /// is disabled due to required OpenCL extensions being disabled. If so,
+  /// emit diagnostics.
+  /// \return true if type is disabled.
+  bool checkOpenCLDisabledTypeDeclSpec(const DeclSpec &DS, QualType T);
+
+  /// \brief Check if declaration \p D used by expression \p E
+  /// is disabled due to required OpenCL extensions being disabled. If so,
+  /// emit diagnostics.
+  /// \return true if type is disabled.
+  bool checkOpenCLDisabledDecl(const Decl &D, const Expr &E);
+
+  //===--------------------------------------------------------------------===//
   // OpenMP directives and clauses.
   //
 private:
@@ -8111,6 +8158,21 @@ private:
                                         bool StrictlyPositive = true);
   /// Returns OpenMP nesting level for current directive.
   unsigned getOpenMPNestingLevel() const;
+
+  /// Checks if a type or a declaration is disabled due to the owning extension
+  /// being disabled, and emits diagnostic messages if it is disabled.
+  /// \param D type or declaration to be checked.
+  /// \param DiagLoc source location for the diagnostic message.
+  /// \param DiagInfo information to be emitted for the diagnostic message.
+  /// \param SrcRange source range of the declaration.
+  /// \param Map maps type or declaration to the extensions.
+  /// \param Selector selects diagnostic message: 0 for type and 1 for
+  ///        declaration.
+  /// \return true if the type or declaration is disabled.
+  template <typename T, typename DiagLocT, typename DiagInfoT, typename MapT>
+  bool checkOpenCLDisabledTypeOrDecl(T D, DiagLocT DiagLoc, DiagInfoT DiagInfo,
+                                     MapT &Map, unsigned Selector = 0,
+                                     SourceRange SrcRange = SourceRange());
 
 public:
   /// \brief Return true if the provided declaration \a VD should be captured by
@@ -8427,6 +8489,24 @@ public:
       ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
       SourceLocation EndLoc,
       llvm::DenseMap<ValueDecl *, Expr *> &VarsWithImplicitDSA);
+  /// Called on well-formed '\#pragma omp teams distribute parallel for simd'
+  /// after parsing of the associated statement.
+  StmtResult ActOnOpenMPTeamsDistributeParallelForSimdDirective(
+      ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
+      SourceLocation EndLoc,
+      llvm::DenseMap<ValueDecl *, Expr *> &VarsWithImplicitDSA);
+  /// Called on well-formed '\#pragma omp teams distribute parallel for'
+  /// after parsing of the associated statement.
+  StmtResult ActOnOpenMPTeamsDistributeParallelForDirective(
+      ArrayRef<OMPClause *> Clauses, Stmt *AStmt, SourceLocation StartLoc,
+      SourceLocation EndLoc,
+      llvm::DenseMap<ValueDecl *, Expr *> &VarsWithImplicitDSA);
+  /// Called on well-formed '\#pragma omp target teams' after parsing of the
+  /// associated statement.
+  StmtResult ActOnOpenMPTargetTeamsDirective(ArrayRef<OMPClause *> Clauses,
+                                             Stmt *AStmt,
+                                             SourceLocation StartLoc,
+                                             SourceLocation EndLoc);
 
   /// Checks correctness of linear modifiers.
   bool CheckOpenMPLinearModifier(OpenMPLinearClauseKind LinKind,
@@ -8747,6 +8827,11 @@ public:
   // do not have a prototype. Integer promotions are performed on each
   // argument, and arguments that have type float are promoted to double.
   ExprResult DefaultArgumentPromotion(Expr *E);
+
+  /// If \p E is a prvalue denoting an unmaterialized temporary, materialize
+  /// it as an xvalue. In C++98, the result will still be a prvalue, because
+  /// we don't have xvalues there.
+  ExprResult TemporaryMaterializationConversion(Expr *E);
 
   // Used for emitting the right warning by DefaultVariadicArgumentPromotion
   enum VariadicCallType {
@@ -9450,7 +9535,9 @@ public:
   ///
   /// Use this rather than examining the function's attributes yourself -- you
   /// will get it wrong.  Returns CFT_Host if D is null.
-  CUDAFunctionTarget IdentifyCUDATarget(const FunctionDecl *D);
+  CUDAFunctionTarget IdentifyCUDATarget(const FunctionDecl *D,
+                                        bool IgnoreImplicitHDAttr = false);
+  CUDAFunctionTarget IdentifyCUDATarget(const AttributeList *Attr);
 
   /// Gets the CUDA target for the current context.
   CUDAFunctionTarget CurrentCUDATarget() {
@@ -9548,6 +9635,13 @@ public:
   /// (E.2.3.1 in CUDA 7.5 Programming guide).
   bool isEmptyCudaConstructor(SourceLocation Loc, CXXConstructorDecl *CD);
   bool isEmptyCudaDestructor(SourceLocation Loc, CXXDestructorDecl *CD);
+
+  /// Check whether NewFD is a valid overload for CUDA. Emits
+  /// diagnostics and invalidates NewFD if not.
+  void checkCUDATargetOverload(FunctionDecl *NewFD,
+                               const LookupResult &Previous);
+  /// Copies target attributes from the template TD to the function FD.
+  void inheritCUDATargetAttrs(FunctionDecl *FD, const FunctionTemplateDecl &TD);
 
   /// \name Code completion
   //@{
@@ -9687,6 +9781,9 @@ public:
                                           bool AtParameterName,
                                           ParsedType ReturnType,
                                           ArrayRef<IdentifierInfo *> SelIdents);
+  void CodeCompleteObjCClassPropertyRefExpr(Scope *S, IdentifierInfo &ClassName,
+                                            SourceLocation ClassNameLoc,
+                                            bool IsBaseExprStatement);
   void CodeCompletePreprocessorDirective(bool InConditional);
   void CodeCompleteInPreprocessorConditionalExclusion(Scope *S);
   void CodeCompletePreprocessorMacroName(bool IsDefinition);
@@ -9827,8 +9924,9 @@ private:
                             llvm::SmallBitVector &CheckedVarArgs);
 
   void CheckAbsoluteValueFunction(const CallExpr *Call,
-                                  const FunctionDecl *FDecl,
-                                  IdentifierInfo *FnInfo);
+                                  const FunctionDecl *FDecl);
+
+  void CheckMaxUnsignedZero(const CallExpr *Call, const FunctionDecl *FDecl);
 
   void CheckMemaccessArguments(const CallExpr *Call,
                                unsigned BId,
@@ -10043,7 +10141,8 @@ public:
   /// local diagnostics like in reference binding.
   void RefersToMemberWithReducedAlignment(
       Expr *E,
-      std::function<void(Expr *, RecordDecl *, FieldDecl *, CharUnits)> Action);
+      llvm::function_ref<void(Expr *, RecordDecl *, FieldDecl *, CharUnits)>
+          Action);
 };
 
 /// \brief RAII object that enters a new expression evaluation context.

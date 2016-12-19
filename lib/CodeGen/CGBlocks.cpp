@@ -88,7 +88,7 @@ static llvm::Constant *buildBlockDescriptor(CodeGenModule &CGM,
   else
     i8p = CGM.VoidPtrTy;
 
-  ConstantBuilder builder(CGM);
+  ConstantInitBuilder builder(CGM);
   auto elements = builder.beginStruct();
 
   // reserved
@@ -1076,7 +1076,7 @@ static llvm::Constant *buildGlobalBlock(CodeGenModule &CGM,
   assert(blockInfo.CanBeGlobal);
 
   // Generate the constants for the block literal initializer.
-  ConstantBuilder builder(CGM);
+  ConstantInitBuilder builder(CGM);
   auto fields = builder.beginStruct();
 
   // isa
@@ -1941,7 +1941,7 @@ static T *buildByrefHelpers(CodeGenModule &CGM, const BlockByrefInfo &byrefInfo,
   generator.CopyHelper = buildByrefCopyHelper(CGM, byrefInfo, generator);
   generator.DisposeHelper = buildByrefDisposeHelper(CGM, byrefInfo, generator);
 
-  T *copy = new (CGM.getContext()) T(std::move(generator));
+  T *copy = new (CGM.getContext()) T(std::forward<T>(generator));
   CGM.ByrefHelpersCache.InsertNode(copy, insertPos);
   return copy;
 }

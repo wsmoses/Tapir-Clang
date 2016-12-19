@@ -196,6 +196,11 @@ public:
                              SmallVectorImpl<StringRef> &BiarchLibDirs,
                              SmallVectorImpl<StringRef> &BiarchTripleAliases);
 
+    bool ScanGCCForMultilibs(const llvm::Triple &TargetTriple,
+                             const llvm::opt::ArgList &Args,
+                             StringRef Path,
+                             bool NeedsBiarchSuffix = false);
+
     void ScanLibDirForGCCTriple(const llvm::Triple &TargetArch,
                                 const llvm::opt::ArgList &Args,
                                 const std::string &LibDir,
@@ -207,6 +212,11 @@ public:
                                        const std::string &LibDir,
                                        StringRef CandidateTriple,
                                        bool NeedsBiarchSuffix = false);
+
+    bool ScanGentooGccConfig(const llvm::Triple &TargetTriple,
+                             const llvm::opt::ArgList &Args,
+                             StringRef CandidateTriple,
+                             bool NeedsBiarchSuffix = false);
   };
 
 protected:
@@ -912,6 +922,8 @@ public:
   void AddIAMCUIncludeArgs(const llvm::opt::ArgList &DriverArgs,
                            llvm::opt::ArgStringList &CC1Args) const override;
 
+  SanitizerMask getSupportedSanitizers() const override;
+
   const ToolChain &HostTC;
   CudaInstallationDetector CudaInstallation;
 
@@ -947,6 +959,10 @@ public:
   RuntimeLibType GetDefaultRuntimeLibType() const override {
     return GCCInstallation.isValid() ? RuntimeLibType::RLT_Libgcc
                                      : RuntimeLibType::RLT_CompilerRT;
+  }
+
+  const char *getDefaultLinker() const override {
+    return "lld";
   }
 
 private:
@@ -1078,6 +1094,10 @@ public:
   void AddCXXStdlibLibArgs(const llvm::opt::ArgList &Args,
                            llvm::opt::ArgStringList &CmdArgs) const override;
 
+  const char *getDefaultLinker() const override {
+    return "lld";
+  }
+
 protected:
   Tool *buildAssembler() const override;
   Tool *buildLinker() const override;
@@ -1138,7 +1158,9 @@ public:
   bool getVisualStudioInstallDir(std::string &path) const;
   bool getVisualStudioBinariesFolder(const char *clangProgramPath,
                                      std::string &path) const;
-  VersionTuple getMSVCVersionFromExe() const override;
+  VersionTuple
+  computeMSVCVersion(const Driver *D,
+                     const llvm::opt::ArgList &Args) const override;
 
   std::string ComputeEffectiveClangTriple(const llvm::opt::ArgList &Args,
                                           types::ID InputType) const override;
@@ -1154,6 +1176,9 @@ protected:
 
   Tool *buildLinker() const override;
   Tool *buildAssembler() const override;
+private:
+  VersionTuple getMSVCVersionFromTriple() const;
+  VersionTuple getMSVCVersionFromExe() const;
 };
 
 class LLVM_LIBRARY_VISIBILITY CrossWindowsToolChain : public Generic_GCC {
@@ -1271,6 +1296,10 @@ private:
   void AddClangCXXStdlibIncludeArgs(
       const llvm::opt::ArgList &DriverArgs,
       llvm::opt::ArgStringList &CC1Args) const override;
+
+  const char *getDefaultLinker() const override {
+    return "lld";
+  }
 
   Tool *buildLinker() const override;
 };
