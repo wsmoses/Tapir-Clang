@@ -1070,7 +1070,8 @@ Sema::ActOnFinishSwitchStmt(SourceLocation SwitchLoc, Stmt *Switch,
     const EnumType *ET = CondTypeBeforePromotion->getAs<EnumType>();
 
     // If switch has default case, then ignore it.
-    if (!CaseListIsErroneous  && !HasConstantCond && ET) {
+    if (!CaseListIsErroneous && !HasConstantCond && ET &&
+        ET->getDecl()->isCompleteDefinition()) {
       const EnumDecl *ED = ET->getDecl();
       EnumValsTy EnumVals;
 
@@ -3287,6 +3288,10 @@ StmtResult Sema::BuildReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
     if (FD->isNoReturn())
       Diag(ReturnLoc, diag::warn_noreturn_function_has_return_expr)
         << FD->getDeclName();
+    if (FD->isMain() && RetValExp)
+      if (isa<CXXBoolLiteralExpr>(RetValExp))
+        Diag(ReturnLoc, diag::warn_main_returns_bool_literal)
+          << RetValExp->getSourceRange();
   } else if (ObjCMethodDecl *MD = getCurMethodDecl()) {
     FnRetType = MD->getReturnType();
     isObjCMethod = true;
@@ -3541,7 +3546,7 @@ StmtResult Sema::BuildObjCAtThrowStmt(SourceLocation AtLoc, Expr *Throw) {
         !ThrowType->isObjCObjectPointerType()) {
       const PointerType *PT = ThrowType->getAs<PointerType>();
       if (!PT || !PT->getPointeeType()->isVoidType())
-        return StmtError(Diag(AtLoc, diag::error_objc_throw_expects_object)
+        return StmtError(Diag(AtLoc, diag::err_objc_throw_expects_object)
                          << Throw->getType() << Throw->getSourceRange());
     }
   }
@@ -3562,7 +3567,7 @@ Sema::ActOnObjCAtThrowStmt(SourceLocation AtLoc, Expr *Throw,
     while (AtCatchParent && !AtCatchParent->isAtCatchScope())
       AtCatchParent = AtCatchParent->getParent();
     if (!AtCatchParent)
-      return StmtError(Diag(AtLoc, diag::error_rethrow_used_outside_catch));
+      return StmtError(Diag(AtLoc, diag::err_rethrow_used_outside_catch));
   }
   return BuildObjCAtThrowStmt(AtLoc, Throw);
 }
@@ -3583,19 +3588,19 @@ Sema::ActOnObjCAtSynchronizedOperand(SourceLocation atLoc, Expr *operand) {
       if (getLangOpts().CPlusPlus) {
         if (RequireCompleteType(atLoc, type,
                                 diag::err_incomplete_receiver_type))
-          return Diag(atLoc, diag::error_objc_synchronized_expects_object)
+          return Diag(atLoc, diag::err_objc_synchronized_expects_object)
                    << type << operand->getSourceRange();
 
         ExprResult result = PerformContextuallyConvertToObjCPointer(operand);
         if (result.isInvalid())
           return ExprError();
         if (!result.isUsable())
-          return Diag(atLoc, diag::error_objc_synchronized_expects_object)
+          return Diag(atLoc, diag::err_objc_synchronized_expects_object)
                    << type << operand->getSourceRange();
 
         operand = result.get();
       } else {
-          return Diag(atLoc, diag::error_objc_synchronized_expects_object)
+          return Diag(atLoc, diag::err_objc_synchronized_expects_object)
                    << type << operand->getSourceRange();
       }
     }

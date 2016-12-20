@@ -556,7 +556,6 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.ObjCAutoRefCountExceptions = Args.hasArg(OPT_fobjc_arc_exceptions);
   Opts.CXAAtExit = !Args.hasArg(OPT_fno_use_cxa_atexit);
   Opts.CXXCtorDtorAliases = Args.hasArg(OPT_mconstructor_aliases);
-  Opts.QualifiedFunctionTypeInfo = Args.hasArg(OPT_mqualified_function_type_info);
   Opts.CodeModel = getCodeModel(Args, Diags);
   Opts.DebugPass = Args.getLastArgValue(OPT_mdebug_pass);
   Opts.DisableFPElim =
@@ -931,21 +930,13 @@ static bool parseShowColorsArgs(const ArgList &Args, bool DefaultColor) {
   } ShowColors = DefaultColor ? Colors_Auto : Colors_Off;
   for (Arg *A : Args) {
     const Option &O = A->getOption();
-    if (!O.matches(options::OPT_fcolor_diagnostics) &&
-        !O.matches(options::OPT_fdiagnostics_color) &&
-        !O.matches(options::OPT_fno_color_diagnostics) &&
-        !O.matches(options::OPT_fno_diagnostics_color) &&
-        !O.matches(options::OPT_fdiagnostics_color_EQ))
-      continue;
-
     if (O.matches(options::OPT_fcolor_diagnostics) ||
         O.matches(options::OPT_fdiagnostics_color)) {
       ShowColors = Colors_On;
     } else if (O.matches(options::OPT_fno_color_diagnostics) ||
                O.matches(options::OPT_fno_diagnostics_color)) {
       ShowColors = Colors_Off;
-    } else {
-      assert(O.matches(options::OPT_fdiagnostics_color_EQ));
+    } else if (O.matches(options::OPT_fdiagnostics_color_EQ)) {
       StringRef Value(A->getValue());
       if (Value == "always")
         ShowColors = Colors_On;
@@ -955,10 +946,9 @@ static bool parseShowColorsArgs(const ArgList &Args, bool DefaultColor) {
         ShowColors = Colors_Auto;
     }
   }
-  if (ShowColors == Colors_On ||
-      (ShowColors == Colors_Auto && llvm::sys::Process::StandardErrHasColors()))
-    return true;
-  return false;
+  return ShowColors == Colors_On ||
+         (ShowColors == Colors_Auto &&
+          llvm::sys::Process::StandardErrHasColors());
 }
 
 bool clang::ParseDiagnosticArgs(DiagnosticOptions &Opts, ArgList &Args,
@@ -1568,13 +1558,15 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     case IK_Asm:
     case IK_C:
     case IK_PreprocessedC:
-    case IK_ObjC:
-    case IK_PreprocessedObjC:
       // The PS4 uses C99 as the default C standard.
       if (T.isPS4())
         LangStd = LangStandard::lang_gnu99;
       else
         LangStd = LangStandard::lang_gnu11;
+      break;
+    case IK_ObjC:
+    case IK_PreprocessedObjC:
+      LangStd = LangStandard::lang_gnu11;
       break;
     case IK_CXX:
     case IK_PreprocessedCXX:

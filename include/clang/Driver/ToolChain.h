@@ -105,7 +105,6 @@ private:
 
 protected:
   MultilibSet Multilibs;
-  const char *DefaultLinker = "ld";
 
   ToolChain(const Driver &D, const llvm::Triple &T,
             const llvm::opt::ArgList &Args);
@@ -270,6 +269,11 @@ public:
   /// this tool chain (0=off, 1=on, 2=strong, 3=all).
   virtual unsigned GetDefaultStackProtectorLevel(bool KernelOrKext) const {
     return 0;
+  }
+
+  /// GetDefaultLinker - Get the default linker to use.
+  virtual const char *getDefaultLinker() const {
+    return "ld";
   }
 
   /// GetDefaultRuntimeLibType - Get the default runtime library variant to use.
@@ -442,15 +446,15 @@ public:
   virtual void AddIAMCUIncludeArgs(const llvm::opt::ArgList &DriverArgs,
                                    llvm::opt::ArgStringList &CC1Args) const;
 
+  /// \brief On Windows, returns the MSVC compatibility version.
+  virtual VersionTuple computeMSVCVersion(const Driver *D,
+                                          const llvm::opt::ArgList &Args) const;
+
   /// \brief Return sanitizers which are available in this toolchain.
   virtual SanitizerMask getSupportedSanitizers() const;
 
   /// \brief Return sanitizers which are enabled by default.
   virtual SanitizerMask getDefaultSanitizers() const { return 0; }
-
-  /// \brief On Windows, returns the version of cl.exe.  On other platforms,
-  /// returns an empty VersionTuple.
-  virtual VersionTuple getMSVCVersionFromExe() const { return VersionTuple(); }
 };
 
 /// Set a ToolChain's effective triple. Reset it when the registration object

@@ -708,7 +708,7 @@ void CodeGenFunction::EmitScalarInit(const Expr *init, const ValueDecl *D,
     }
 
     auto ty = cast<llvm::PointerType>(tempLV.getAddress().getElementType());
-    llvm::Value *zero = llvm::ConstantPointerNull::get(ty);
+    llvm::Value *zero = CGM.getNullPointer(ty, tempLV.getType());
 
     // If __weak, we want to use a barrier under certain conditions.
     if (lifetime == Qualifiers::OCL_Weak)
@@ -948,8 +948,12 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
       // If the variable's a const type, and it's neither an NRVO
       // candidate nor a __block variable and has no mutable members,
       // emit it as a global instead.
-      if (CGM.getCodeGenOpts().MergeAllConstants && !NRVO && !isByRef &&
-          CGM.isTypeConstant(Ty, true)) {
+      // Exception is if a variable is located in non-constant address space
+      // in OpenCL.
+      if ((!getLangOpts().OpenCL ||
+           Ty.getAddressSpace() == LangAS::opencl_constant) &&
+          (CGM.getCodeGenOpts().MergeAllConstants && !NRVO && !isByRef &&
+           CGM.isTypeConstant(Ty, true))) {
         EmitStaticVarDecl(D, llvm::GlobalValue::InternalLinkage);
 
         // Signal this condition to later callbacks.

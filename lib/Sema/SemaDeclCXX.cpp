@@ -983,11 +983,8 @@ static IsTupleLike isTupleLike(Sema &S, SourceLocation Loc, QualType T,
   if (lookupStdTypeTraitMember(S, R, Loc, "tuple_size", Args, /*DiagID*/0))
     return IsTupleLike::NotTupleLike;
 
-  // FIXME: According to the standard, we're not supposed to diagnose if any
-  // of the steps below fail (or if lookup for ::value is ambiguous or otherwise
-  // results in an error), but this is subject to a pending CWG issue / NB
-  // comment, which says we do diagnose if tuple_size<T> is complete but
-  // tuple_size<T>::value is not an ICE.
+  // If we get this far, we've committed to the tuple interpretation, but
+  // we can still fail if there actually isn't a usable ::value.
 
   struct ICEDiagnoser : Sema::VerifyICEDiagnoser {
     LookupResult &R;
@@ -4249,98 +4246,30 @@ BuildImplicitMemberInitializer(Sema &SemaRef, CXXConstructorDecl *Constructor,
       CtorArg = CastForMoving(SemaRef, CtorArg.get());
     }
 
-    // When the field we are copying is an array, create index variables for 
-    // each dimension of the array. We use these index variables to subscript
-    // the source array, and other clients (e.g., CodeGen) will perform the
-    // necessary iteration with these index variables.
-    SmallVector<VarDecl *, 4> IndexVariables;
-    QualType BaseType = Field->getType();
-    QualType SizeType = SemaRef.Context.getSizeType();
-    bool InitializingArray = false;
-    while (const ConstantArrayType *Array
-                          = SemaRef.Context.getAsConstantArrayType(BaseType)) {
-      InitializingArray = true;
-      // Create the iteration variable for this array index.
-      IdentifierInfo *IterationVarName = nullptr;
-      {
-        SmallString<8> Str;
-        llvm::raw_svector_ostream OS(Str);
-        OS << "__i" << IndexVariables.size();
-        IterationVarName = &SemaRef.Context.Idents.get(OS.str());
-      }
-      VarDecl *IterationVar
-        = VarDecl::Create(SemaRef.Context, SemaRef.CurContext, Loc, Loc,
-                          IterationVarName, SizeType,
-                        SemaRef.Context.getTrivialTypeSourceInfo(SizeType, Loc),
-                          SC_None);
-      IndexVariables.push_back(IterationVar);
-      
-      // Create a reference to the iteration variable.
-      ExprResult IterationVarRef
-        = SemaRef.BuildDeclRefExpr(IterationVar, SizeType, VK_LValue, Loc);
-      assert(!IterationVarRef.isInvalid() &&
-             "Reference to invented variable cannot fail!");
-      IterationVarRef = SemaRef.DefaultLvalueConversion(IterationVarRef.get());
-      assert(!IterationVarRef.isInvalid() &&
-             "Conversion of invented variable cannot fail!");
+    InitializedEntity Entity =
+        Indirect ? InitializedEntity::InitializeMember(Indirect, nullptr,
+                                                       /*Implicit*/ true)
+                 : InitializedEntity::InitializeMember(Field, nullptr,
+                                                       /*Implicit*/ true);
 
-      // Subscript the array with this iteration variable.
-      CtorArg = SemaRef.CreateBuiltinArraySubscriptExpr(CtorArg.get(), Loc,
-                                                        IterationVarRef.get(),
-                                                        Loc);
-      if (CtorArg.isInvalid())
-        return true;
-
-      BaseType = Array->getElementType();
-    }
-
-    // The array subscript expression is an lvalue, which is wrong for moving.
-    if (Moving && InitializingArray)
-      CtorArg = CastForMoving(SemaRef, CtorArg.get());
-
-    // Construct the entity that we will be initializing. For an array, this
-    // will be first element in the array, which may require several levels
-    // of array-subscript entities. 
-    SmallVector<InitializedEntity, 4> Entities;
-    Entities.reserve(1 + IndexVariables.size());
-    if (Indirect)
-      Entities.push_back(InitializedEntity::InitializeMember(Indirect));
-    else
-      Entities.push_back(InitializedEntity::InitializeMember(Field));
-    for (unsigned I = 0, N = IndexVariables.size(); I != N; ++I)
-      Entities.push_back(InitializedEntity::InitializeElement(SemaRef.Context,
-                                                              0,
-                                                              Entities.back()));
-    
     // Direct-initialize to use the copy constructor.
     InitializationKind InitKind =
       InitializationKind::CreateDirect(Loc, SourceLocation(), SourceLocation());
     
     Expr *CtorArgE = CtorArg.getAs<Expr>();
-    InitializationSequence InitSeq(SemaRef, Entities.back(), InitKind,
-                                   CtorArgE);
-
-    ExprResult MemberInit
-      = InitSeq.Perform(SemaRef, Entities.back(), InitKind, 
-                        MultiExprArg(&CtorArgE, 1));
+    InitializationSequence InitSeq(SemaRef, Entity, InitKind, CtorArgE);
+    ExprResult MemberInit =
+        InitSeq.Perform(SemaRef, Entity, InitKind, MultiExprArg(&CtorArgE, 1));
     MemberInit = SemaRef.MaybeCreateExprWithCleanups(MemberInit);
     if (MemberInit.isInvalid())
       return true;
 
-    if (Indirect) {
-      assert(IndexVariables.size() == 0 && 
-             "Indirect field improperly initialized");
-      CXXMemberInit
-        = new (SemaRef.Context) CXXCtorInitializer(SemaRef.Context, Indirect, 
-                                                   Loc, Loc, 
-                                                   MemberInit.getAs<Expr>(), 
-                                                   Loc);
-    } else
-      CXXMemberInit = CXXCtorInitializer::Create(SemaRef.Context, Field, Loc, 
-                                                 Loc, MemberInit.getAs<Expr>(), 
-                                                 Loc,
-                                                 IndexVariables.data(),
-                                                 IndexVariables.size());
+    if (Indirect)
+      CXXMemberInit = new (SemaRef.Context) CXXCtorInitializer(
+          SemaRef.Context, Indirect, Loc, Loc, MemberInit.getAs<Expr>(), Loc);
+    else
+      CXXMemberInit = new (SemaRef.Context) CXXCtorInitializer(
+          SemaRef.Context, Field, Loc, Loc, MemberInit.getAs<Expr>(), Loc);
     return false;
   }
 
@@ -4351,9 +4280,11 @@ BuildImplicitMemberInitializer(Sema &SemaRef, CXXConstructorDecl *Constructor,
     SemaRef.Context.getBaseElementType(Field->getType());
   
   if (FieldBaseElementType->isRecordType()) {
-    InitializedEntity InitEntity 
-      = Indirect? InitializedEntity::InitializeMember(Indirect)
-                : InitializedEntity::InitializeMember(Field);
+    InitializedEntity InitEntity =
+        Indirect ? InitializedEntity::InitializeMember(Indirect, nullptr,
+                                                       /*Implicit*/ true)
+                 : InitializedEntity::InitializeMember(Field, nullptr,
+                                                       /*Implicit*/ true);
     InitializationKind InitKind = 
       InitializationKind::CreateDefault(Loc);
 
@@ -6100,7 +6031,8 @@ void Sema::EvaluateImplicitExceptionSpec(SourceLocation Loc, CXXMethodDecl *MD) 
     return;
 
   // Evaluate the exception specification.
-  auto ESI = computeImplicitExceptionSpec(*this, Loc, MD).getExceptionSpec();
+  auto IES = computeImplicitExceptionSpec(*this, Loc, MD);
+  auto ESI = IES.getExceptionSpec();
 
   // Update the type of the special member to use it.
   UpdateExceptionSpec(MD, ESI);
@@ -6298,8 +6230,8 @@ void Sema::CheckExplicitlyDefaultedMemberExceptionSpec(
   CallingConv CC = Context.getDefaultCallingConvention(/*IsVariadic=*/false,
                                                        /*IsCXXMethod=*/true);
   FunctionProtoType::ExtProtoInfo EPI(CC);
-  EPI.ExceptionSpec = computeImplicitExceptionSpec(*this, MD->getLocation(), MD)
-                          .getExceptionSpec();
+  auto IES = computeImplicitExceptionSpec(*this, MD->getLocation(), MD);
+  EPI.ExceptionSpec = IES.getExceptionSpec();
   const FunctionProtoType *ImplicitType = cast<FunctionProtoType>(
     Context.getFunctionType(Context.VoidTy, None, EPI));
 
@@ -8600,12 +8532,10 @@ void Sema::PushUsingDirective(Scope *S, UsingDirectiveDecl *UDir) {
 
 Decl *Sema::ActOnUsingDeclaration(Scope *S,
                                   AccessSpecifier AS,
-                                  bool HasUsingKeyword,
                                   SourceLocation UsingLoc,
                                   CXXScopeSpec &SS,
                                   UnqualifiedId &Name,
                                   AttributeList *AttrList,
-                                  bool HasTypenameKeyword,
                                   SourceLocation TypenameLoc) {
   assert(S->getFlags() & Scope::DeclScope && "Invalid Scope.");
 
@@ -8647,7 +8577,7 @@ Decl *Sema::ActOnUsingDeclaration(Scope *S,
     return nullptr;
 
   // Warn about access declarations.
-  if (!HasUsingKeyword) {
+  if (UsingLoc.isInvalid()) {
     Diag(Name.getLocStart(),
          getLangOpts().CPlusPlus11 ? diag::err_access_decl
                                    : diag::warn_access_decl_deprecated)
@@ -8661,7 +8591,7 @@ Decl *Sema::ActOnUsingDeclaration(Scope *S,
   NamedDecl *UD = BuildUsingDeclaration(S, AS, UsingLoc, SS,
                                         TargetNameInfo, AttrList,
                                         /* IsInstantiation */ false,
-                                        HasTypenameKeyword, TypenameLoc);
+                                        TypenameLoc.isValid(), TypenameLoc);
   if (UD)
     PushOnScopeChains(UD, S, /*AddToContext*/ false);
 
@@ -9080,8 +9010,23 @@ NamedDecl *Sema::BuildUsingDeclaration(Scope *S, AccessSpecifier AS,
     F.done();
   } else {
     assert(IsInstantiation && "no scope in non-instantiation");
-    assert(CurContext->isRecord() && "scope not record in instantiation");
-    LookupQualifiedName(Previous, CurContext);
+    if (CurContext->isRecord())
+      LookupQualifiedName(Previous, CurContext);
+    else {
+      // No redeclaration check is needed here; in non-member contexts we
+      // diagnosed all possible conflicts with other using-declarations when
+      // building the template:
+      //
+      // For a dependent non-type using declaration, the only valid case is
+      // if we instantiate to a single enumerator. We check for conflicts
+      // between shadow declarations we introduce, and we check in the template
+      // definition for conflicts between a non-type using declaration and any
+      // other declaration, which together covers all cases.
+      //
+      // A dependent typename using declaration will never successfully
+      // instantiate, since it will always name a class member, so we reject
+      // that in the template definition.
+    }
   }
 
   // Check for invalid redeclarations.
@@ -9090,7 +9035,8 @@ NamedDecl *Sema::BuildUsingDeclaration(Scope *S, AccessSpecifier AS,
     return nullptr;
 
   // Check for bad qualifiers.
-  if (CheckUsingDeclQualifier(UsingLoc, SS, NameInfo, IdentLoc))
+  if (CheckUsingDeclQualifier(UsingLoc, HasTypenameKeyword, SS, NameInfo,
+                              IdentLoc))
     return nullptr;
 
   DeclContext *LookupContext = computeDeclContext(SS);
@@ -9301,6 +9247,8 @@ bool Sema::CheckUsingDeclRedeclaration(SourceLocation UsingLoc,
                                        const CXXScopeSpec &SS,
                                        SourceLocation NameLoc,
                                        const LookupResult &Prev) {
+  NestedNameSpecifier *Qual = SS.getScopeRep();
+
   // C++03 [namespace.udecl]p8:
   // C++0x [namespace.udecl]p10:
   //   A using-declaration is a declaration and can therefore be used
@@ -9308,10 +9256,28 @@ bool Sema::CheckUsingDeclRedeclaration(SourceLocation UsingLoc,
   //   allowed.
   //
   // That's in non-member contexts.
-  if (!CurContext->getRedeclContext()->isRecord())
+  if (!CurContext->getRedeclContext()->isRecord()) {
+    // A dependent qualifier outside a class can only ever resolve to an
+    // enumeration type. Therefore it conflicts with any other non-type
+    // declaration in the same scope.
+    // FIXME: How should we check for dependent type-type conflicts at block
+    // scope?
+    if (Qual->isDependent() && !HasTypenameKeyword) {
+      for (auto *D : Prev) {
+        if (!isa<TypeDecl>(D) && !isa<UsingDecl>(D)) {
+          bool OldCouldBeEnumerator =
+              isa<UnresolvedUsingValueDecl>(D) || isa<EnumConstantDecl>(D);
+          Diag(NameLoc,
+               OldCouldBeEnumerator ? diag::err_redefinition
+                                    : diag::err_redefinition_different_kind)
+              << Prev.getLookupName();
+          Diag(D->getLocation(), diag::note_previous_definition);
+          return true;
+        }
+      }
+    }
     return false;
-
-  NestedNameSpecifier *Qual = SS.getScopeRep();
+  }
 
   for (LookupResult::iterator I = Prev.begin(), E = Prev.end(); I != E; ++I) {
     NamedDecl *D = *I;
@@ -9355,6 +9321,7 @@ bool Sema::CheckUsingDeclRedeclaration(SourceLocation UsingLoc,
 /// in the current context is appropriately related to the current
 /// scope.  If an error is found, diagnoses it and returns true.
 bool Sema::CheckUsingDeclQualifier(SourceLocation UsingLoc,
+                                   bool HasTypename,
                                    const CXXScopeSpec &SS,
                                    const DeclarationNameInfo &NameInfo,
                                    SourceLocation NameLoc) {
@@ -9365,9 +9332,11 @@ bool Sema::CheckUsingDeclQualifier(SourceLocation UsingLoc,
     // C++0x [namespace.udecl]p8:
     //   A using-declaration for a class member shall be a member-declaration.
 
-    // If we weren't able to compute a valid scope, it must be a
-    // dependent class scope.
-    if (!NamedContext || NamedContext->getRedeclContext()->isRecord()) {
+    // If we weren't able to compute a valid scope, it might validly be a
+    // dependent class scope or a dependent enumeration unscoped scope. If
+    // we have a 'typename' keyword, the scope must resolve to a class type.
+    if ((HasTypename && !NamedContext) ||
+        (NamedContext && NamedContext->getRedeclContext()->isRecord())) {
       auto *RD = NamedContext
                      ? cast<CXXRecordDecl>(NamedContext->getRedeclContext())
                      : nullptr;
@@ -9427,7 +9396,8 @@ bool Sema::CheckUsingDeclQualifier(SourceLocation UsingLoc,
         if (getLangOpts().CPlusPlus11) {
           // Convert 'using X::Y;' to 'auto &Y = X::Y;'.
           FixIt = FixItHint::CreateReplacement(
-              UsingLoc, "constexpr auto " + NameInfo.getName().getAsString() + " = ");
+              UsingLoc,
+              "constexpr auto " + NameInfo.getName().getAsString() + " = ");
         }
 
         Diag(UsingLoc, diag::note_using_decl_class_member_workaround)
@@ -9437,7 +9407,7 @@ bool Sema::CheckUsingDeclQualifier(SourceLocation UsingLoc,
       return true;
     }
 
-    // Otherwise, everything is known to be fine.
+    // Otherwise, this might be valid.
     return false;
   }
 
@@ -14280,6 +14250,8 @@ bool Sema::DefineUsedVTables() {
     CXXRecordDecl *Class = VTableUses[I].first->getDefinition();
     if (!Class)
       continue;
+    TemplateSpecializationKind ClassTSK =
+        Class->getTemplateSpecializationKind();
 
     SourceLocation Loc = VTableUses[I].second;
 
@@ -14303,9 +14275,8 @@ bool Sema::DefineUsedVTables() {
       // of an explicit instantiation declaration, suppress the
       // vtable; it will live with the explicit instantiation
       // definition.
-      bool IsExplicitInstantiationDeclaration
-        = Class->getTemplateSpecializationKind()
-                                      == TSK_ExplicitInstantiationDeclaration;
+      bool IsExplicitInstantiationDeclaration =
+          ClassTSK == TSK_ExplicitInstantiationDeclaration;
       for (auto R : Class->redecls()) {
         TemplateSpecializationKind TSK
           = cast<CXXRecordDecl>(R)->getTemplateSpecializationKind();
@@ -14338,17 +14309,20 @@ bool Sema::DefineUsedVTables() {
     if (VTablesUsed[Canonical])
       Consumer.HandleVTable(Class);
 
-    // Optionally warn if we're emitting a weak vtable.
-    if (Class->isExternallyVisible() &&
-        Class->getTemplateSpecializationKind() != TSK_ImplicitInstantiation) {
+    // Warn if we're emitting a weak vtable. The vtable will be weak if there is
+    // no key function or the key function is inlined. Don't warn in C++ ABIs
+    // that lack key functions, since the user won't be able to make one.
+    if (Context.getTargetInfo().getCXXABI().hasKeyFunctions() &&
+        Class->isExternallyVisible() && ClassTSK != TSK_ImplicitInstantiation) {
       const FunctionDecl *KeyFunctionDef = nullptr;
-      if (!KeyFunction || 
-          (KeyFunction->hasBody(KeyFunctionDef) && 
-           KeyFunctionDef->isInlined()))
-        Diag(Class->getLocation(), Class->getTemplateSpecializationKind() ==
-             TSK_ExplicitInstantiationDefinition 
-             ? diag::warn_weak_template_vtable : diag::warn_weak_vtable) 
-          << Class;
+      if (!KeyFunction || (KeyFunction->hasBody(KeyFunctionDef) &&
+                           KeyFunctionDef->isInlined())) {
+        Diag(Class->getLocation(),
+             ClassTSK == TSK_ExplicitInstantiationDefinition
+                 ? diag::warn_weak_template_vtable
+                 : diag::warn_weak_vtable)
+            << Class;
+      }
     }
   }
   VTableUses.clear();

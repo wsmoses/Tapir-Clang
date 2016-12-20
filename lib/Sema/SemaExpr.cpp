@@ -657,7 +657,7 @@ ExprResult Sema::DefaultLvalueConversion(Expr *E) {
     return E;
 
   // OpenCL usually rejects direct accesses to values of 'half' type.
-  if (getLangOpts().OpenCL && !getOpenCLOptions().cl_khr_fp16 &&
+  if (getLangOpts().OpenCL && !getOpenCLOptions().isEnabled("cl_khr_fp16") &&
       T->isHalfType()) {
     Diag(E->getExprLoc(), diag::err_opencl_half_load_store)
       << 0 << T;
@@ -817,8 +817,16 @@ ExprResult Sema::DefaultArgumentPromotion(Expr *E) {
   // double.
   const BuiltinType *BTy = Ty->getAs<BuiltinType>();
   if (BTy && (BTy->getKind() == BuiltinType::Half ||
-              BTy->getKind() == BuiltinType::Float))
-    E = ImpCastExprToType(E, Context.DoubleTy, CK_FloatingCast).get();
+              BTy->getKind() == BuiltinType::Float)) {
+    if (getLangOpts().OpenCL &&
+        !getOpenCLOptions().isEnabled("cl_khr_fp64")) {
+        if (BTy->getKind() == BuiltinType::Half) {
+            E = ImpCastExprToType(E, Context.FloatTy, CK_FloatingCast).get();
+        }
+    } else {
+      E = ImpCastExprToType(E, Context.DoubleTy, CK_FloatingCast).get();
+    }
+  }
 
   // C++ performs lvalue-to-rvalue conversion as a default argument
   // promotion, even on class types, but note:
@@ -1186,7 +1194,7 @@ static bool unsupportedTypeConversion(const Sema &S, QualType LHSType,
   */
   return Float128AndLongDouble &&
     (&S.Context.getFloatTypeSemantics(S.Context.LongDoubleTy) !=
-     &llvm::APFloat::IEEEdouble);
+     &llvm::APFloat::IEEEdouble());
 }
 
 typedef ExprResult PerformCastFn(Sema &S, Expr *operand, QualType toType);
@@ -2452,7 +2460,7 @@ Sema::LookupInObjCMethod(LookupResult &Lookup, Scope *S,
     if (IFace && (IV = IFace->lookupInstanceVariable(II, ClassDeclared))) {
       // Diagnose using an ivar in a class method.
       if (IsClassMethod)
-        return ExprError(Diag(Loc, diag::error_ivar_use_in_class_method)
+        return ExprError(Diag(Loc, diag::err_ivar_use_in_class_method)
                          << IV->getDeclName());
 
       // If we're referencing an invalid decl, just return this as a silent
@@ -2468,7 +2476,7 @@ Sema::LookupInObjCMethod(LookupResult &Lookup, Scope *S,
       if (IV->getAccessControl() == ObjCIvarDecl::Private &&
           !declaresSameEntity(ClassDeclared, IFace) &&
           !getLangOpts().DebuggerSupport)
-        Diag(Loc, diag::error_private_ivar_access) << IV->getDeclName();
+        Diag(Loc, diag::err_private_ivar_access) << IV->getDeclName();
 
       // FIXME: This should use a new expr for a direct reference, don't
       // turn this into Self->ivar, just return a BareIVarExpr or something.
@@ -2524,7 +2532,7 @@ Sema::LookupInObjCMethod(LookupResult &Lookup, Scope *S,
              Lookup.getFoundDecl()->isDefinedOutsideFunctionOrMethod()) {
     // If accessing a stand-alone ivar in a class method, this is an error.
     if (const ObjCIvarDecl *IV = dyn_cast<ObjCIvarDecl>(Lookup.getFoundDecl()))
-      return ExprError(Diag(Loc, diag::error_ivar_use_in_class_method)
+      return ExprError(Diag(Loc, diag::err_ivar_use_in_class_method)
                        << IV->getDeclName());
   }
 
@@ -3378,7 +3386,7 @@ ExprResult Sema::ActOnNumericConstant(const Token &Tok, Scope *UDLScope) {
   if (Literal.isFloatingLiteral()) {
     QualType Ty;
     if (Literal.isHalf){
-      if (getOpenCLOptions().cl_khr_fp16)
+      if (getOpenCLOptions().isEnabled("cl_khr_fp16"))
         Ty = Context.HalfTy;
       else {
         Diag(Tok.getLocation(), diag::err_half_const_requires_fp16);
@@ -3397,10 +3405,13 @@ ExprResult Sema::ActOnNumericConstant(const Token &Tok, Scope *UDLScope) {
 
     if (Ty == Context.DoubleTy) {
       if (getLangOpts().SinglePrecisionConstants) {
-        Res = ImpCastExprToType(Res, Context.FloatTy, CK_FloatingCast).get();
+        const BuiltinType *BTy = Ty->getAs<BuiltinType>();
+        if (BTy->getKind() != BuiltinType::Float) {
+          Res = ImpCastExprToType(Res, Context.FloatTy, CK_FloatingCast).get();
+        }
       } else if (getLangOpts().OpenCL &&
-                 !((getLangOpts().OpenCLVersion >= 120) ||
-                   getOpenCLOptions().cl_khr_fp64)) {
+                 !getOpenCLOptions().isEnabled("cl_khr_fp64")) {
+        // Impose single-precision float type when cl_khr_fp64 is not enabled.
         Diag(Tok.getLocation(), diag::warn_double_const_requires_fp64);
         Res = ImpCastExprToType(Res, Context.FloatTy, CK_FloatingCast).get();
       }
@@ -4376,6 +4387,16 @@ Sema::CreateBuiltinArraySubscriptExpr(Expr *Base, SourceLocation LLoc,
   Expr *LHSExp = Base;
   Expr *RHSExp = Idx;
 
+  ExprValueKind VK = VK_LValue;
+  ExprObjectKind OK = OK_Ordinary;
+
+  // Per C++ core issue 1213, the result is an xvalue if either operand is
+  // a non-lvalue array, and an lvalue otherwise.
+  if (getLangOpts().CPlusPlus11 &&
+      ((LHSExp->getType()->isArrayType() && !LHSExp->isLValue()) ||
+       (RHSExp->getType()->isArrayType() && !RHSExp->isLValue())))
+    VK = VK_XValue;
+
   // Perform default conversions.
   if (!LHSExp->getType()->getAs<VectorType>()) {
     ExprResult Result = DefaultFunctionArrayLvalueConversion(LHSExp);
@@ -4389,8 +4410,6 @@ Sema::CreateBuiltinArraySubscriptExpr(Expr *Base, SourceLocation LLoc,
   RHSExp = Result.get();
 
   QualType LHSTy = LHSExp->getType(), RHSTy = RHSExp->getType();
-  ExprValueKind VK = VK_LValue;
-  ExprObjectKind OK = OK_Ordinary;
 
   // C99 6.5.2.1p2: the expression e1[e2] is by definition precisely equivalent
   // to the expression *((e1)+(e2)). This means the array "Base" may actually be
@@ -5270,6 +5289,9 @@ ExprResult Sema::ActOnCallExpr(Scope *Scope, Expr *Fn, SourceLocation LParenLoc,
                                            Fn->getLocStart()))
       return ExprError();
 
+    if (getLangOpts().OpenCL && checkOpenCLDisabledDecl(*FD, *Fn))
+      return ExprError();
+    
     // CheckEnableIf assumes that the we're passing in a sane number of args for
     // FD, but that doesn't always hold true here. This is because, in some
     // cases, we'll emit a diag about an ill-formed function call, but then
@@ -5587,11 +5609,31 @@ Sema::BuildCompoundLiteralExpr(SourceLocation LParenLoc, TypeSourceInfo *TInfo,
   }
 
   // In C, compound literals are l-values for some reason.
-  ExprValueKind VK = getLangOpts().CPlusPlus ? VK_RValue : VK_LValue;
+  // For GCC compatibility, in C++, file-scope array compound literals with
+  // constant initializers are also l-values, and compound literals are
+  // otherwise prvalues.
+  //
+  // (GCC also treats C++ list-initialized file-scope array prvalues with
+  // constant initializers as l-values, but that's non-conforming, so we don't
+  // follow it there.)
+  //
+  // FIXME: It would be better to handle the lvalue cases as materializing and
+  // lifetime-extending a temporary object, but our materialized temporaries
+  // representation only supports lifetime extension from a variable, not "out
+  // of thin air".
+  // FIXME: For C++, we might want to instead lifetime-extend only if a pointer
+  // is bound to the result of applying array-to-pointer decay to the compound
+  // literal.
+  // FIXME: GCC supports compound literals of reference type, which should
+  // obviously have a value kind derived from the kind of reference involved.
+  ExprValueKind VK =
+      (getLangOpts().CPlusPlus && !(isFileScope && literalType->isArrayType()))
+          ? VK_RValue
+          : VK_LValue;
 
   return MaybeBindToTemporary(
-           new (Context) CompoundLiteralExpr(LParenLoc, TInfo, literalType,
-                                             VK, LiteralExpr, isFileScope));
+      new (Context) CompoundLiteralExpr(LParenLoc, TInfo, literalType,
+                                        VK, LiteralExpr, isFileScope));
 }
 
 ExprResult
@@ -9810,8 +9852,8 @@ static bool IsReadonlyMessage(Expr *E, Sema &S) {
   const MemberExpr *ME = dyn_cast<MemberExpr>(E);
   if (!ME) return false;
   if (!isa<FieldDecl>(ME->getMemberDecl())) return false;
-  ObjCMessageExpr *Base =
-    dyn_cast<ObjCMessageExpr>(ME->getBase()->IgnoreParenImpCasts());
+  ObjCMessageExpr *Base = dyn_cast<ObjCMessageExpr>(
+      ME->getBase()->IgnoreImplicit()->IgnoreParenImpCasts());
   if (!Base) return false;
   return Base->getMethodDecl() != nullptr;
 }
@@ -9894,7 +9936,7 @@ static void DiagnoseConstAssignment(Sema &S, const Expr *E,
   while (true) {
     IsDereference = NextIsDereference;
 
-    E = E->IgnoreParenImpCasts();
+    E = E->IgnoreImplicit()->IgnoreParenImpCasts();
     if (const MemberExpr *ME = dyn_cast<MemberExpr>(E)) {
       NextIsDereference = ME->isArrow();
       const ValueDecl *VD = ME->getMemberDecl();
@@ -10092,10 +10134,10 @@ static bool CheckForModifiableLvalue(Expr *E, SourceLocation Loc, Sema &S) {
   case Expr::MLV_NoSetterProperty:
     llvm_unreachable("readonly properties should be processed differently");
   case Expr::MLV_InvalidMessageExpression:
-    DiagID = diag::error_readonly_message_assignment;
+    DiagID = diag::err_readonly_message_assignment;
     break;
   case Expr::MLV_SubObjCPropertySetting:
-    DiagID = diag::error_no_subobject_property_setting;
+    DiagID = diag::err_no_subobject_property_setting;
     break;
   }
 
@@ -10147,7 +10189,7 @@ QualType Sema::CheckAssignmentOperands(Expr *LHSExpr, ExprResult &RHS,
   // OpenCL v1.2 s6.1.1.1 p2:
   // The half data type can only be used to declare a pointer to a buffer that
   // contains half values
-  if (getLangOpts().OpenCL && !getOpenCLOptions().cl_khr_fp16 &&
+  if (getLangOpts().OpenCL && !getOpenCLOptions().isEnabled("cl_khr_fp16") &&
     LHSType->isHalfType()) {
     Diag(Loc, diag::err_opencl_half_load_store) << 1
         << LHSType.getUnqualifiedType();
@@ -12761,7 +12803,7 @@ bool Sema::DiagnoseAssignmentResult(AssignConvertType ConvTy,
   Diag(Loc, FDiag);
   if (DiagKind == diag::warn_incompatible_qualified_id &&
       PDecl && IFace && !IFace->hasDefinition())
-      Diag(IFace->getLocation(), diag::not_incomplete_class_and_qualified_id)
+      Diag(IFace->getLocation(), diag::note_incomplete_class_and_qualified_id)
         << IFace->getName() << PDecl->getName();
 
   if (SecondType == Context.OverloadTy)
