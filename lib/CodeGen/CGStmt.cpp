@@ -1181,10 +1181,6 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
   if (S.getInit())
     EmitStmt(S.getInit());
 
-  // Emit any declarations created for evaluating the loop condition.
-  if (S.getCondDecl())
-    EmitStmt(S.getCondDecl());
-
   const Expr *Cond = S.getCond();
   assert(Cond && "_Cilk_for loop has no condition");
 

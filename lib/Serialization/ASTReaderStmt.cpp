@@ -2856,27 +2856,25 @@ void ASTStmtReader::VisitOMPTargetTeamsDirective(OMPTargetTeamsDirective *D) {
 
 void ASTStmtReader::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
   VisitStmt(S);
-  S->setSpawnLoc(ReadSourceLocation(Record, Idx));
-  S->setSpawnedStmt(Reader.ReadSubStmt());
+  S->setSpawnLoc(ReadSourceLocation());
+  S->setSpawnedStmt(Record.ReadSubStmt());
 }
 
 void ASTStmtReader::VisitCilkSyncStmt(CilkSyncStmt *S) {
   VisitStmt(S);
-  S->setSyncLoc(ReadSourceLocation(Record, Idx));
+  S->setSyncLoc(ReadSourceLocation());
 }
 
 void ASTStmtReader::VisitCilkForStmt(CilkForStmt *S) {
   VisitStmt(S);
-  S->setInit(Reader.ReadSubStmt());
-  S->setCondDecl(Reader.ReadSubStmt());
-  S->setCond(Reader.ReadSubExpr());
-  // S->setConditionVariable(Reader.getContext(),
-  //                         ReadDeclAs<VarDecl>(Record, Idx));
-  S->setInc(Reader.ReadSubExpr());
-  S->setBody(Reader.ReadSubStmt());
-  S->setCilkForLoc(ReadSourceLocation(Record, Idx));
-  S->setLParenLoc(ReadSourceLocation(Record, Idx));
-  S->setRParenLoc(ReadSourceLocation(Record, Idx));
+  S->setInit(Record.ReadSubStmt());
+  S->setCond(Record.ReadSubExpr());
+  // S->setConditionVariable(Record.getContext(), ReadDeclAs<VarDecl>());
+  S->setInc(Record.ReadSubExpr());
+  S->setBody(Record.ReadSubStmt());
+  S->setCilkForLoc(ReadSourceLocation());
+  S->setLParenLoc(ReadSourceLocation());
+  S->setRParenLoc(ReadSourceLocation());
 }
 
 //===----------------------------------------------------------------------===//

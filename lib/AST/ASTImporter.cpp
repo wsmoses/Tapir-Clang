@@ -5536,14 +5536,6 @@ Stmt *ASTNodeImporter::VisitCilkForStmt(CilkForStmt *S) {
   Stmt *ToInit = Importer.Import(S->getInit());
   if (!ToInit && S->getInit())
     return nullptr;
-  Stmt *ToCondDecl = nullptr;
-  if (Stmt *FromCondDecl = S->getCondDecl()) {
-    ToCondDecl = Importer.Import(FromCondDecl);
-    if (!ToCondDecl)
-      return nullptr;
-  }
-  if (!ToCondDecl && S->getCondDecl())
-    return nullptr;
   Expr *ToCondition = Importer.Import(S->getCond());
   if (!ToCondition && S->getCond())
     return nullptr;
@@ -5564,7 +5556,7 @@ Stmt *ASTNodeImporter::VisitCilkForStmt(CilkForStmt *S) {
   SourceLocation ToLParenLoc = Importer.Import(S->getLParenLoc());
   SourceLocation ToRParenLoc = Importer.Import(S->getRParenLoc());
   return new (Importer.getToContext()) CilkForStmt(Importer.getToContext(),
-                                                   ToInit, ToCondDecl,
+                                                   ToInit,
                                                    ToCondition,
                                                    // ToConditionVariable,
                                                    ToInc, ToBody,

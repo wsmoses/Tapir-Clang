@@ -3017,7 +3017,7 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
     NewBody = new (Context) CompoundStmt(Context, { LoopVarDS, Body },
                                          LParenLoc, RParenLoc);
 
-  return new (Context) CilkForStmt(Context, NewInit.get(), nullptr,
+  return new (Context) CilkForStmt(Context, NewInit.get(),
                                    NewCond.get(), NewInc.get(), NewBody,
                                    CilkForLoc, LParenLoc, RParenLoc);
 }
@@ -3326,10 +3326,10 @@ Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
   StmtResult NewInit = LiftCilkForLoopLimit(CilkForLoc, First, &Condition);
   assert(!NewInit.isInvalid());
   if (!NewInit.isUnset())
-    return new (Context) CilkForStmt(Context, NewInit.get(), nullptr, Condition,
+    return new (Context) CilkForStmt(Context, NewInit.get(), Condition,
                                      Increment, Body, CilkForLoc, LParenLoc,
                                      RParenLoc);
-  return new (Context) CilkForStmt(Context, First, nullptr, Condition,
+  return new (Context) CilkForStmt(Context, First, Condition,
                                    Increment, Body, CilkForLoc, LParenLoc,
                                    RParenLoc);
 }
