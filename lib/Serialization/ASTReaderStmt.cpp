@@ -2867,7 +2867,7 @@ void ASTStmtReader::VisitOMPTargetTeamsDistributeParallelForDirective(
 void ASTStmtReader::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
   VisitStmt(S);
   S->setSpawnLoc(ReadSourceLocation());
-  S->setSpawnedStmt(Record.ReadSubStmt());
+  S->setSpawnedStmt(Record.readSubStmt());
 }
 
 void ASTStmtReader::VisitCilkSyncStmt(CilkSyncStmt *S) {
@@ -2877,11 +2877,11 @@ void ASTStmtReader::VisitCilkSyncStmt(CilkSyncStmt *S) {
 
 void ASTStmtReader::VisitCilkForStmt(CilkForStmt *S) {
   VisitStmt(S);
-  S->setInit(Record.ReadSubStmt());
-  S->setCond(Record.ReadSubExpr());
+  S->setInit(Record.readSubStmt());
+  S->setCond(Record.readSubExpr());
   // S->setConditionVariable(Record.getContext(), ReadDeclAs<VarDecl>());
-  S->setInc(Record.ReadSubExpr());
-  S->setBody(Record.ReadSubStmt());
+  S->setInc(Record.readSubExpr());
+  S->setBody(Record.readSubStmt());
   S->setCilkForLoc(ReadSourceLocation());
   S->setLParenLoc(ReadSourceLocation());
   S->setRParenLoc(ReadSourceLocation());
