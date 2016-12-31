@@ -2005,9 +2005,30 @@ void CodeGenFunction::EmitOMPTeamsDistributeParallelForDirective(
 
 void CodeGenFunction::EmitOMPTargetTeamsDirective(
     const OMPTargetTeamsDirective &S) {
-  CGM.getOpenMPRuntime().emitInlinedDirective(*this, OMPD_target_teams,
+  CGM.getOpenMPRuntime().emitInlinedDirective(
+      *this, OMPD_target_teams, [&S](CodeGenFunction &CGF, PrePostActionTy &) {
+        CGF.EmitStmt(
+            cast<CapturedStmt>(S.getAssociatedStmt())->getCapturedStmt());
+      });
+}
+
+void CodeGenFunction::EmitOMPTargetTeamsDistributeDirective(
+    const OMPTargetTeamsDistributeDirective &S) {
+  CGM.getOpenMPRuntime().emitInlinedDirective(
+      *this, OMPD_target_teams_distribute,
       [&S](CodeGenFunction &CGF, PrePostActionTy &) {
-        CGF.EmitStmt(cast<CapturedStmt>(S.getAssociatedStmt())->getCapturedStmt());
+        CGF.EmitStmt(
+            cast<CapturedStmt>(S.getAssociatedStmt())->getCapturedStmt());
+      });
+}
+
+void CodeGenFunction::EmitOMPTargetTeamsDistributeParallelForDirective(
+    const OMPTargetTeamsDistributeParallelForDirective &S) {
+  CGM.getOpenMPRuntime().emitInlinedDirective(
+      *this, OMPD_target_teams_distribute_parallel_for,
+      [&S](CodeGenFunction &CGF, PrePostActionTy &) {
+        CGF.EmitStmt(
+            cast<CapturedStmt>(S.getAssociatedStmt())->getCapturedStmt());
       });
 }
 

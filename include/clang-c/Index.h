@@ -2358,19 +2358,27 @@ enum CXCursorKind {
    */
   CXCursor_OMPTargetTeamsDirective = 275,
 
+  /** \brief OpenMP target teams distribute directive.
+   */
+  CXCursor_OMPTargetTeamsDistributeDirective = 276,
+
+  /** \brief OpenMP target teams distribute parallel for directive.
+   */
+  CXCursor_OMPTargetTeamsDistributeParallelForDirective = 277,
+
   /** \brief A _Cilk_spawn statement.
    */
-  CXCursor_CilkSpawnStmt                 = 276,
+  CXCursor_CilkSpawnStmt                 = 278,
 
   /** \brief A _Cilk_sync statement.
    */
-  CXCursor_CilkSyncStmt                  = 277,
+  CXCursor_CilkSyncStmt                  = 279,
 
   /** \brief A _Cilk_for statement.
    */
-  CXCursor_CilkForStmt                   = 278,
+  CXCursor_CilkForStmt                   = 280,
 
-  CXCursor_LastStmt                      = CXCursor_CilkForStmt,
+  CXCursor_LastStmt = CXCursor_CilkForStmt,
 
   /**
    * \brief Cursor that represents the translation unit itself.

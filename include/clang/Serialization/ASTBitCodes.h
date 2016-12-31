@@ -1103,6 +1103,8 @@ namespace clang {
       DECL_NAMESPACE_ALIAS,
       /// \brief A UsingDecl record.
       DECL_USING,
+      /// \brief A UsingPackDecl record.
+      DECL_USING_PACK,
       /// \brief A UsingShadowDecl record.
       DECL_USING_SHADOW,
       /// \brief A ConstructorUsingShadowDecl record.
@@ -1512,6 +1514,8 @@ namespace clang {
       STMT_OMP_TEAMS_DISTRIBUTE_PARALLEL_FOR_SIMD_DIRECTIVE,
       STMT_OMP_TEAMS_DISTRIBUTE_PARALLEL_FOR_DIRECTIVE,
       STMT_OMP_TARGET_TEAMS_DIRECTIVE,
+      STMT_OMP_TARGET_TEAMS_DISTRIBUTE_DIRECTIVE,
+      STMT_OMP_TARGET_TEAMS_DISTRIBUTE_PARALLEL_FOR_DIRECTIVE,
       EXPR_OMP_ARRAY_SECTION,
 
       // ARC

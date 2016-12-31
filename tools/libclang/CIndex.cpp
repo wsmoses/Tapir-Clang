@@ -2009,6 +2009,10 @@ public:
   void VisitOMPTeamsDistributeParallelForDirective(
       const OMPTeamsDistributeParallelForDirective *D);
   void VisitOMPTargetTeamsDirective(const OMPTargetTeamsDirective *D);
+  void VisitOMPTargetTeamsDistributeDirective(
+      const OMPTargetTeamsDistributeDirective *D);
+  void VisitOMPTargetTeamsDistributeParallelForDirective(
+      const OMPTargetTeamsDistributeParallelForDirective *D);
 
 private:
   void AddDeclarationNameInfo(const Stmt *S);
@@ -2816,6 +2820,16 @@ void EnqueueVisitor::VisitOMPTeamsDistributeParallelForDirective(
 void EnqueueVisitor::VisitOMPTargetTeamsDirective(
     const OMPTargetTeamsDirective *D) {
   VisitOMPExecutableDirective(D);
+}
+
+void EnqueueVisitor::VisitOMPTargetTeamsDistributeDirective(
+    const OMPTargetTeamsDistributeDirective *D) {
+  VisitOMPLoopDirective(D);
+}
+
+void EnqueueVisitor::VisitOMPTargetTeamsDistributeParallelForDirective(
+    const OMPTargetTeamsDistributeParallelForDirective *D) {
+  VisitOMPLoopDirective(D);
 }
 
 void CursorVisitor::EnqueueWorkList(VisitorWorkList &WL, const Stmt *S) {
@@ -4982,6 +4996,10 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
     return cxstring::createRef("OMPTeamsDistributeParallelForDirective");
   case CXCursor_OMPTargetTeamsDirective:
     return cxstring::createRef("OMPTargetTeamsDirective");
+  case CXCursor_OMPTargetTeamsDistributeDirective:
+    return cxstring::createRef("OMPTargetTeamsDistributeDirective");
+  case CXCursor_OMPTargetTeamsDistributeParallelForDirective:
+    return cxstring::createRef("OMPTargetTeamsDistributeParallelForDirective");
   case CXCursor_OverloadCandidate:
       return cxstring::createRef("OverloadCandidate");
   case CXCursor_TypeAliasTemplateDecl:
@@ -5744,6 +5762,7 @@ CXCursor clang_getCursorDefinition(CXCursor C) {
   case Decl::BuiltinTemplate:
   case Decl::PragmaComment:
   case Decl::PragmaDetectMismatch:
+  case Decl::UsingPack:
     return C;
 
   // Declaration kinds that don't make any sense here, but are

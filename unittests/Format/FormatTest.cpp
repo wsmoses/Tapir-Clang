@@ -5214,6 +5214,16 @@ TEST_F(FormatTest, KeepStringLabelValuePairsOnALine) {
   verifyFormat("string v = StrCat(\"aaaaaaaaaaaaaaaa: \", aaaaaaaaaaaaaaaa,\n"
                "                  \"aaaaaaaaaaaaaaaa: \", aaaaaaaaaaaaaaaa,\n"
                "                  \"aaaaaaaaaaaaaaaa: \", aaaaaaaaaaaaaaaa);");
+  verifyFormat("string v = \"aaaaaaaaaaaaaaaa: \" +\n"
+               "           (aaaa + aaaa);",
+               getLLVMStyleWithColumns(40));
+  verifyFormat("string v = StrCat(\"aaaaaaaaaaaa: \" +\n"
+               "                  (aaaaaaa + aaaaa));",
+               getLLVMStyleWithColumns(40));
+  verifyFormat(
+      "string v = StrCat(\"aaaaaaaaaaaaaaaaaaaaaaaaaaa: \",\n"
+      "                  SomeFunction(aaaaaaaaaaaa, aaaaaaaa.aaaaaaa),\n"
+      "                  bbbbbbbbbbbbbbbbbbbbbbb);");
 }
 
 TEST_F(FormatTest, UnderstandsEquals) {
@@ -6794,6 +6804,14 @@ TEST_F(FormatTest, FormatsBracedListsInColumnLayout) {
                "    aaaaaaaa,\n"
                "    aaaaaaaaaaaaaaaaaaaaaaaaaaa};",
                getLLVMStyleWithColumns(30));
+  verifyFormat("vector<int> aaaa = {\n"
+               "    aaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+               "    aaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,\n"
+               "    aaaaaa.aaaaaaa,\n"
+               "    aaaaaa.aaaaaaa,\n"
+               "    aaaaaa.aaaaaaa,\n"
+               "    aaaaaa.aaaaaaa,\n"
+               "};");
 }
 
 TEST_F(FormatTest, PullTrivialFunctionDefinitionsIntoSingleLine) {
@@ -10922,10 +10940,6 @@ TEST_F(FormatTest, ArrayAsTemplateType) {
             format("auto a = unique_ptr < Foo < Bar>[10]> ;", Spaces));
 }
 
-// Since this test case uses UNIX-style file path. We disable it for MS
-// compiler.
-#if !defined(_MSC_VER) && !defined(__MINGW32__)
-
 TEST(FormatStyle, GetStyleOfFile) {
   vfs::InMemoryFileSystem FS;
   // Test 1: format file in the same directory.
@@ -10952,8 +10966,6 @@ TEST(FormatStyle, GetStyleOfFile) {
   auto Style3 = getStyle("file", "/c/sub/sub/sub/test.cpp", "LLVM", "", &FS);
   ASSERT_EQ(Style3, getGoogleStyle());
 }
-
-#endif // _MSC_VER
 
 TEST_F(ReplacementTest, FormatCodeAfterReplacements) {
   // Column limit is 20.

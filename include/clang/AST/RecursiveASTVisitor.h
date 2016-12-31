@@ -1505,6 +1505,8 @@ DEF_TRAVERSE_DECL(UsingDecl, {
   TRY_TO(TraverseDeclarationNameInfo(D->getNameInfo()));
 })
 
+DEF_TRAVERSE_DECL(UsingPackDecl, {})
+
 DEF_TRAVERSE_DECL(UsingDirectiveDecl, {
   TRY_TO(TraverseNestedNameSpecifierLoc(D->getQualifierLoc()));
 })
@@ -2663,6 +2665,12 @@ DEF_TRAVERSE_STMT(OMPTeamsDistributeParallelForDirective,
                   { TRY_TO(TraverseOMPExecutableDirective(S)); })
 
 DEF_TRAVERSE_STMT(OMPTargetTeamsDirective,
+                  { TRY_TO(TraverseOMPExecutableDirective(S)); })
+
+DEF_TRAVERSE_STMT(OMPTargetTeamsDistributeDirective,
+                  { TRY_TO(TraverseOMPExecutableDirective(S)); })
+
+DEF_TRAVERSE_STMT(OMPTargetTeamsDistributeParallelForDirective,
                   { TRY_TO(TraverseOMPExecutableDirective(S)); })
 
 // OpenMP clauses.

@@ -3077,6 +3077,7 @@ void InitializationSequence::Step::Destroy() {
   case SK_StdInitializerListConstructorCall:
   case SK_OCLSamplerInit:
   case SK_OCLZeroEvent:
+  case SK_OCLZeroQueue:
     break;
 
   case SK_ConversionSequence:
@@ -3365,6 +3366,13 @@ void InitializationSequence::AddOCLZeroEventStep(QualType T) {
   Steps.push_back(S);
 }
 
+void InitializationSequence::AddOCLZeroQueueStep(QualType T) {
+  Step S;
+  S.Kind = SK_OCLZeroQueue;
+  S.Type = T;
+  Steps.push_back(S);
+}
+
 void InitializationSequence::RewrapReferenceInitList(QualType T,
                                                      InitListExpr *Syntactic) {
   assert(Syntactic->getNumInits() == 1 &&
@@ -3609,17 +3617,7 @@ static void TryConstructorInitialization(Sema &S,
       UnwrappedArgs.size() == 1 && UnwrappedArgs[0]->isRValue() &&
       S.Context.hasSameUnqualifiedType(UnwrappedArgs[0]->getType(), DestType)) {
     // Convert qualifications if necessary.
-    QualType InitType = UnwrappedArgs[0]->getType();
-    ImplicitConversionSequence ICS;
-    ICS.setStandard();
-    ICS.Standard.setAsIdentityConversion();
-    ICS.Standard.setFromType(InitType);
-    ICS.Standard.setAllToTypes(InitType);
-    if (!S.Context.hasSameType(InitType, DestType)) {
-      ICS.Standard.Third = ICK_Qualification;
-      ICS.Standard.setToType(2, DestType);
-    }
-    Sequence.AddConversionSequenceStep(ICS, DestType);
+    Sequence.AddQualificationConversionStep(DestType, VK_RValue);
     if (ILE)
       Sequence.RewrapReferenceInitList(DestType, ILE);
     return;
@@ -4549,23 +4547,21 @@ static void TryValueInitialization(Sema &S,
   if (const RecordType *RT = T->getAs<RecordType>()) {
     if (CXXRecordDecl *ClassDecl = dyn_cast<CXXRecordDecl>(RT->getDecl())) {
       bool NeedZeroInitialization = true;
-      if (!S.getLangOpts().CPlusPlus11) {
-        // C++98:
-        // -- if T is a class type (clause 9) with a user-declared constructor
-        //    (12.1), then the default constructor for T is called (and the
-        //    initialization is ill-formed if T has no accessible default
-        //    constructor);
-        if (ClassDecl->hasUserDeclaredConstructor())
-          NeedZeroInitialization = false;
-      } else {
-        // C++11:
-        // -- if T is a class type (clause 9) with either no default constructor
-        //    (12.1 [class.ctor]) or a default constructor that is user-provided
-        //    or deleted, then the object is default-initialized;
-        CXXConstructorDecl *CD = S.LookupDefaultConstructor(ClassDecl);
-        if (!CD || !CD->getCanonicalDecl()->isDefaulted() || CD->isDeleted())
-          NeedZeroInitialization = false;
-      }
+      // C++98:
+      // -- if T is a class type (clause 9) with a user-declared constructor
+      //    (12.1), then the default constructor for T is called (and the
+      //    initialization is ill-formed if T has no accessible default
+      //    constructor);
+      // C++11:
+      // -- if T is a class type (clause 9) with either no default constructor
+      //    (12.1 [class.ctor]) or a default constructor that is user-provided
+      //    or deleted, then the object is default-initialized;
+      //
+      // Note that the C++11 rule is the same as the C++98 rule if there are no
+      // defaulted or deleted constructors, so we just use it unconditionally.
+      CXXConstructorDecl *CD = S.LookupDefaultConstructor(ClassDecl);
+      if (!CD || !CD->getCanonicalDecl()->isDefaulted() || CD->isDeleted())
+        NeedZeroInitialization = false;
 
       // -- if T is a (possibly cv-qualified) non-union class type without a
       //    user-provided or deleted default constructor, then the object is
@@ -4790,6 +4786,8 @@ static void TryUserDefinedConversion(Sema &S,
     // FIXME: Mark this copy as extraneous.
     if (!S.getLangOpts().CPlusPlus1z)
       Sequence.AddFinalCopy(DestType);
+    else if (DestType.hasQualifiers())
+      Sequence.AddQualificationConversionStep(DestType, VK_RValue);
     return;
   }
 
@@ -4812,6 +4810,8 @@ static void TryUserDefinedConversion(Sema &S,
         Function->getReturnType()->isReferenceType() ||
         !S.Context.hasSameUnqualifiedType(ConvType, DestType))
       Sequence.AddFinalCopy(DestType);
+    else if (!S.Context.hasSameType(ConvType, DestType))
+      Sequence.AddQualificationConversionStep(DestType, VK_RValue);
     return;
   }
 
@@ -5027,6 +5027,20 @@ static bool TryOCLZeroEventInitialization(Sema &S,
     return false;
 
   Sequence.AddOCLZeroEventStep(DestType);
+  return true;
+}
+
+static bool TryOCLZeroQueueInitialization(Sema &S,
+                                          InitializationSequence &Sequence,
+                                          QualType DestType,
+                                          Expr *Initializer) {
+  if (!S.getLangOpts().OpenCL || S.getLangOpts().OpenCLVersion < 200 ||
+      !DestType->isQueueT() ||
+      !Initializer->isIntegerConstantExpr(S.getASTContext()) ||
+      (Initializer->EvaluateKnownConstInt(S.getASTContext()) != 0))
+    return false;
+
+  Sequence.AddOCLZeroQueueStep(DestType);
   return true;
 }
 
@@ -5291,6 +5305,9 @@ void InitializationSequence::InitializeFrom(Sema &S,
 
     if (TryOCLZeroEventInitialization(S, *this, DestType, Initializer))
       return;
+
+    if (TryOCLZeroQueueInitialization(S, *this, DestType, Initializer))
+       return;
 
     // Handle initialization in C
     AddCAssignmentStep(DestType);
@@ -6529,7 +6546,8 @@ InitializationSequence::Perform(Sema &S,
   case SK_ProduceObjCObject:
   case SK_StdInitializerList:
   case SK_OCLSamplerInit:
-  case SK_OCLZeroEvent: {
+  case SK_OCLZeroEvent:
+  case SK_OCLZeroQueue: {
     assert(Args.size() == 1);
     CurInit = Args[0];
     if (!CurInit.get()) return ExprError();
@@ -6824,7 +6842,7 @@ InitializationSequence::Perform(Sema &S,
       CurInit = CurInitExprRes;
 
       if (Step->Kind == SK_ConversionSequenceNoNarrowing &&
-          S.getLangOpts().CPlusPlus && !CurInit.get()->isValueDependent())
+          S.getLangOpts().CPlusPlus)
         DiagnoseNarrowingInInitList(S, *Step->ICS, SourceType, Entity.getType(),
                                     CurInit.get());
 
@@ -7210,6 +7228,15 @@ InitializationSequence::Perform(Sema &S,
 
       CurInit = S.ImpCastExprToType(CurInit.get(), Step->Type,
                                     CK_ZeroToOCLEvent,
+                                    CurInit.get()->getValueKind());
+      break;
+    }
+    case SK_OCLZeroQueue: {
+      assert(Step->Type->isQueueT() &&
+             "Event initialization on non queue type.");
+
+      CurInit = S.ImpCastExprToType(CurInit.get(), Step->Type,
+                                    CK_ZeroToOCLQueue,
                                     CurInit.get()->getValueKind());
       break;
     }
@@ -8041,6 +8068,10 @@ void InitializationSequence::dump(raw_ostream &OS) const {
     case SK_OCLZeroEvent:
       OS << "OpenCL event_t from zero";
       break;
+
+    case SK_OCLZeroQueue:
+      OS << "OpenCL queue_t from zero";
+      break;
     }
 
     OS << " [" << S->Type.getAsString() << ']';
@@ -8078,6 +8109,7 @@ static void DiagnoseNarrowingInInitList(Sema &S,
   switch (SCS->getNarrowingKind(S.Context, PostInit, ConstantValue,
                                 ConstantType)) {
   case NK_Not_Narrowing:
+  case NK_Dependent_Narrowing:
     // No narrowing occurred.
     return;
 
