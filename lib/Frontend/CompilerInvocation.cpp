@@ -441,23 +441,30 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   }
   Opts.OptimizationLevel = OptimizationLevel;
 
-  // We must always run at least the always inlining pass.
-  Opts.setInlining(
-    (Opts.OptimizationLevel > 1) ? CodeGenOptions::NormalInlining
-                                 : CodeGenOptions::OnlyAlwaysInlining);
-  // -fno-inline-functions overrides OptimizationLevel > 1.
-  Opts.NoInline = Args.hasArg(OPT_fno_inline);
-  if (Arg* InlineArg = Args.getLastArg(options::OPT_finline_functions,
-                                       options::OPT_finline_hint_functions,
-                                       options::OPT_fno_inline_functions)) {
-    const Option& InlineOpt = InlineArg->getOption();
-    if (InlineOpt.matches(options::OPT_finline_functions))
-      Opts.setInlining(CodeGenOptions::NormalInlining);
-    else if (InlineOpt.matches(options::OPT_finline_hint_functions))
-      Opts.setInlining(CodeGenOptions::OnlyHintInlining);
-    else
-      Opts.setInlining(CodeGenOptions::OnlyAlwaysInlining);
+  // At O0 we want to fully disable inlining outside of cases marked with
+  // 'alwaysinline' that are required for correctness.
+  Opts.setInlining((Opts.OptimizationLevel == 0)
+                       ? CodeGenOptions::OnlyAlwaysInlining
+                       : CodeGenOptions::NormalInlining);
+  // Explicit inlining flags can disable some or all inlining even at
+  // optimization levels above zero.
+  if (Arg *InlineArg = Args.getLastArg(
+          options::OPT_finline_functions, options::OPT_finline_hint_functions,
+          options::OPT_fno_inline_functions, options::OPT_fno_inline)) {
+    if (Opts.OptimizationLevel > 0) {
+      const Option &InlineOpt = InlineArg->getOption();
+      if (InlineOpt.matches(options::OPT_finline_functions))
+        Opts.setInlining(CodeGenOptions::NormalInlining);
+      else if (InlineOpt.matches(options::OPT_finline_hint_functions))
+        Opts.setInlining(CodeGenOptions::OnlyHintInlining);
+      else
+        Opts.setInlining(CodeGenOptions::OnlyAlwaysInlining);
+    }
   }
+
+  Opts.ExperimentalNewPassManager = Args.hasFlag(
+      OPT_fexperimental_new_pass_manager, OPT_fno_experimental_new_pass_manager,
+      /* Default */ false);
 
   if (Arg *A = Args.getLastArg(OPT_fveclib)) {
     StringRef Name = A->getValue();
@@ -513,7 +520,6 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
           Args.getLastArg(OPT_emit_llvm_uselists, OPT_no_emit_llvm_uselists))
     Opts.EmitLLVMUseLists = A->getOption().getID() == OPT_emit_llvm_uselists;
 
-  Opts.DisableLLVMOpts = Args.hasArg(OPT_disable_llvm_optzns);
   Opts.DisableLLVMPasses = Args.hasArg(OPT_disable_llvm_passes);
   Opts.DisableRedZone = Args.hasArg(OPT_disable_red_zone);
   Opts.ForbidGuardVariables = Args.hasArg(OPT_fforbid_guard_variables);
@@ -556,7 +562,6 @@ static bool ParseCodeGenArgs(CodeGenOptions &Opts, ArgList &Args, InputKind IK,
   Opts.ObjCAutoRefCountExceptions = Args.hasArg(OPT_fobjc_arc_exceptions);
   Opts.CXAAtExit = !Args.hasArg(OPT_fno_use_cxa_atexit);
   Opts.CXXCtorDtorAliases = Args.hasArg(OPT_mconstructor_aliases);
-  Opts.QualifiedFunctionTypeInfo = Args.hasArg(OPT_mqualified_function_type_info);
   Opts.CodeModel = getCodeModel(Args, Diags);
   Opts.DebugPass = Args.getLastArgValue(OPT_mdebug_pass);
   Opts.DisableFPElim =
@@ -931,21 +936,13 @@ static bool parseShowColorsArgs(const ArgList &Args, bool DefaultColor) {
   } ShowColors = DefaultColor ? Colors_Auto : Colors_Off;
   for (Arg *A : Args) {
     const Option &O = A->getOption();
-    if (!O.matches(options::OPT_fcolor_diagnostics) &&
-        !O.matches(options::OPT_fdiagnostics_color) &&
-        !O.matches(options::OPT_fno_color_diagnostics) &&
-        !O.matches(options::OPT_fno_diagnostics_color) &&
-        !O.matches(options::OPT_fdiagnostics_color_EQ))
-      continue;
-
     if (O.matches(options::OPT_fcolor_diagnostics) ||
         O.matches(options::OPT_fdiagnostics_color)) {
       ShowColors = Colors_On;
     } else if (O.matches(options::OPT_fno_color_diagnostics) ||
                O.matches(options::OPT_fno_diagnostics_color)) {
       ShowColors = Colors_Off;
-    } else {
-      assert(O.matches(options::OPT_fdiagnostics_color_EQ));
+    } else if (O.matches(options::OPT_fdiagnostics_color_EQ)) {
       StringRef Value(A->getValue());
       if (Value == "always")
         ShowColors = Colors_On;
@@ -955,10 +952,9 @@ static bool parseShowColorsArgs(const ArgList &Args, bool DefaultColor) {
         ShowColors = Colors_Auto;
     }
   }
-  if (ShowColors == Colors_On ||
-      (ShowColors == Colors_Auto && llvm::sys::Process::StandardErrHasColors()))
-    return true;
-  return false;
+  return ShowColors == Colors_On ||
+         (ShowColors == Colors_Auto &&
+          llvm::sys::Process::StandardErrHasColors());
 }
 
 bool clang::ParseDiagnosticArgs(DiagnosticOptions &Opts, ArgList &Args,
@@ -1568,13 +1564,15 @@ void CompilerInvocation::setLangDefaults(LangOptions &Opts, InputKind IK,
     case IK_Asm:
     case IK_C:
     case IK_PreprocessedC:
-    case IK_ObjC:
-    case IK_PreprocessedObjC:
       // The PS4 uses C99 as the default C standard.
       if (T.isPS4())
         LangStd = LangStandard::lang_gnu99;
       else
         LangStd = LangStandard::lang_gnu11;
+      break;
+    case IK_ObjC:
+    case IK_PreprocessedObjC:
+      LangStd = LangStandard::lang_gnu11;
       break;
     case IK_CXX:
     case IK_PreprocessedCXX:
@@ -2205,7 +2203,12 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   // This is the __NO_INLINE__ define, which just depends on things like the
   // optimization level and -fno-inline, not actually whether the backend has
   // inlining enabled.
-  Opts.NoInlineDefine = !Opt || Args.hasArg(OPT_fno_inline);
+  Opts.NoInlineDefine = !Opts.Optimize;
+  if (Arg *InlineArg = Args.getLastArg(
+          options::OPT_finline_functions, options::OPT_finline_hint_functions,
+          options::OPT_fno_inline_functions, options::OPT_fno_inline))
+    if (InlineArg->getOption().matches(options::OPT_fno_inline))
+      Opts.NoInlineDefine = true;
 
   Opts.FastMath = Args.hasArg(OPT_ffast_math) ||
       Args.hasArg(OPT_cl_fast_relaxed_math);

@@ -312,6 +312,25 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
     EmitOMPTeamsDistributeSimdDirective(
         cast<OMPTeamsDistributeSimdDirective>(*S));
     break;
+  case Stmt::OMPTeamsDistributeParallelForSimdDirectiveClass:
+    EmitOMPTeamsDistributeParallelForSimdDirective(
+        cast<OMPTeamsDistributeParallelForSimdDirective>(*S));
+    break;
+  case Stmt::OMPTeamsDistributeParallelForDirectiveClass:
+    EmitOMPTeamsDistributeParallelForDirective(
+        cast<OMPTeamsDistributeParallelForDirective>(*S));
+    break;
+  case Stmt::OMPTargetTeamsDirectiveClass:
+    EmitOMPTargetTeamsDirective(cast<OMPTargetTeamsDirective>(*S));
+    break;
+  case Stmt::OMPTargetTeamsDistributeDirectiveClass:
+    EmitOMPTargetTeamsDistributeDirective(
+        cast<OMPTargetTeamsDistributeDirective>(*S));
+    break;
+  case Stmt::OMPTargetTeamsDistributeParallelForDirectiveClass:
+    EmitOMPTargetTeamsDistributeParallelForDirective(
+        cast<OMPTargetTeamsDistributeParallelForDirective>(*S));
+    break;
   }
 }
 
@@ -1167,10 +1186,6 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
   // Evaluate the first part before the loop.
   if (S.getInit())
     EmitStmt(S.getInit());
-
-  // Emit any declarations created for evaluating the loop condition.
-  if (S.getCondDecl())
-    EmitStmt(S.getCondDecl());
 
   const Expr *Cond = S.getCond();
   assert(Cond && "_Cilk_for loop has no condition");
@@ -2325,15 +2340,6 @@ void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {
   Result->addAttribute(llvm::AttributeSet::FunctionIndex,
                        llvm::Attribute::NoUnwind);
 
-  if (isa<MSAsmStmt>(&S)) {
-    // If the assembly contains any labels, mark the call noduplicate to prevent
-    // defining the same ASM label twice (PR23715). This is pretty hacky, but it
-    // works.
-    if (AsmString.find("__MSASMLABEL_") != std::string::npos)
-      Result->addAttribute(llvm::AttributeSet::FunctionIndex,
-                           llvm::Attribute::NoDuplicate);
-  }
-
   // Attach readnone and readonly attributes.
   if (!HasSideEffect) {
     if (ReadNone)
@@ -2429,7 +2435,7 @@ LValue CodeGenFunction::InitCapturedStruct(const CapturedStmt &S) {
       auto VAT = CurField->getCapturedVLAType();
       EmitStoreThroughLValue(RValue::get(VLASizeMap[VAT->getSizeExpr()]), LV);
     } else {
-      EmitInitializerForField(*CurField, LV, *I, None);
+      EmitInitializerForField(*CurField, LV, *I);
     }
   }
 

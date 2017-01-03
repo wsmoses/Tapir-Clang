@@ -460,7 +460,7 @@ unsigned ContinuationIndenter::addTokenOnNewLine(LineState &State,
   Penalty += State.NextToken->SplitPenalty;
 
   // Breaking before the first "<<" is generally not desirable if the LHS is
-  // short. Also always add the penalty if the LHS is split over mutliple lines
+  // short. Also always add the penalty if the LHS is split over multiple lines
   // to avoid unnecessary line breaks that just work around this penalty.
   if (NextNonComment->is(tok::lessless) &&
       State.Stack.back().FirstLessLess == 0 &&
@@ -523,7 +523,8 @@ unsigned ContinuationIndenter::addTokenOnNewLine(LineState &State,
           Style.ContinuationIndentWidth;
   }
 
-  if ((Previous.isOneOf(tok::comma, tok::semi) &&
+  if ((PreviousNonComment &&
+       PreviousNonComment->isOneOf(tok::comma, tok::semi) &&
        !State.Stack.back().AvoidBinPacking) ||
       Previous.is(TT_BinaryOperator))
     State.Stack.back().BreakBeforeParameter = false;
@@ -559,6 +560,7 @@ unsigned ContinuationIndenter::addTokenOnNewLine(LineState &State,
   // and we need to avoid bin packing there.
   bool NestedBlockSpecialCase =
       Style.Language != FormatStyle::LK_Cpp &&
+      Style.Language != FormatStyle::LK_ObjC &&
       Current.is(tok::r_brace) && State.Stack.size() > 1 &&
       State.Stack[State.Stack.size() - 2].NestedBlockInlined;
   if (!NestedBlockSpecialCase)
@@ -865,7 +867,7 @@ void ContinuationIndenter::moveStatePastFakeLParens(LineState &State,
     // Exclude relational operators, as there, it is always more desirable to
     // have the LHS 'left' of the RHS.
     if (Previous && Previous->getPrecedence() != prec::Assignment &&
-        Previous->isOneOf(TT_BinaryOperator, TT_ConditionalExpr) &&
+        Previous->isOneOf(TT_BinaryOperator, TT_ConditionalExpr, tok::comma) &&
         Previous->getPrecedence() != prec::Relational) {
       bool BreakBeforeOperator =
           Previous->is(tok::lessless) ||

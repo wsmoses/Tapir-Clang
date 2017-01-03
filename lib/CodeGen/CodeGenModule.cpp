@@ -743,7 +743,7 @@ void CodeGenModule::EmitCtorList(CtorList &Fns, const char *GlobalName) {
       Int32Ty, llvm::PointerType::getUnqual(CtorFTy), VoidPtrTy, nullptr);
 
   // Construct the constructor and destructor arrays.
-  ConstantBuilder builder(*this);
+  ConstantInitBuilder builder(*this);
   auto ctors = builder.beginArray(CtorStructTy);
   for (const auto &I : Fns) {
     auto ctor = ctors.beginStruct(CtorStructTy);
@@ -753,7 +753,7 @@ void CodeGenModule::EmitCtorList(CtorList &Fns, const char *GlobalName) {
       ctor.add(llvm::ConstantExpr::getBitCast(I.AssociatedData, VoidPtrTy));
     else
       ctor.addNullPointer(VoidPtrTy);
-    ctors.add(ctor.finish());
+    ctor.finishAndAddTo(ctors);
   }
 
   auto list =
@@ -875,6 +875,13 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     B.addAttribute(llvm::Attribute::StackProtectReq);
 
   if (!D) {
+    // If we don't have a declaration to control inlining, the function isn't
+    // explicitly marked as alwaysinline for semantic reasons, and inlining is
+    // disabled, mark the function as noinline.
+    if (!F->hasFnAttribute(llvm::Attribute::AlwaysInline) &&
+        CodeGenOpts.getInlining() == CodeGenOptions::OnlyAlwaysInlining)
+      B.addAttribute(llvm::Attribute::NoInline);
+
     F->addAttributes(llvm::AttributeSet::FunctionIndex,
                      llvm::AttributeSet::get(
                          F->getContext(),
@@ -882,7 +889,23 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
     return;
   }
 
-  if (D->hasAttr<NakedAttr>()) {
+  if (D->hasAttr<OptimizeNoneAttr>()) {
+    B.addAttribute(llvm::Attribute::OptimizeNone);
+
+    // OptimizeNone implies noinline; we should not be inlining such functions.
+    B.addAttribute(llvm::Attribute::NoInline);
+    assert(!F->hasFnAttribute(llvm::Attribute::AlwaysInline) &&
+           "OptimizeNone and AlwaysInline on same function!");
+
+    // We still need to handle naked functions even though optnone subsumes
+    // much of their semantics.
+    if (D->hasAttr<NakedAttr>())
+      B.addAttribute(llvm::Attribute::Naked);
+
+    // OptimizeNone wins over OptimizeForSize and MinSize.
+    F->removeFnAttr(llvm::Attribute::OptimizeForSize);
+    F->removeFnAttr(llvm::Attribute::MinSize);
+  } else if (D->hasAttr<NakedAttr>()) {
     // Naked implies noinline: we should not be inlining such functions.
     B.addAttribute(llvm::Attribute::Naked);
     B.addAttribute(llvm::Attribute::NoInline);
@@ -891,40 +914,46 @@ void CodeGenModule::SetLLVMFunctionAttributesForDefinition(const Decl *D,
   } else if (D->hasAttr<NoInlineAttr>()) {
     B.addAttribute(llvm::Attribute::NoInline);
   } else if (D->hasAttr<AlwaysInlineAttr>() &&
-             !F->getAttributes().hasAttribute(llvm::AttributeSet::FunctionIndex,
-                                              llvm::Attribute::NoInline)) {
+             !F->hasFnAttribute(llvm::Attribute::NoInline)) {
     // (noinline wins over always_inline, and we can't specify both in IR)
     B.addAttribute(llvm::Attribute::AlwaysInline);
+  } else if (CodeGenOpts.getInlining() == CodeGenOptions::OnlyAlwaysInlining) {
+    // If we're not inlining, then force everything that isn't always_inline to
+    // carry an explicit noinline attribute.
+    if (!F->hasFnAttribute(llvm::Attribute::AlwaysInline))
+      B.addAttribute(llvm::Attribute::NoInline);
+  } else {
+    // Otherwise, propagate the inline hint attribute and potentially use its
+    // absence to mark things as noinline.
+    if (auto *FD = dyn_cast<FunctionDecl>(D)) {
+      if (any_of(FD->redecls(), [&](const FunctionDecl *Redecl) {
+            return Redecl->isInlineSpecified();
+          })) {
+        B.addAttribute(llvm::Attribute::InlineHint);
+      } else if (CodeGenOpts.getInlining() ==
+                     CodeGenOptions::OnlyHintInlining &&
+                 !FD->isInlined() &&
+                 !F->hasFnAttribute(llvm::Attribute::AlwaysInline)) {
+        B.addAttribute(llvm::Attribute::NoInline);
+      }
+    }
   }
 
-  if (D->hasAttr<ColdAttr>()) {
-    if (!D->hasAttr<OptimizeNoneAttr>())
+  // Add other optimization related attributes if we are optimizing this
+  // function.
+  if (!D->hasAttr<OptimizeNoneAttr>()) {
+    if (D->hasAttr<ColdAttr>()) {
       B.addAttribute(llvm::Attribute::OptimizeForSize);
-    B.addAttribute(llvm::Attribute::Cold);
-  }
+      B.addAttribute(llvm::Attribute::Cold);
+    }
 
-  if (D->hasAttr<MinSizeAttr>())
-    B.addAttribute(llvm::Attribute::MinSize);
+    if (D->hasAttr<MinSizeAttr>())
+      B.addAttribute(llvm::Attribute::MinSize);
+  }
 
   F->addAttributes(llvm::AttributeSet::FunctionIndex,
                    llvm::AttributeSet::get(
                        F->getContext(), llvm::AttributeSet::FunctionIndex, B));
-
-  if (D->hasAttr<OptimizeNoneAttr>()) {
-    // OptimizeNone implies noinline; we should not be inlining such functions.
-    F->addFnAttr(llvm::Attribute::OptimizeNone);
-    F->addFnAttr(llvm::Attribute::NoInline);
-
-    // OptimizeNone wins over OptimizeForSize, MinSize, AlwaysInline.
-    F->removeFnAttr(llvm::Attribute::OptimizeForSize);
-    F->removeFnAttr(llvm::Attribute::MinSize);
-    assert(!F->hasFnAttribute(llvm::Attribute::AlwaysInline) &&
-           "OptimizeNone and AlwaysInline on same function!");
-
-    // Attribute 'inlinehint' has no effect on 'optnone' functions.
-    // Explicitly remove it from the set of function attributes.
-    F->removeFnAttr(llvm::Attribute::InlineHint);
-  }
 
   unsigned alignment = D->getMaxAlignment() / Context.getCharWidth();
   if (alignment)
@@ -1296,7 +1325,7 @@ void CodeGenModule::EmitDeferred() {
     // might had been created for another decl with the same mangled name but
     // different type.
     llvm::GlobalValue *GV = dyn_cast<llvm::GlobalValue>(
-        GetAddrOfGlobal(D, /*IsForDefinition=*/true));
+        GetAddrOfGlobal(D, ForDefinition));
 
     // In case of different address spaces, we may still get a cast, even with
     // IsForDefinition equal to true. Query mangled names table to get
@@ -1864,7 +1893,7 @@ CodeGenModule::GetOrCreateLLVMFunction(StringRef MangledName,
                                        GlobalDecl GD, bool ForVTable,
                                        bool DontDefer, bool IsThunk,
                                        llvm::AttributeSet ExtraAttrs,
-                                       bool IsForDefinition) {
+                                       ForDefinition_t IsForDefinition) {
   const Decl *D = GD.getDecl();
 
   // Lookup the entry, lazily creating it if necessary.
@@ -2024,7 +2053,7 @@ llvm::Constant *CodeGenModule::GetAddrOfFunction(GlobalDecl GD,
                                                  llvm::Type *Ty,
                                                  bool ForVTable,
                                                  bool DontDefer,
-                                                 bool IsForDefinition) {
+                                              ForDefinition_t IsForDefinition) {
   // If there was no specific requested type, just convert it now.
   if (!Ty) {
     const auto *FD = cast<FunctionDecl>(GD.getDecl());
@@ -2038,18 +2067,70 @@ llvm::Constant *CodeGenModule::GetAddrOfFunction(GlobalDecl GD,
                                  IsForDefinition);
 }
 
+static const FunctionDecl *
+GetRuntimeFunctionDecl(ASTContext &C, StringRef Name) {
+  TranslationUnitDecl *TUDecl = C.getTranslationUnitDecl();
+  DeclContext *DC = TranslationUnitDecl::castToDeclContext(TUDecl);
+
+  IdentifierInfo &CII = C.Idents.get(Name);
+  for (const auto &Result : DC->lookup(&CII))
+    if (const auto FD = dyn_cast<FunctionDecl>(Result))
+      return FD;
+
+  if (!C.getLangOpts().CPlusPlus)
+    return nullptr;
+
+  // Demangle the premangled name from getTerminateFn()
+  IdentifierInfo &CXXII =
+      (Name == "_ZSt9terminatev" || Name == "\01?terminate@@YAXXZ")
+          ? C.Idents.get("terminate")
+          : C.Idents.get(Name);
+
+  for (const auto &N : {"__cxxabiv1", "std"}) {
+    IdentifierInfo &NS = C.Idents.get(N);
+    for (const auto &Result : DC->lookup(&NS)) {
+      NamespaceDecl *ND = dyn_cast<NamespaceDecl>(Result);
+      if (auto LSD = dyn_cast<LinkageSpecDecl>(Result))
+        for (const auto &Result : LSD->lookup(&NS))
+          if ((ND = dyn_cast<NamespaceDecl>(Result)))
+            break;
+
+      if (ND)
+        for (const auto &Result : ND->lookup(&CXXII))
+          if (const auto *FD = dyn_cast<FunctionDecl>(Result))
+            return FD;
+    }
+  }
+
+  return nullptr;
+}
+
 /// CreateRuntimeFunction - Create a new runtime function with the specified
 /// type and name.
 llvm::Constant *
-CodeGenModule::CreateRuntimeFunction(llvm::FunctionType *FTy,
-                                     StringRef Name,
-                                     llvm::AttributeSet ExtraAttrs) {
+CodeGenModule::CreateRuntimeFunction(llvm::FunctionType *FTy, StringRef Name,
+                                     llvm::AttributeSet ExtraAttrs,
+                                     bool Local) {
   llvm::Constant *C =
       GetOrCreateLLVMFunction(Name, FTy, GlobalDecl(), /*ForVTable=*/false,
-                              /*DontDefer=*/false, /*IsThunk=*/false, ExtraAttrs);
-  if (auto *F = dyn_cast<llvm::Function>(C))
-    if (F->empty())
+                              /*DontDefer=*/false, /*IsThunk=*/false,
+                              ExtraAttrs);
+
+  if (auto *F = dyn_cast<llvm::Function>(C)) {
+    if (F->empty()) {
       F->setCallingConv(getRuntimeCC());
+
+      if (!Local && getTriple().isOSBinFormatCOFF() &&
+          !getCodeGenOpts().LTOVisibilityPublicStd) {
+        const FunctionDecl *FD = GetRuntimeFunctionDecl(Context, Name);
+        if (!FD || FD->hasAttr<DLLImportAttr>()) {
+          F->setDLLStorageClass(llvm::GlobalValue::DLLImportStorageClass);
+          F->setLinkage(llvm::GlobalValue::ExternalLinkage);
+        }
+      }
+    }
+  }
+
   return C;
 }
 
@@ -2103,7 +2184,7 @@ llvm::Constant *
 CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
                                      llvm::PointerType *Ty,
                                      const VarDecl *D,
-                                     bool IsForDefinition) {
+                                     ForDefinition_t IsForDefinition) {
   // Lookup the entry, lazily creating it if necessary.
   llvm::GlobalValue *Entry = GetGlobalValue(MangledName);
   if (Entry) {
@@ -2218,30 +2299,31 @@ CodeGenModule::GetOrCreateLLVMGlobal(StringRef MangledName,
 
 llvm::Constant *
 CodeGenModule::GetAddrOfGlobal(GlobalDecl GD,
-                               bool IsForDefinition) {
-  if (isa<CXXConstructorDecl>(GD.getDecl()))
-    return getAddrOfCXXStructor(cast<CXXConstructorDecl>(GD.getDecl()),
+                               ForDefinition_t IsForDefinition) {
+  const Decl *D = GD.getDecl();
+  if (isa<CXXConstructorDecl>(D))
+    return getAddrOfCXXStructor(cast<CXXConstructorDecl>(D),
                                 getFromCtorType(GD.getCtorType()),
                                 /*FnInfo=*/nullptr, /*FnType=*/nullptr,
                                 /*DontDefer=*/false, IsForDefinition);
-  else if (isa<CXXDestructorDecl>(GD.getDecl()))
-    return getAddrOfCXXStructor(cast<CXXDestructorDecl>(GD.getDecl()),
+  else if (isa<CXXDestructorDecl>(D))
+    return getAddrOfCXXStructor(cast<CXXDestructorDecl>(D),
                                 getFromDtorType(GD.getDtorType()),
                                 /*FnInfo=*/nullptr, /*FnType=*/nullptr,
                                 /*DontDefer=*/false, IsForDefinition);
-  else if (isa<CXXMethodDecl>(GD.getDecl())) {
+  else if (isa<CXXMethodDecl>(D)) {
     auto FInfo = &getTypes().arrangeCXXMethodDeclaration(
-        cast<CXXMethodDecl>(GD.getDecl()));
+        cast<CXXMethodDecl>(D));
     auto Ty = getTypes().GetFunctionType(*FInfo);
     return GetAddrOfFunction(GD, Ty, /*ForVTable=*/false, /*DontDefer=*/false,
                              IsForDefinition);
-  } else if (isa<FunctionDecl>(GD.getDecl())) {
+  } else if (isa<FunctionDecl>(D)) {
     const CGFunctionInfo &FI = getTypes().arrangeGlobalDeclaration(GD);
     llvm::FunctionType *Ty = getTypes().GetFunctionType(FI);
     return GetAddrOfFunction(GD, Ty, /*ForVTable=*/false, /*DontDefer=*/false,
                              IsForDefinition);
   } else
-    return GetAddrOfGlobalVar(cast<VarDecl>(GD.getDecl()), /*Ty=*/nullptr,
+    return GetAddrOfGlobalVar(cast<VarDecl>(D), /*Ty=*/nullptr,
                               IsForDefinition);
 }
 
@@ -2295,7 +2377,7 @@ CodeGenModule::CreateOrReplaceCXXRuntimeVariable(StringRef Name,
 /// variable with the same mangled name but some other type.
 llvm::Constant *CodeGenModule::GetAddrOfGlobalVar(const VarDecl *D,
                                                   llvm::Type *Ty,
-                                                  bool IsForDefinition) {
+                                           ForDefinition_t IsForDefinition) {
   assert(D->hasGlobalStorage() && "Not a global variable");
   QualType ASTTy = D->getType();
   if (!Ty)
@@ -2485,7 +2567,7 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
 
   llvm::Type* InitType = Init->getType();
   llvm::Constant *Entry =
-      GetAddrOfGlobalVar(D, InitType, /*IsForDefinition=*/!IsTentative);
+      GetAddrOfGlobalVar(D, InitType, ForDefinition_t(!IsTentative));
 
   // Strip off a bitcast if we got one back.
   if (auto *CE = dyn_cast<llvm::ConstantExpr>(Entry)) {
@@ -2518,7 +2600,7 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
 
     // Make a new global with the correct type, this is now guaranteed to work.
     GV = cast<llvm::GlobalVariable>(
-        GetAddrOfGlobalVar(D, InitType, /*IsForDefinition=*/!IsTentative));
+        GetAddrOfGlobalVar(D, InitType, ForDefinition_t(!IsTentative)));
 
     // Replace all uses of the old global with the new global
     llvm::Constant *NewPtrForOldDecl =
@@ -2611,9 +2693,16 @@ void CodeGenModule::EmitGlobalVarDefinition(const VarDecl *D,
   else
     GV->setDLLStorageClass(llvm::GlobalVariable::DefaultStorageClass);
 
-  if (Linkage == llvm::GlobalVariable::CommonLinkage)
+  if (Linkage == llvm::GlobalVariable::CommonLinkage) {
     // common vars aren't constant even if declared const.
     GV->setConstant(false);
+    // Tentative definition of global variables may be initialized with
+    // non-zero null pointers. In this case they should have weak linkage
+    // since common linkage must have zero initializer and must not have
+    // explicit section therefore cannot have non-zero initial value.
+    if (!GV->getInitializer()->isNullValue())
+      GV->setLinkage(llvm::GlobalVariable::WeakAnyLinkage);
+  }
 
   setNonAliasAttributes(D, GV);
 
@@ -2922,7 +3011,7 @@ void CodeGenModule::EmitGlobalFunctionDefinition(GlobalDecl GD,
   if (!GV || (GV->getType()->getElementType() != Ty))
     GV = cast<llvm::GlobalValue>(GetAddrOfFunction(GD, Ty, /*ForVTable=*/false,
                                                    /*DontDefer=*/true,
-                                                   /*IsForDefinition=*/true));
+                                                   ForDefinition));
 
   // Already emitted.
   if (!GV->isDeclaration())
@@ -3131,14 +3220,6 @@ GetConstantCFStringEntry(llvm::StringMap<llvm::GlobalVariable *> &Map,
                          nullptr)).first;
 }
 
-static llvm::StringMapEntry<llvm::GlobalVariable *> &
-GetConstantStringEntry(llvm::StringMap<llvm::GlobalVariable *> &Map,
-                       const StringLiteral *Literal, unsigned &StringLength) {
-  StringRef String = Literal->getString();
-  StringLength = String.size();
-  return *Map.insert(std::make_pair(String, nullptr)).first;
-}
-
 ConstantAddress
 CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
   unsigned StringLength = 0;
@@ -3190,7 +3271,7 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
 
   auto *STy = cast<llvm::StructType>(getTypes().ConvertType(CFTy));
 
-  ConstantBuilder Builder(*this);
+  ConstantInitBuilder Builder(*this);
   auto Fields = Builder.beginStruct(STy);
 
   // Class pointer.
@@ -3260,120 +3341,6 @@ CodeGenModule::GetAddrOfConstantCFString(const StringLiteral *Literal) {
     GV->setSection("__DATA,__cfstring");
     break;
   }
-  Entry.second = GV;
-
-  return ConstantAddress(GV, Alignment);
-}
-
-ConstantAddress
-CodeGenModule::GetAddrOfConstantString(const StringLiteral *Literal) {
-  unsigned StringLength = 0;
-  llvm::StringMapEntry<llvm::GlobalVariable *> &Entry =
-      GetConstantStringEntry(CFConstantStringMap, Literal, StringLength);
-
-  if (auto *C = Entry.second)
-    return ConstantAddress(C, CharUnits::fromQuantity(C->getAlignment()));
-  
-  llvm::Constant *Zero = llvm::Constant::getNullValue(Int32Ty);
-  llvm::Constant *Zeros[] = { Zero, Zero };
-  llvm::Value *V;
-  // If we don't already have it, get _NSConstantStringClassReference.
-  if (!ConstantStringClassRef) {
-    std::string StringClass(getLangOpts().ObjCConstantStringClass);
-    llvm::Type *Ty = getTypes().ConvertType(getContext().IntTy);
-    llvm::Constant *GV;
-    if (LangOpts.ObjCRuntime.isNonFragile()) {
-      std::string str = 
-        StringClass.empty() ? "OBJC_CLASS_$_NSConstantString" 
-                            : "OBJC_CLASS_$_" + StringClass;
-      GV = getObjCRuntime().GetClassGlobal(str);
-      // Make sure the result is of the correct type.
-      llvm::Type *PTy = llvm::PointerType::getUnqual(Ty);
-      V = llvm::ConstantExpr::getBitCast(GV, PTy);
-      ConstantStringClassRef = V;
-    } else {
-      std::string str =
-        StringClass.empty() ? "_NSConstantStringClassReference"
-                            : "_" + StringClass + "ClassReference";
-      llvm::Type *PTy = llvm::ArrayType::get(Ty, 0);
-      GV = CreateRuntimeVariable(PTy, str);
-      // Decay array -> ptr
-      V = llvm::ConstantExpr::getGetElementPtr(PTy, GV, Zeros);
-      ConstantStringClassRef = V;
-    }
-  } else
-    V = ConstantStringClassRef;
-
-  if (!NSConstantStringType) {
-    // Construct the type for a constant NSString.
-    RecordDecl *D = Context.buildImplicitRecord("__builtin_NSString");
-    D->startDefinition();
-      
-    QualType FieldTypes[3];
-    
-    // const int *isa;
-    FieldTypes[0] = Context.getPointerType(Context.IntTy.withConst());
-    // const char *str;
-    FieldTypes[1] = Context.getPointerType(Context.CharTy.withConst());
-    // unsigned int length;
-    FieldTypes[2] = Context.UnsignedIntTy;
-    
-    // Create fields
-    for (unsigned i = 0; i < 3; ++i) {
-      FieldDecl *Field = FieldDecl::Create(Context, D,
-                                           SourceLocation(),
-                                           SourceLocation(), nullptr,
-                                           FieldTypes[i], /*TInfo=*/nullptr,
-                                           /*BitWidth=*/nullptr,
-                                           /*Mutable=*/false,
-                                           ICIS_NoInit);
-      Field->setAccess(AS_public);
-      D->addDecl(Field);
-    }
-    
-    D->completeDefinition();
-    QualType NSTy = Context.getTagDeclType(D);
-    NSConstantStringType = cast<llvm::StructType>(getTypes().ConvertType(NSTy));
-  }
-  
-  ConstantBuilder Builder(*this);
-  auto Fields = Builder.beginStruct(NSConstantStringType);
-  
-  // Class pointer.
-  Fields.add(cast<llvm::ConstantExpr>(V));
-  
-  // String pointer.
-  llvm::Constant *C =
-      llvm::ConstantDataArray::getString(VMContext, Entry.first());
-
-  llvm::GlobalValue::LinkageTypes Linkage = llvm::GlobalValue::PrivateLinkage;
-  bool isConstant = !LangOpts.WritableStrings;
-
-  auto *GV = new llvm::GlobalVariable(getModule(), C->getType(), isConstant,
-                                      Linkage, C, ".str");
-  GV->setUnnamedAddr(llvm::GlobalValue::UnnamedAddr::Global);
-  // Don't enforce the target's minimum global alignment, since the only use
-  // of the string is via this class initializer.
-  CharUnits Align = getContext().getTypeAlignInChars(getContext().CharTy);
-  GV->setAlignment(Align.getQuantity());
-  Fields.add(
-      llvm::ConstantExpr::getGetElementPtr(GV->getValueType(), GV, Zeros));
-
-  // String length.
-  Fields.addInt(IntTy, StringLength);
-  
-  // The struct.
-  CharUnits Alignment = getPointerAlign();
-  GV = Fields.finishAndCreateGlobal("_unnamed_nsstring_", Alignment,
-                                    /*constant*/ true,
-                                    llvm::GlobalVariable::PrivateLinkage);
-  const char *NSStringSection = "__OBJC,__cstring_object,regular,no_dead_strip";
-  const char *NSStringNonFragileABISection =
-      "__DATA,__objc_stringobj,regular,no_dead_strip";
-  // FIXME. Fix section.
-  GV->setSection(LangOpts.ObjCRuntime.isNonFragile()
-                     ? NSStringNonFragileABISection
-                     : NSStringSection);
   Entry.second = GV;
 
   return ConstantAddress(GV, Alignment);

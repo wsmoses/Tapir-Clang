@@ -277,6 +277,8 @@ namespace clang {
     Expr *VisitMemberExpr(MemberExpr *E);
     Expr *VisitCallExpr(CallExpr *E);
     Expr *VisitInitListExpr(InitListExpr *E);
+    Expr *VisitArrayInitLoopExpr(ArrayInitLoopExpr *E);
+    Expr *VisitArrayInitIndexExpr(ArrayInitIndexExpr *E);
     Expr *VisitCXXDefaultInitExpr(CXXDefaultInitExpr *E);
     Expr *VisitCXXNamedCastExpr(CXXNamedCastExpr *E);
 
@@ -5534,14 +5536,6 @@ Stmt *ASTNodeImporter::VisitCilkForStmt(CilkForStmt *S) {
   Stmt *ToInit = Importer.Import(S->getInit());
   if (!ToInit && S->getInit())
     return nullptr;
-  Stmt *ToCondDecl = nullptr;
-  if (Stmt *FromCondDecl = S->getCondDecl()) {
-    ToCondDecl = Importer.Import(FromCondDecl);
-    if (!ToCondDecl)
-      return nullptr;
-  }
-  if (!ToCondDecl && S->getCondDecl())
-    return nullptr;
   Expr *ToCondition = Importer.Import(S->getCond());
   if (!ToCondition && S->getCond())
     return nullptr;
@@ -5562,7 +5556,7 @@ Stmt *ASTNodeImporter::VisitCilkForStmt(CilkForStmt *S) {
   SourceLocation ToLParenLoc = Importer.Import(S->getLParenLoc());
   SourceLocation ToRParenLoc = Importer.Import(S->getRParenLoc());
   return new (Importer.getToContext()) CilkForStmt(Importer.getToContext(),
-                                                   ToInit, ToCondDecl,
+                                                   ToInit,
                                                    ToCondition,
                                                    // ToConditionVariable,
                                                    ToInc, ToBody,
@@ -6620,6 +6614,30 @@ Expr *ASTNodeImporter::VisitInitListExpr(InitListExpr *ILE) {
   return To;
 }
 
+Expr *ASTNodeImporter::VisitArrayInitLoopExpr(ArrayInitLoopExpr *E) {
+  QualType ToType = Importer.Import(E->getType());
+  if (ToType.isNull())
+    return nullptr;
+
+  Expr *ToCommon = Importer.Import(E->getCommonExpr());
+  if (!ToCommon && E->getCommonExpr())
+    return nullptr;
+
+  Expr *ToSubExpr = Importer.Import(E->getSubExpr());
+  if (!ToSubExpr && E->getSubExpr())
+    return nullptr;
+
+  return new (Importer.getToContext())
+      ArrayInitLoopExpr(ToType, ToCommon, ToSubExpr);
+}
+
+Expr *ASTNodeImporter::VisitArrayInitIndexExpr(ArrayInitIndexExpr *E) {
+  QualType ToType = Importer.Import(E->getType());
+  if (ToType.isNull())
+    return nullptr;
+  return new (Importer.getToContext()) ArrayInitIndexExpr(ToType);
+}
+
 Expr *ASTNodeImporter::VisitCXXDefaultInitExpr(CXXDefaultInitExpr *DIE) {
   FieldDecl *ToField = llvm::dyn_cast_or_null<FieldDecl>(
       Importer.Import(DIE->getField()));
@@ -7110,25 +7128,6 @@ CXXCtorInitializer *ASTImporter::Import(CXXCtorInitializer *From) {
     return new (ToContext)
         CXXCtorInitializer(ToContext, ToTInfo, Import(From->getLParenLoc()),
                            ToExpr, Import(From->getRParenLoc()));
-  } else if (unsigned NumArrayIndices = From->getNumArrayIndices()) {
-    FieldDecl *ToField =
-        llvm::cast_or_null<FieldDecl>(Import(From->getMember()));
-    if (!ToField && From->getMember())
-      return nullptr;
-
-    SmallVector<VarDecl *, 4> ToAIs(NumArrayIndices);
-
-    for (unsigned AII = 0; AII < NumArrayIndices; ++AII) {
-      VarDecl *ToArrayIndex =
-          dyn_cast_or_null<VarDecl>(Import(From->getArrayIndex(AII)));
-      if (!ToArrayIndex && From->getArrayIndex(AII))
-        return nullptr;
-    }
-
-    return CXXCtorInitializer::Create(
-        ToContext, ToField, Import(From->getMemberLocation()),
-        Import(From->getLParenLoc()), ToExpr, Import(From->getRParenLoc()),
-        ToAIs.data(), NumArrayIndices);
   } else {
     return nullptr;
   }

@@ -780,6 +780,14 @@ def EmptyBases : InheritableAttr, TargetSpecificAttr<TargetMicrosoftCXXABI> {
   let Documentation = [EmptyBasesDocs];
 }
 
+def AllocSize : InheritableAttr {
+  let Spellings = [GCC<"alloc_size">];
+  let Subjects = SubjectList<[Function]>;
+  let Args = [IntArgument<"ElemSizeParam">, IntArgument<"NumElemsParam", 1>];
+  let TemplateDependent = 1;
+  let Documentation = [AllocSizeDocs];
+}
+
 def EnableIf : InheritableAttr {
   let Spellings = [GNU<"enable_if">];
   let Subjects = SubjectList<[Function]>;
@@ -1618,7 +1626,9 @@ def Used : InheritableAttr {
 def Uuid : InheritableAttr {
   let Spellings = [Declspec<"uuid">, Microsoft<"uuid">];
   let Args = [StringArgument<"Guid">];
-//  let Subjects = SubjectList<[CXXRecord]>;
+  let Subjects = SubjectList<[Record, Enum], WarnDiag, "ExpectedEnumOrClass">;
+  // FIXME: Allow expressing logical AND for LangOpts. Our condition should be:
+  // CPlusPlus && (MicrosoftExt || Borland)
   let LangOpts = [MicrosoftExt, Borland];
   let Documentation = [Undocumented];
 }

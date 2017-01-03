@@ -1070,7 +1070,8 @@ Sema::ActOnFinishSwitchStmt(SourceLocation SwitchLoc, Stmt *Switch,
     const EnumType *ET = CondTypeBeforePromotion->getAs<EnumType>();
 
     // If switch has default case, then ignore it.
-    if (!CaseListIsErroneous  && !HasConstantCond && ET) {
+    if (!CaseListIsErroneous && !HasConstantCond && ET &&
+        ET->getDecl()->isCompleteDefinition()) {
       const EnumDecl *ED = ET->getDecl();
       EnumValsTy EnumVals;
 
@@ -2785,11 +2786,11 @@ Sema::ActOnCilkSyncStmt(SourceLocation SyncLoc) {
 ///
 /// Return null if the increment does not satisfy one of the specified formats.
 static Expr *GetCilkForStride(Sema &S, llvm::SmallPtrSetImpl<VarDecl *> &Decls,
-                              Expr *Third) {
+                              Expr *Increment) {
   if (const CompoundAssignOperator *CAO =
-      dyn_cast_or_null<CompoundAssignOperator>(Third)) {
-    // Only get an expression to extract if Third is in a canonical form with
-    // Decls only in the LHS.
+      dyn_cast_or_null<CompoundAssignOperator>(Increment)) {
+    // Only get an expression to extract if Increment is in a canonical form
+    // with Decls only in the LHS.
     bool DeclUseInRHS =
       DeclFinder(S, Decls, CAO->getRHS()).FoundDeclInUse();
     bool DeclUseInLHS =
@@ -2932,6 +2933,13 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
 
   // Add new declarations for replacement loop control variables.
   QualType LoopVarTy = LoopVar->getType();
+  // Add declaration to store the old loop var initialization.
+  VarDecl *InitVar = BuildForRangeVarDecl(*this, CilkForLoc, LoopVarTy,
+                                           "__init");
+  AddInitializerToDecl(InitVar, LoopVarInit,
+                       /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
+  FinalizeDeclaration(InitVar);
+  CurContext->addHiddenDecl(InitVar);
   // Add declaration for new beginning loop control variable.
   VarDecl *BeginVar = BuildForRangeVarDecl(*this, CilkForLoc, LoopVarTy,
                                            "__begin");
@@ -2948,7 +2956,8 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
   CurContext->addHiddenDecl(EndVar);
 
   // Combine declarations into a single DeclStmt.
-  SmallVector<Decl *, 2> NewDecls;
+  SmallVector<Decl *, 3> NewDecls;
+  NewDecls.push_back(InitVar);
   NewDecls.push_back(BeginVar);
   NewDecls.push_back(EndVar);
   DeclGroupPtrTy DG = BuildDeclaratorGroup(MutableArrayRef<Decl *>(NewDecls),
@@ -2990,13 +2999,13 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
   if (NewInc.isInvalid())
     return StmtError();
 
-  // *First = NewInit.get();
-  // *Second = NewCond.get();
-  // *Third = NewInc.get();
-
   // Return a new statement for initializing the old loop variable.
-  ExprResult NewLoopVarInit = BuildBinOp(S, CilkForLoc, BO_Mul,
-                                         BeginRef.get(), Stride);
+  ExprResult InitRef = BuildDeclRefExpr(InitVar, LoopVarTy, VK_LValue,
+                                        CilkForLoc);
+  ExprResult NewLoopVarInit =
+    BuildBinOp(S, CilkForLoc, BO_Add, InitRef.get(),
+               BuildBinOp(S, CilkForLoc, BO_Mul,
+                          BeginRef.get(), Stride).get());
   AddInitializerToDecl(LoopVar, NewLoopVarInit.get(),
                        /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
 
@@ -3008,7 +3017,7 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
     NewBody = new (Context) CompoundStmt(Context, { LoopVarDS, Body },
                                          LParenLoc, RParenLoc);
 
-  return new (Context) CilkForStmt(Context, NewInit.get(), nullptr,
+  return new (Context) CilkForStmt(Context, NewInit.get(),
                                    NewCond.get(), NewInc.get(), NewBody,
                                    CilkForLoc, LParenLoc, RParenLoc);
 }
@@ -3117,6 +3126,138 @@ StmtResult Sema::LiftCilkForLoopLimit(SourceLocation CilkForLoc,
   return NewInit;
 }
 
+// /// Examine the condition of the _Cilk_for loop to lift the evaluation of the
+// /// end condition of a _Cilk_for loop out of the loop.  Intuitively, this
+// /// routine transforms _Cilk_for loops as follows:
+// ///
+// ///   _Cilk_for(loop-var-decl;
+// ///             loop-var-expr comparison-op end-expr;
+// ///   =>
+// ///   _Cilk_for(loop-var-decl, __end = end-expr;
+// ///             loop-var-expr comparison-op __end;
+// ///
+// /// Here, loop-var-expr can use variables declared in loop-var-decl, while
+// /// end-expr must not use any such variables.  In general, the loop condition
+// /// can swap the positions of loop-var-expr and end-expr.
+// StmtResult Sema::LiftCilkForLoopLimit(Stmt *First, Expr **Second) {
+//   if (!First || !Second)
+//     return StmtEmpty();
+
+//   // Extract decls from First.  If First is not a decl statement, give
+//   // up.
+//   llvm::SmallPtrSet<VarDecl*, 8> Decls;
+//   if (DeclStmt *DS = dyn_cast<DeclStmt>(First)) {
+//     for (auto *DI : DS->decls()) {
+//       VarDecl *VD = dyn_cast<VarDecl>(DI);
+//       Decls.insert(VD);
+//     }
+//   } else {
+//     return StmtEmpty();
+//   }
+
+//   // Only get an expression to extract if Decl's appear in just one
+//   // side of a comparison.
+//   if (BinaryOperator *E = dyn_cast<BinaryOperator>(*Second)) {
+//     if (!E->isComparisonOp())
+//       return StmtEmpty();
+
+//     bool DeclUseInRHS = DeclFinder(*this, Decls, E->getRHS()).FoundDeclInUse();
+//     bool DeclUseInLHS = DeclFinder(*this, Decls, E->getLHS()).FoundDeclInUse();
+//     Expr *ToExtract;
+//     if ((DeclUseInLHS && DeclUseInRHS) ||
+//         (!DeclUseInLHS && !DeclUseInRHS))
+//       return StmtEmpty();
+
+//     // Get the expression to lift.
+//     if (DeclUseInLHS)
+//       ToExtract = E->getRHS();
+//     else if (DeclUseInRHS)
+//       ToExtract = E->getLHS();
+
+//     // Create a new VarDecl that stores the result of the lifted
+//     // expression.
+//     Scope *S = getCurScope();
+//     SourceLocation EndLoc = ToExtract->getLocStart();
+//     QualType EndType = ToExtract->getType();
+//     // Hijacking this method for handling range loops to build the
+//     // declaration for the end of the loop.
+//     VarDecl *EndVar = BuildForRangeVarDecl(*this, EndLoc, EndType,
+//                                            "__end");
+//     // // Get the stride from the loop increment expression, if it exists.
+//     // Expr *Stride = GetCilkForStride(*this, Decls, *Third);
+//     // bool RelationCompare = false;
+//     // bool CompareWithCeiling = true;
+//     // switch(E->getOpcode()) {
+//     // default: break;
+//     // case BO_LE:
+//     // case BO_GE:
+//     //   CompareWithCeiling = false;
+//     // case BO_LT:
+//     // case BO_GT:
+//     //   RelationCompare = true;
+//     //   break;
+//     // }
+//     // // If we have a stride, modify the extracted loop limit to reflect the
+//     // // stride.
+//     // if (RelationCompare && Stride) {
+//     //   if (CompareWithCeiling) {
+//     //     ExprResult LiteralOne = ActOnIntegerConstant(EndLoc, 1);
+//     //     ExprResult Offset = BuildBinOp(S, EndLoc, BO_Sub,
+//     //                                    Stride, LiteralOne.get());
+//     //     ExprResult NewToExtract = BuildBinOp(S, EndLoc, BO_Add,
+//     //                                          ToExtract, Offset.get());
+//     //     ToExtract = NewToExtract.get();
+//     //   }
+
+//     //   ExprResult NewToExtract = BuildBinOp(S, EndLoc, BO_Div,
+//     //                                        ToExtract, Stride);
+//     //   ToExtract = NewToExtract.get();
+
+//     //   // Replace the strided loop increment expression with a preincrement or
+//     //   // predecrement.
+//     //   if (const CompoundAssignOperator *CAO =
+//     //       dyn_cast<CompoundAssignOperator>(*Third)) {
+//     //     SourceLocation CAOLoc = CAO->getLocStart();
+//     //     ExprResult ReplInc;
+//     //     switch (CAO->getOpcode()) {
+//     //     default: break;  // Should not reach this case if we have a Stride.
+//     //     case BO_AddAssign:
+//     //       ReplInc = BuildUnaryOp(S, CAOLoc, UO_PreInc, CAO->getLHS());
+//     //       break;
+//     //     case BO_SubAssign:
+//     //       ReplInc = BuildUnaryOp(S, CAOLoc, UO_PreDec, CAO->getLHS());
+//     //       break;
+//     //     }
+//     //     *Third = ReplInc.get();
+//     //   }
+//     // }
+//     AddInitializerToDecl(EndVar, ToExtract, /*DirectInit=*/false,
+//                          /*TypeMayContainAuto=*/false);
+//     FinalizeDeclaration(EndVar);
+//     CurContext->addHiddenDecl(EndVar);
+
+//     // Create a Decl statement for the new VarDecl.
+//     StmtResult EndDeclStmt =
+//       ActOnDeclStmt(ConvertDeclToDeclGroup(EndVar), EndLoc, EndLoc);
+
+//     // Create a new condition expression that uses the new VarDecl
+//     // in place of the lifted expression.
+//     ExprResult EndRef = BuildDeclRefExpr(EndVar, EndType,
+//                                          VK_LValue, EndLoc);
+//     ExprResult NewCondExpr;
+//     if (DeclUseInLHS)
+//       NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
+//                                E->getLHS(), EndRef.get());
+//     else if (DeclUseInRHS)
+//       NewCondExpr = BuildBinOp(S, E->getOperatorLoc(), E->getOpcode(),
+//                                EndRef.get(), E->getRHS());
+
+//     *Second = NewCondExpr.get();
+//     return EndDeclStmt;
+//   }
+//   return StmtEmpty();
+// }
+
 StmtResult
 Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
                        Stmt *First, ConditionResult Second, FullExprArg Third,
@@ -3185,10 +3326,10 @@ Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
   StmtResult NewInit = LiftCilkForLoopLimit(CilkForLoc, First, &Condition);
   assert(!NewInit.isInvalid());
   if (!NewInit.isUnset())
-    return new (Context) CilkForStmt(Context, NewInit.get(), nullptr, Condition,
+    return new (Context) CilkForStmt(Context, NewInit.get(), Condition,
                                      Increment, Body, CilkForLoc, LParenLoc,
                                      RParenLoc);
-  return new (Context) CilkForStmt(Context, First, nullptr, Condition,
+  return new (Context) CilkForStmt(Context, First, Condition,
                                    Increment, Body, CilkForLoc, LParenLoc,
                                    RParenLoc);
 }
@@ -3703,6 +3844,10 @@ StmtResult Sema::BuildReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp) {
     if (FD->isNoReturn())
       Diag(ReturnLoc, diag::warn_noreturn_function_has_return_expr)
         << FD->getDeclName();
+    if (FD->isMain() && RetValExp)
+      if (isa<CXXBoolLiteralExpr>(RetValExp))
+        Diag(ReturnLoc, diag::warn_main_returns_bool_literal)
+          << RetValExp->getSourceRange();
   } else if (ObjCMethodDecl *MD = getCurMethodDecl()) {
     FnRetType = MD->getReturnType();
     isObjCMethod = true;
@@ -3957,7 +4102,7 @@ StmtResult Sema::BuildObjCAtThrowStmt(SourceLocation AtLoc, Expr *Throw) {
         !ThrowType->isObjCObjectPointerType()) {
       const PointerType *PT = ThrowType->getAs<PointerType>();
       if (!PT || !PT->getPointeeType()->isVoidType())
-        return StmtError(Diag(AtLoc, diag::error_objc_throw_expects_object)
+        return StmtError(Diag(AtLoc, diag::err_objc_throw_expects_object)
                          << Throw->getType() << Throw->getSourceRange());
     }
   }
@@ -3978,7 +4123,7 @@ Sema::ActOnObjCAtThrowStmt(SourceLocation AtLoc, Expr *Throw,
     while (AtCatchParent && !AtCatchParent->isAtCatchScope())
       AtCatchParent = AtCatchParent->getParent();
     if (!AtCatchParent)
-      return StmtError(Diag(AtLoc, diag::error_rethrow_used_outside_catch));
+      return StmtError(Diag(AtLoc, diag::err_rethrow_used_outside_catch));
   }
   return BuildObjCAtThrowStmt(AtLoc, Throw);
 }
@@ -3999,19 +4144,19 @@ Sema::ActOnObjCAtSynchronizedOperand(SourceLocation atLoc, Expr *operand) {
       if (getLangOpts().CPlusPlus) {
         if (RequireCompleteType(atLoc, type,
                                 diag::err_incomplete_receiver_type))
-          return Diag(atLoc, diag::error_objc_synchronized_expects_object)
+          return Diag(atLoc, diag::err_objc_synchronized_expects_object)
                    << type << operand->getSourceRange();
 
         ExprResult result = PerformContextuallyConvertToObjCPointer(operand);
         if (result.isInvalid())
           return ExprError();
         if (!result.isUsable())
-          return Diag(atLoc, diag::error_objc_synchronized_expects_object)
+          return Diag(atLoc, diag::err_objc_synchronized_expects_object)
                    << type << operand->getSourceRange();
 
         operand = result.get();
       } else {
-          return Diag(atLoc, diag::error_objc_synchronized_expects_object)
+          return Diag(atLoc, diag::err_objc_synchronized_expects_object)
                    << type << operand->getSourceRange();
       }
     }

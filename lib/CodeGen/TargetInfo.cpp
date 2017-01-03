@@ -401,6 +401,20 @@ unsigned TargetCodeGenInfo::getOpenCLKernelCallingConv() const {
   return llvm::CallingConv::C;
 }
 
+llvm::Constant *TargetCodeGenInfo::getNullPointer(const CodeGen::CodeGenModule &CGM,
+    llvm::PointerType *T, QualType QT) const {
+  return llvm::ConstantPointerNull::get(T);
+}
+
+llvm::Value *TargetCodeGenInfo::performAddrSpaceCast(
+    CodeGen::CodeGenFunction &CGF, llvm::Value *Src, QualType SrcTy,
+    QualType DestTy) const {
+  // Since target may map different address spaces in AST to the same address
+  // space, an address space conversion may end up as a bitcast.
+  return CGF.Builder.CreatePointerBitCastOrAddrSpaceCast(Src,
+             CGF.ConvertType(DestTy));
+}
+
 static bool isEmptyRecord(ASTContext &Context, QualType T, bool AllowArrays);
 
 /// isEmptyField - Return true iff a the field is "empty", that is it
@@ -957,6 +971,11 @@ public:
     // four vector registers for vectors, but those can overlap with the
     // scalar registers.
     return occupiesMoreThan(CGT, scalars, /*total*/ 3);
+  }  
+
+  bool isSwiftErrorInRegister() const override {
+    // x86-32 lowering does not support passing swifterror in a register.
+    return false;
   }
 };
 
@@ -2011,6 +2030,9 @@ public:
                                     ArrayRef<llvm::Type*> scalars,
                                     bool asReturnValue) const override {
     return occupiesMoreThan(CGT, scalars, /*total*/ 4);
+  }  
+  bool isSwiftErrorInRegister() const override {
+    return true;
   }
 };
 
@@ -2041,6 +2063,10 @@ public:
                                     ArrayRef<llvm::Type *> scalars,
                                     bool asReturnValue) const override {
     return occupiesMoreThan(CGT, scalars, /*total*/ 4);
+  }
+
+  bool isSwiftErrorInRegister() const override {
+    return true;
   }
 
 private:
@@ -2359,13 +2385,13 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase,
       Current = SSE;
     } else if (k == BuiltinType::LongDouble) {
       const llvm::fltSemantics *LDF = &getTarget().getLongDoubleFormat();
-      if (LDF == &llvm::APFloat::IEEEquad) {
+      if (LDF == &llvm::APFloat::IEEEquad()) {
         Lo = SSE;
         Hi = SSEUp;
-      } else if (LDF == &llvm::APFloat::x87DoubleExtended) {
+      } else if (LDF == &llvm::APFloat::x87DoubleExtended()) {
         Lo = X87;
         Hi = X87Up;
-      } else if (LDF == &llvm::APFloat::IEEEdouble) {
+      } else if (LDF == &llvm::APFloat::IEEEdouble()) {
         Current = SSE;
       } else
         llvm_unreachable("unexpected long double representation!");
@@ -2484,11 +2510,11 @@ void X86_64ABIInfo::classify(QualType Ty, uint64_t OffsetBase,
       Lo = Hi = SSE;
     } else if (ET == getContext().LongDoubleTy) {
       const llvm::fltSemantics *LDF = &getTarget().getLongDoubleFormat();
-      if (LDF == &llvm::APFloat::IEEEquad)
+      if (LDF == &llvm::APFloat::IEEEquad())
         Current = Memory;
-      else if (LDF == &llvm::APFloat::x87DoubleExtended)
+      else if (LDF == &llvm::APFloat::x87DoubleExtended())
         Current = ComplexX87;
-      else if (LDF == &llvm::APFloat::IEEEdouble)
+      else if (LDF == &llvm::APFloat::IEEEdouble())
         Lo = Hi = SSE;
       else
         llvm_unreachable("unexpected long double representation!");
@@ -3548,15 +3574,17 @@ Address X86_64ABIInfo::EmitVAArg(CodeGenFunction &CGF, Address VAListAddr,
     llvm::Value *RegHiAddr = TyLo->isFPOrFPVectorTy() ? GPAddr : FPAddr;
 
     // Copy the first element.
-    llvm::Value *V =
-      CGF.Builder.CreateDefaultAlignedLoad(
-                               CGF.Builder.CreateBitCast(RegLoAddr, PTyLo));
+    // FIXME: Our choice of alignment here and below is probably pessimistic.
+    llvm::Value *V = CGF.Builder.CreateAlignedLoad(
+        TyLo, CGF.Builder.CreateBitCast(RegLoAddr, PTyLo),
+        CharUnits::fromQuantity(getDataLayout().getABITypeAlignment(TyLo)));
     CGF.Builder.CreateStore(V,
                     CGF.Builder.CreateStructGEP(Tmp, 0, CharUnits::Zero()));
 
     // Copy the second element.
-    V = CGF.Builder.CreateDefaultAlignedLoad(
-                               CGF.Builder.CreateBitCast(RegHiAddr, PTyHi));
+    V = CGF.Builder.CreateAlignedLoad(
+        TyHi, CGF.Builder.CreateBitCast(RegHiAddr, PTyHi),
+        CharUnits::fromQuantity(getDataLayout().getABITypeAlignment(TyHi)));
     CharUnits Offset = CharUnits::fromQuantity(
                    getDataLayout().getStructLayout(ST)->getElementOffset(1));
     CGF.Builder.CreateStore(V, CGF.Builder.CreateStructGEP(Tmp, 1, Offset));
@@ -3719,7 +3747,7 @@ ABIArgInfo WinX86_64ABIInfo::classify(QualType Ty, unsigned &FreeSSERegs,
   // passes them indirectly through memory.
   if (IsMingw64 && BT && BT->getKind() == BuiltinType::LongDouble) {
     const llvm::fltSemantics *LDF = &getTarget().getLongDoubleFormat();
-    if (LDF == &llvm::APFloat::x87DoubleExtended)
+    if (LDF == &llvm::APFloat::x87DoubleExtended())
       return ABIArgInfo::getIndirect(Align, /*ByVal=*/false);
   }
 
@@ -4626,6 +4654,9 @@ private:
                                     bool asReturnValue) const override {
     return occupiesMoreThan(CGT, scalars, /*total*/ 4);
   }
+  bool isSwiftErrorInRegister() const override {
+    return true;
+  }
 };
 
 class AArch64TargetCodeGenInfo : public TargetCodeGenInfo {
@@ -5178,6 +5209,9 @@ private:
                                     ArrayRef<llvm::Type*> scalars,
                                     bool asReturnValue) const override {
     return occupiesMoreThan(CGT, scalars, /*total*/ 4);
+  }
+  bool isSwiftErrorInRegister() const override {
+    return true;
   }
 };
 
@@ -5946,6 +5980,9 @@ public:
                                     ArrayRef<llvm::Type*> scalars,
                                     bool asReturnValue) const override {
     return occupiesMoreThan(CGT, scalars, /*total*/ 4);
+  }
+  bool isSwiftErrorInRegister() const override {
+    return true;
   }
 };
 
@@ -7052,8 +7089,10 @@ public:
   void setTargetAttributes(const Decl *D, llvm::GlobalValue *GV,
                            CodeGen::CodeGenModule &M) const override;
   unsigned getOpenCLKernelCallingConv() const override;
-};
 
+  llvm::Constant *getNullPointer(const CodeGen::CodeGenModule &CGM,
+      llvm::PointerType *T, QualType QT) const override;
+};
 }
 
 static void appendOpenCLVersionMD (CodeGen::CodeGenModule &CGM);
@@ -7115,6 +7154,24 @@ void AMDGPUTargetCodeGenInfo::setTargetAttributes(
 
 unsigned AMDGPUTargetCodeGenInfo::getOpenCLKernelCallingConv() const {
   return llvm::CallingConv::AMDGPU_KERNEL;
+}
+
+// Currently LLVM assumes null pointers always have value 0,
+// which results in incorrectly transformed IR. Therefore, instead of
+// emitting null pointers in private and local address spaces, a null
+// pointer in generic address space is emitted which is casted to a
+// pointer in local or private address space.
+llvm::Constant *AMDGPUTargetCodeGenInfo::getNullPointer(
+    const CodeGen::CodeGenModule &CGM, llvm::PointerType *PT,
+    QualType QT) const {
+  if (CGM.getContext().getTargetNullPointerValue(QT) == 0)
+    return llvm::ConstantPointerNull::get(PT);
+
+  auto &Ctx = CGM.getContext();
+  auto NPT = llvm::PointerType::get(PT->getElementType(),
+      Ctx.getTargetAddressSpace(LangAS::opencl_generic));
+  return llvm::ConstantExpr::getAddrSpaceCast(
+      llvm::ConstantPointerNull::get(NPT), PT);
 }
 
 //===----------------------------------------------------------------------===//
@@ -7778,8 +7835,10 @@ void SPIRTargetCodeGenInfo::emitTargetMD(const Decl *D, llvm::GlobalValue *GV,
   // SPIR v2.0 s2.12 - The SPIR version used by the module is stored in the
   // opencl.spir.version named metadata.
   llvm::Metadata *SPIRVerElts[] = {
-      llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(Int32Ty, 2)),
-      llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(Int32Ty, 0))};
+      llvm::ConstantAsMetadata::get(
+          llvm::ConstantInt::get(Int32Ty, CGM.getLangOpts().OpenCLVersion / 100)),
+      llvm::ConstantAsMetadata::get(llvm::ConstantInt::get(
+          Int32Ty, (CGM.getLangOpts().OpenCLVersion / 100 > 1) ? 0 : 2))};
   llvm::NamedMDNode *SPIRVerMD =
       M.getOrInsertNamedMetadata("opencl.spir.version");
   SPIRVerMD->addOperand(llvm::MDNode::get(Ctx, SPIRVerElts));

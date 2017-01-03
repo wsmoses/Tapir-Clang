@@ -266,6 +266,8 @@ def MF : JoinedOrSeparate<["-"], "MF">, Group<M_Group>,
     MetaVarName<"<file>">;
 def MG : Flag<["-"], "MG">, Group<M_Group>, Flags<[CC1Option]>,
     HelpText<"Add missing headers to depfile">;
+def MJ : JoinedOrSeparate<["-"], "MJ">, Group<M_Group>,
+    HelpText<"Write a compilation database entry per input">;
 def MP : Flag<["-"], "MP">, Group<M_Group>, Flags<[CC1Option]>,
     HelpText<"Create phony target for each dependency (other than main file)">;
 def MQ : JoinedOrSeparate<["-"], "MQ">, Group<M_Group>, Flags<[CC1Option]>,
@@ -412,6 +414,9 @@ def cuda_compile_host_device : Flag<["--"], "cuda-compile-host-device">,
            "effect on non-CUDA compilations.">;
 def cuda_gpu_arch_EQ : Joined<["--"], "cuda-gpu-arch=">, Flags<[DriverOption]>,
   HelpText<"CUDA GPU architecture (e.g. sm_35).  May be specified more than once.">;
+def no_cuda_gpu_arch_EQ : Joined<["--"], "no-cuda-gpu-arch=">, Flags<[DriverOption]>,
+  HelpText<"Remove GPU architecture (e.g. sm_35) from the list of GPUs to compile for. "
+           "'all' resets the list to its default value.">;
 def cuda_noopt_device_debug : Flag<["--"], "cuda-noopt-device-debug">,
   HelpText<"Enable device-side debug info generation. Disables ptxas optimizations.">;
 def no_cuda_version_check : Flag<["--"], "no-cuda-version-check">,
@@ -420,6 +425,8 @@ def no_cuda_version_check : Flag<["--"], "no-cuda-version-check">,
 def no_cuda_noopt_device_debug : Flag<["--"], "no-cuda-noopt-device-debug">;
 def cuda_path_EQ : Joined<["--"], "cuda-path=">, Group<i_Group>,
   HelpText<"CUDA installation path">;
+def ptxas_path_EQ : Joined<["--"], "ptxas-path=">, Group<i_Group>,
+  HelpText<"Path to ptxas (used for compiling CUDA code)">;
 def fcuda_flush_denormals_to_zero : Flag<["-"], "fcuda-flush-denormals-to-zero">,
   Flags<[CC1Option]>, HelpText<"Flush denormal floating point values to zero in CUDA device mode.">;
 def fno_cuda_flush_denormals_to_zero : Flag<["-"], "fno-cuda-flush-denormals-to-zero">;
@@ -510,15 +517,15 @@ def fprofile_sample_use_EQ : Joined<["-"], "fprofile-sample-use=">,
 def fauto_profile_EQ : Joined<["-"], "fauto-profile=">,
     Alias<fprofile_sample_use_EQ>;
 def fprofile_instr_generate : Flag<["-"], "fprofile-instr-generate">,
-    Group<f_Group>, Flags<[DriverOption]>,
+    Group<f_Group>, Flags<[CoreOption]>,
     HelpText<"Generate instrumented code to collect execution counts into default.profraw file (overriden by '=' form of option or LLVM_PROFILE_FILE env var)">;
 def fprofile_instr_generate_EQ : Joined<["-"], "fprofile-instr-generate=">,
-    Group<f_Group>, Flags<[DriverOption]>, MetaVarName<"<file>">,
+    Group<f_Group>, Flags<[CoreOption]>, MetaVarName<"<file>">,
     HelpText<"Generate instrumented code to collect execution counts into <file> (overridden by LLVM_PROFILE_FILE env var)">;
 def fprofile_instr_use : Flag<["-"], "fprofile-instr-use">, Group<f_Group>,
-    Flags<[DriverOption]>;
+    Flags<[CoreOption]>;
 def fprofile_instr_use_EQ : Joined<["-"], "fprofile-instr-use=">,
-    Group<f_Group>, Flags<[DriverOption]>,
+    Group<f_Group>, Flags<[CoreOption]>,
     HelpText<"Use instrumentation data for profile-guided optimization">;
 def fcoverage_mapping : Flag<["-"], "fcoverage-mapping">,
     Group<f_Group>, Flags<[CC1Option]>,
@@ -819,6 +826,9 @@ def finline_functions : Flag<["-"], "finline-functions">, Group<f_clang_Group>, 
 def finline_hint_functions: Flag<["-"], "finline-hint-functions">, Group<f_clang_Group>, Flags<[CC1Option]>,
   HelpText<"Inline functions wich are (explicitly or implicitly) marked inline">;
 def finline : Flag<["-"], "finline">, Group<clang_ignored_f_Group>;
+def fexperimental_new_pass_manager : Flag<["-"], "fexperimental-new-pass-manager">,
+  Group<f_clang_Group>, Flags<[CC1Option]>,
+  HelpText<"Enables an experimental new pass manager in LLVM.">;
 def finput_charset_EQ : Joined<["-"], "finput-charset=">, Group<f_Group>;
 def fexec_charset_EQ : Joined<["-"], "fexec-charset=">, Group<f_Group>;
 def finstrument_functions : Flag<["-"], "finstrument-functions">, Group<f_Group>, Flags<[CC1Option]>,
@@ -999,6 +1009,9 @@ def fno_exceptions : Flag<["-"], "fno-exceptions">, Group<f_Group>;
 def fno_gnu_keywords : Flag<["-"], "fno-gnu-keywords">, Group<f_Group>, Flags<[CC1Option]>;
 def fno_inline_functions : Flag<["-"], "fno-inline-functions">, Group<f_clang_Group>, Flags<[CC1Option]>;
 def fno_inline : Flag<["-"], "fno-inline">, Group<f_clang_Group>, Flags<[CC1Option]>;
+def fno_experimental_new_pass_manager : Flag<["-"], "fno-experimental-new-pass-manager">,
+  Group<f_clang_Group>, Flags<[CC1Option]>,
+  HelpText<"Disables an experimental new pass manager in LLVM.">;
 def fveclib : Joined<["-"], "fveclib=">, Group<f_Group>, Flags<[CC1Option]>,
     HelpText<"Use the given vector functions library">;
 def fno_lax_vector_conversions : Flag<["-"], "fno-lax-vector-conversions">, Group<f_Group>,
@@ -1096,10 +1109,6 @@ def : Flag<["-"], "faligned-new">, Alias<faligned_allocation>;
 def : Flag<["-"], "fno-aligned-new">, Alias<fno_aligned_allocation>;
 def faligned_new_EQ : Joined<["-"], "faligned-new=">;
 
-def fobjc_gc_only : Flag<["-"], "fobjc-gc-only">, Group<f_Group>, Flags<[CC1Option]>,
-  HelpText<"Use GC exclusively for Objective-C related memory management">;
-def fobjc_gc : Flag<["-"], "fobjc-gc">, Group<f_Group>, Flags<[CC1Option]>,
-  HelpText<"Enable Objective-C garbage collection">;
 def fobjc_legacy_dispatch : Flag<["-"], "fobjc-legacy-dispatch">, Group<f_Group>;
 def fobjc_new_property : Flag<["-"], "fobjc-new-property">, Group<clang_ignored_f_Group>;
 def fobjc_infer_related_result_type : Flag<["-"], "fobjc-infer-related-result-type">,
@@ -1460,6 +1469,12 @@ def mlong_calls : Flag<["-"], "mlong-calls">, Group<m_Group>,
   HelpText<"Generate branches with extended addressability, usually via indirect jumps.">;
 def mno_long_calls : Flag<["-"], "mno-long-calls">, Group<m_Group>,
   HelpText<"Restore the default behaviour of not generating long calls">;
+def mexecute_only : Flag<["-"], "mexecute-only">, Group<m_arm_Features_Group>,
+  HelpText<"Disallow generation of data access to code sections (ARM only)">;
+def mno_execute_only : Flag<["-"], "mno-execute-only">, Group<m_arm_Features_Group>,
+  HelpText<"Allow generation of data access to code sections (ARM only)">;
+def mpure_code : Flag<["-"], "mpure-code">, Alias<mexecute_only>; // Alias for GCC compatibility
+def mno_pure_code : Flag<["-"], "mno-pure-code">, Alias<mno_execute_only>;
 def mtvos_version_min_EQ : Joined<["-"], "mtvos-version-min=">, Group<m_Group>;
 def mappletvos_version_min_EQ : Joined<["-"], "mappletvos-version-min=">, Alias<mtvos_version_min_EQ>;
 def mtvos_simulator_version_min_EQ : Joined<["-"], "mtvos-simulator-version-min=">, Alias<mtvos_version_min_EQ>;
@@ -1859,7 +1874,8 @@ def mno_odd_spreg : Flag<["-"], "mno-odd-spreg">, Group<m_Group>,
   Flags<[HelpHidden]>;
 def mglibc : Flag<["-"], "mglibc">, Group<m_libc_Group>, Flags<[HelpHidden]>;
 def muclibc : Flag<["-"], "muclibc">, Group<m_libc_Group>, Flags<[HelpHidden]>;
-def module_file_info : Flag<["-"], "module-file-info">, Flags<[DriverOption,CC1Option]>, Group<Action_Group>;
+def module_file_info : Flag<["-"], "module-file-info">, Flags<[DriverOption,CC1Option]>, Group<Action_Group>,
+  HelpText<"Provide information about a particular module file">;
 def mthumb : Flag<["-"], "mthumb">, Group<m_Group>;
 def mtune_EQ : Joined<["-"], "mtune=">, Group<m_Group>;
 def multi__module : Flag<["-"], "multi_module">;

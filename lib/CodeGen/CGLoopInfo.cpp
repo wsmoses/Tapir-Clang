@@ -28,6 +28,7 @@ static MDNode *createMetadata(LLVMContext &Ctx, const LoopAttributes &Attrs,
       Attrs.VectorizeEnable == LoopAttributes::Unspecified &&
       Attrs.UnrollEnable == LoopAttributes::Unspecified &&
       Attrs.DistributeEnable == LoopAttributes::Unspecified &&
+      Attrs.SpawnStrategy == LoopAttributes::Sequential &&
       !StartLoc && !EndLoc)
     return nullptr;
 
@@ -127,8 +128,8 @@ void LoopAttributes::clear() {
   UnrollCount = 0;
   VectorizeEnable = LoopAttributes::Unspecified;
   UnrollEnable = LoopAttributes::Unspecified;
-  SpawnStrategy = LoopAttributes::Sequential;
   DistributeEnable = LoopAttributes::Unspecified;
+  SpawnStrategy = LoopAttributes::Sequential;
 }
 
 LoopInfo::LoopInfo(BasicBlock *Header, const LoopAttributes &Attrs,
