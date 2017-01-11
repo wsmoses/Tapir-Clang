@@ -1187,8 +1187,7 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
   if (S.getInit())
     EmitStmt(S.getInit());
 
-  const Expr *Cond = S.getCond();
-  assert(Cond && "_Cilk_for loop has no condition");
+  assert(S.getCond() && "_Cilk_for loop has no condition");
 
   // Start the loop with a block that tests the condition.
   // If there's an increment, the continue scope will be overwritten
@@ -1255,16 +1254,13 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
     EmitBlock(DetachBlock);
     Builder.CreateDetach(ForBody, Continue.getBlock());
 
-
-  llvm::Value *Undef = llvm::UndefValue::get(Int32Ty);
-  AllocaInsertPt = new llvm::BitCastInst(Undef, Int32Ty, "", ForBody);
-//  if (Builder.isNamePreserving())
-//    AllocaInsertPt->setName("detallocapt");
-
+    llvm::Value *Undef = llvm::UndefValue::get(Int32Ty);
+    AllocaInsertPt = new llvm::BitCastInst(Undef, Int32Ty, "", ForBody);
+    // if (Builder.isNamePreserving())
+    //   AllocaInsertPt->setName("detallocapt");
 
     EmitBlock(ForBody);
   }
-
   incrementProfileCounter(&S);
 
   {
