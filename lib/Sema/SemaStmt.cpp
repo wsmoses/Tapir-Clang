@@ -2798,6 +2798,7 @@ static Expr *GetCilkForStride(Sema &S, llvm::SmallPtrSetImpl<VarDecl *> &Decls,
     if (!(DeclUseInLHS && !DeclUseInRHS))
       return nullptr;
 
+    // TODO: Check this.
     switch(CAO->getOpcode()) {
     default: return nullptr;
     case BO_AddAssign:
