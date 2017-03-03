@@ -14,6 +14,7 @@
 #include "clang/Frontend/CodeGenOptions.h"
 #include "clang/Frontend/FrontendDiagnostic.h"
 #include "clang/Frontend/Utils.h"
+#include "clang/Lex/HeaderSearchOptions.h"
 #include "llvm/ADT/SmallSet.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
@@ -32,6 +33,7 @@
 #include "llvm/IR/ModuleSummaryIndex.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/LTO/LTOBackend.h"
+#include "llvm/MC/MCAsmInfo.h"
 #include "llvm/MC/SubtargetFeature.h"
 #include "llvm/Object/ModuleSummaryIndexObjectFile.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -59,8 +61,12 @@ using namespace llvm;
 
 namespace {
 
+// Default filename used for profile generation.
+static constexpr StringLiteral DefaultProfileGenName = "default_%m.profraw";
+
 class EmitAssemblyHelper {
   DiagnosticsEngine &Diags;
+  const HeaderSearchOptions &HSOpts;
   const CodeGenOptions &CodeGenOpts;
   const clang::TargetOptions &TargetOpts;
   const LangOptions &LangOpts;
@@ -70,7 +76,6 @@ class EmitAssemblyHelper {
 
   std::unique_ptr<raw_pwrite_stream> OS;
 
-private:
   TargetIRAnalysis getTargetIRAnalysis() const {
     if (TM)
       return TM->getTargetIRAnalysis();
@@ -100,11 +105,14 @@ private:
                      raw_pwrite_stream &OS);
 
 public:
-  EmitAssemblyHelper(DiagnosticsEngine &_Diags, const CodeGenOptions &CGOpts,
+  EmitAssemblyHelper(DiagnosticsEngine &_Diags,
+                     const HeaderSearchOptions &HeaderSearchOpts,
+                     const CodeGenOptions &CGOpts,
                      const clang::TargetOptions &TOpts,
                      const LangOptions &LOpts, Module *M)
-      : Diags(_Diags), CodeGenOpts(CGOpts), TargetOpts(TOpts), LangOpts(LOpts),
-        TheModule(M), CodeGenerationTime("codegen", "Code Generation Time") {}
+      : Diags(_Diags), HSOpts(HeaderSearchOpts), CodeGenOpts(CGOpts),
+        TargetOpts(TOpts), LangOpts(LOpts), TheModule(M),
+        CodeGenerationTime("codegen", "Code Generation Time") {}
 
   ~EmitAssemblyHelper() {
     if (CodeGenOpts.DisableFree)
@@ -262,7 +270,7 @@ static TargetLibraryInfoImpl *createTLII(llvm::Triple &TargetTriple,
     TLII->disableAllFunctions();
   else {
     // Disable individual libc/libm calls in TargetLibraryInfo.
-    LibFunc::Func F;
+    LibFunc F;
     for (auto &FuncName : CodeGenOpts.getNoBuiltinFuncs())
       if (TLII->getLibFunc(FuncName, F))
         TLII->setUnavailable(F);
@@ -312,7 +320,8 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   // At O0 and O1 we only run the always inliner which is more efficient. At
   // higher optimization levels we run the normal inliner.
   if (CodeGenOpts.OptimizationLevel <= 1) {
-    bool InsertLifetimeIntrinsics = CodeGenOpts.OptimizationLevel != 0;
+    bool InsertLifetimeIntrinsics = (CodeGenOpts.OptimizationLevel != 0 &&
+                                     !CodeGenOpts.DisableLifetimeMarkers);
     PMBuilder.Inliner = createAlwaysInlinerLegacyPass(InsertLifetimeIntrinsics);
   } else {
     PMBuilder.Inliner = createFunctionInliningPass(
@@ -337,13 +346,8 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
 
   MPM.add(new TargetLibraryInfoWrapperPass(*TLII));
 
-  // Add target-specific passes that need to run as early as possible.
   if (TM)
-    PMBuilder.addExtension(
-        PassManagerBuilder::EP_EarlyAsPossible,
-        [&](const PassManagerBuilder &, legacy::PassManagerBase &PM) {
-          TM->addEarlyAsPossiblePasses(PM);
-        });
+    TM->adjustPassManager(PMBuilder);
 
   PMBuilder.addExtension(PassManagerBuilder::EP_EarlyAsPossible,
                          addAddDiscriminatorsPass);
@@ -472,7 +476,7 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
     if (!CodeGenOpts.InstrProfileOutput.empty())
       PMBuilder.PGOInstrGen = CodeGenOpts.InstrProfileOutput;
     else
-      PMBuilder.PGOInstrGen = "default_%m.profraw";
+      PMBuilder.PGOInstrGen = DefaultProfileGenName;
   }
   if (CodeGenOpts.hasProfileIRUse())
     PMBuilder.PGOInstrUse = CodeGenOpts.ProfileInstrumentUsePath;
@@ -538,11 +542,22 @@ void EmitAssemblyHelper::CreateTargetMachine(bool MustCreateTM) {
            .Case("dynamic-no-pic", llvm::Reloc::DynamicNoPIC);
   assert(RM.hasValue() && "invalid PIC model!");
 
-  CodeGenOpt::Level OptLevel = CodeGenOpt::Default;
+  CodeGenOpt::Level OptLevel;
   switch (CodeGenOpts.OptimizationLevel) {
-  default: break;
-  case 0: OptLevel = CodeGenOpt::None; break;
-  case 3: OptLevel = CodeGenOpt::Aggressive; break;
+  default:
+    llvm_unreachable("Invalid optimization level!");
+  case 0:
+    OptLevel = CodeGenOpt::None;
+    break;
+  case 1:
+    OptLevel = CodeGenOpt::Less;
+    break;
+  case 2:
+    OptLevel = CodeGenOpt::Default;
+    break; // O2/Os/Oz
+  case 3:
+    OptLevel = CodeGenOpt::Aggressive;
+    break;
   }
 
   llvm::TargetOptions Options;
@@ -609,12 +624,18 @@ void EmitAssemblyHelper::CreateTargetMachine(bool MustCreateTM) {
   Options.MCOptions.MCNoExecStack = CodeGenOpts.NoExecStack;
   Options.MCOptions.MCIncrementalLinkerCompatible =
       CodeGenOpts.IncrementalLinkerCompatible;
-  Options.MCOptions.MCPIECopyRelocations =
-      CodeGenOpts.PIECopyRelocations;
+  Options.MCOptions.MCPIECopyRelocations = CodeGenOpts.PIECopyRelocations;
   Options.MCOptions.MCFatalWarnings = CodeGenOpts.FatalWarnings;
   Options.MCOptions.AsmVerbose = CodeGenOpts.AsmVerbose;
   Options.MCOptions.PreserveAsmComments = CodeGenOpts.PreserveAsmComments;
   Options.MCOptions.ABIName = TargetOpts.ABI;
+  for (const auto &Entry : HSOpts.UserEntries)
+    if (!Entry.IsFramework &&
+        (Entry.Group == frontend::IncludeDirGroup::Quoted ||
+         Entry.Group == frontend::IncludeDirGroup::Angled ||
+         Entry.Group == frontend::IncludeDirGroup::System))
+      Options.MCOptions.IASSearchPaths.push_back(
+          Entry.IgnoreSysRoot ? Entry.Path : HSOpts.Sysroot + Entry.Path);
 
   TM.reset(TheTarget->createTargetMachine(Triple, TargetOpts.CPU, FeaturesStr,
                                           Options, RM, CM, OptLevel));
@@ -689,9 +710,11 @@ void EmitAssemblyHelper::EmitAssembly(BackendAction Action,
     break;
 
   case Backend_EmitBC:
-    PerModulePasses.add(createBitcodeWriterPass(
-        *OS, CodeGenOpts.EmitLLVMUseLists, CodeGenOpts.EmitSummaryIndex,
-        CodeGenOpts.EmitSummaryIndex));
+    if (CodeGenOpts.EmitSummaryIndex)
+      PerModulePasses.add(createWriteThinLTOBitcodePass(*OS));
+    else
+      PerModulePasses.add(
+          createBitcodeWriterPass(*OS, CodeGenOpts.EmitLLVMUseLists));
     break;
 
   case Backend_EmitLL:
@@ -780,7 +803,24 @@ void EmitAssemblyHelper::EmitAssemblyWithNewPassManager(
     return;
   TheModule->setDataLayout(TM->createDataLayout());
 
-  PassBuilder PB(TM.get());
+  PGOOptions PGOOpt;
+
+  // -fprofile-generate.
+  PGOOpt.RunProfileGen = CodeGenOpts.hasProfileIRInstr();
+  if (PGOOpt.RunProfileGen)
+    PGOOpt.ProfileGenFile = CodeGenOpts.InstrProfileOutput.empty() ?
+      DefaultProfileGenName : CodeGenOpts.InstrProfileOutput;
+
+  // -fprofile-use.
+  if (CodeGenOpts.hasProfileIRUse())
+    PGOOpt.ProfileUseFile = CodeGenOpts.ProfileInstrumentUsePath;
+
+  // Only pass a PGO options struct if -fprofile-generate or
+  // -fprofile-use were passed on the cmdline.
+  PassBuilder PB(TM.get(),
+    (PGOOpt.RunProfileGen ||
+      !PGOOpt.ProfileUseFile.empty()) ?
+        Optional<PGOOptions>(PGOOpt) : None);
 
   LoopAnalysisManager LAM;
   FunctionAnalysisManager FAM;
@@ -862,21 +902,26 @@ void EmitAssemblyHelper::EmitAssemblyWithNewPassManager(
   }
 }
 
-static void runThinLTOBackend(const CodeGenOptions &CGOpts, Module *M,
-                              std::unique_ptr<raw_pwrite_stream> OS) {
-  // If we are performing a ThinLTO importing compile, load the function index
-  // into memory and pass it into thinBackend, which will run the function
-  // importer and invoke LTO passes.
-  Expected<std::unique_ptr<ModuleSummaryIndex>> IndexOrErr =
-      llvm::getModuleSummaryIndexForFile(CGOpts.ThinLTOIndexFile);
-  if (!IndexOrErr) {
-    logAllUnhandledErrors(IndexOrErr.takeError(), errs(),
-                          "Error loading index file '" +
-                              CGOpts.ThinLTOIndexFile + "': ");
-    return;
-  }
-  std::unique_ptr<ModuleSummaryIndex> CombinedIndex = std::move(*IndexOrErr);
+Expected<BitcodeModule> clang::FindThinLTOModule(MemoryBufferRef MBRef) {
+  Expected<std::vector<BitcodeModule>> BMsOrErr = getBitcodeModuleList(MBRef);
+  if (!BMsOrErr)
+    return BMsOrErr.takeError();
 
+  // The bitcode file may contain multiple modules, we want the one with a
+  // summary.
+  for (BitcodeModule &BM : *BMsOrErr) {
+    Expected<bool> HasSummary = BM.hasSummary();
+    if (HasSummary && *HasSummary)
+      return BM;
+  }
+
+  return make_error<StringError>("Could not find module summary",
+                                 inconvertibleErrorCode());
+}
+
+static void runThinLTOBackend(ModuleSummaryIndex *CombinedIndex, Module *M,
+                              std::unique_ptr<raw_pwrite_stream> OS,
+                              std::string SampleProfile) {
   StringMap<std::map<GlobalValue::GUID, GlobalValueSummary *>>
       ModuleToDefinedGVSummaries;
   CombinedIndex->collectDefinedGVSummariesPerModule(ModuleToDefinedGVSummaries);
@@ -911,32 +956,15 @@ static void runThinLTOBackend(const CodeGenOptions &CGOpts, Module *M,
       return;
     }
 
-    Expected<std::vector<BitcodeModule>> BMsOrErr =
-        getBitcodeModuleList(**MBOrErr);
-    if (!BMsOrErr) {
-      handleAllErrors(BMsOrErr.takeError(), [&](ErrorInfoBase &EIB) {
+    Expected<BitcodeModule> BMOrErr = FindThinLTOModule(**MBOrErr);
+    if (!BMOrErr) {
+      handleAllErrors(BMOrErr.takeError(), [&](ErrorInfoBase &EIB) {
         errs() << "Error loading imported file '" << I.first()
                << "': " << EIB.message() << '\n';
       });
       return;
     }
-
-    // The bitcode file may contain multiple modules, we want the one with a
-    // summary.
-    bool FoundModule = false;
-    for (BitcodeModule &BM : *BMsOrErr) {
-      Expected<bool> HasSummary = BM.hasSummary();
-      if (HasSummary && *HasSummary) {
-        ModuleMap.insert({I.first(), BM});
-        FoundModule = true;
-        break;
-      }
-    }
-    if (!FoundModule) {
-      errs() << "Error loading imported file '" << I.first()
-             << "': Could not find module summary\n";
-      return;
-    }
+    ModuleMap.insert({I.first(), *BMOrErr});
 
     OwnedImports.push_back(std::move(*MBOrErr));
   }
@@ -944,6 +972,7 @@ static void runThinLTOBackend(const CodeGenOptions &CGOpts, Module *M,
     return llvm::make_unique<lto::NativeObjectStream>(std::move(OS));
   };
   lto::Config Conf;
+  Conf.SampleProfile = SampleProfile;
   if (Error E = thinBackend(
           Conf, 0, AddStream, *M, *CombinedIndex, ImportList,
           ModuleToDefinedGVSummaries[M->getModuleIdentifier()], ModuleMap)) {
@@ -954,17 +983,38 @@ static void runThinLTOBackend(const CodeGenOptions &CGOpts, Module *M,
 }
 
 void clang::EmitBackendOutput(DiagnosticsEngine &Diags,
+                              const HeaderSearchOptions &HeaderOpts,
                               const CodeGenOptions &CGOpts,
                               const clang::TargetOptions &TOpts,
-                              const LangOptions &LOpts, const llvm::DataLayout &TDesc,
-                              Module *M, BackendAction Action,
+                              const LangOptions &LOpts,
+                              const llvm::DataLayout &TDesc, Module *M,
+                              BackendAction Action,
                               std::unique_ptr<raw_pwrite_stream> OS) {
   if (!CGOpts.ThinLTOIndexFile.empty()) {
-    runThinLTOBackend(CGOpts, M, std::move(OS));
-    return;
+    // If we are performing a ThinLTO importing compile, load the function index
+    // into memory and pass it into runThinLTOBackend, which will run the
+    // function importer and invoke LTO passes.
+    Expected<std::unique_ptr<ModuleSummaryIndex>> IndexOrErr =
+        llvm::getModuleSummaryIndexForFile(CGOpts.ThinLTOIndexFile);
+    if (!IndexOrErr) {
+      logAllUnhandledErrors(IndexOrErr.takeError(), errs(),
+                            "Error loading index file '" +
+                            CGOpts.ThinLTOIndexFile + "': ");
+      return;
+    }
+    std::unique_ptr<ModuleSummaryIndex> CombinedIndex = std::move(*IndexOrErr);
+    // A null CombinedIndex means we should skip ThinLTO compilation
+    // (LLVM will optionally ignore empty index files, returning null instead
+    // of an error).
+    bool DoThinLTOBackend = CombinedIndex != nullptr;
+    if (DoThinLTOBackend) {
+      runThinLTOBackend(CombinedIndex.get(), M, std::move(OS),
+                        CGOpts.SampleProfileFile);
+      return;
+    }
   }
 
-  EmitAssemblyHelper AsmHelper(Diags, CGOpts, TOpts, LOpts, M);
+  EmitAssemblyHelper AsmHelper(Diags, HeaderOpts, CGOpts, TOpts, LOpts, M);
 
   if (CGOpts.ExperimentalNewPassManager)
     AsmHelper.EmitAssemblyWithNewPassManager(Action, std::move(OS));
@@ -990,6 +1040,7 @@ static const char* getSectionNameForBitcode(const Triple &T) {
     return "__LLVM,__bitcode";
   case Triple::COFF:
   case Triple::ELF:
+  case Triple::Wasm:
   case Triple::UnknownObjectFormat:
     return ".llvmbc";
   }
@@ -1002,6 +1053,7 @@ static const char* getSectionNameForCommandline(const Triple &T) {
     return "__LLVM,__cmdline";
   case Triple::COFF:
   case Triple::ELF:
+  case Triple::Wasm:
   case Triple::UnknownObjectFormat:
     return ".llvmcmd";
   }

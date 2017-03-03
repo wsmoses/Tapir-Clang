@@ -477,3 +477,13 @@
 // CHECK-NEW-PM-NOT: -fno-experimental-new-pass-manager
 // CHECK-NO-NEW-PM: -fno-experimental-new-pass-manager
 // CHECK-NO-NEW-PM-NOT: -fexperimental-new-pass-manager
+
+// RUN: %clang -### -S -fstrict-return %s 2>&1 | FileCheck -check-prefix=CHECK-STRICT-RETURN %s
+// RUN: %clang -### -S -fno-strict-return %s 2>&1 | FileCheck -check-prefix=CHECK-NO-STRICT-RETURN %s
+// CHECK-STRICT-RETURN-NOT: "-fno-strict-return"
+// CHECK-NO-STRICT-RETURN: "-fno-strict-return"
+
+// RUN: %clang -### -S -fno-debug-info-for-profiling -fdebug-info-for-profiling %s 2>&1 | FileCheck -check-prefix=CHECK-PROFILE-DEBUG %s
+// RUN: %clang -### -S -fdebug-info-for-profiling -fno-debug-info-for-profiling %s 2>&1 | FileCheck -check-prefix=CHECK-NO-PROFILE-DEBUG %s
+// CHECK-PROFILE-DEBUG: -fdebug-info-for-profiling
+// CHECK-NO-PROFILE-DEBUG-NOT: -fdebug-info-for-profiling

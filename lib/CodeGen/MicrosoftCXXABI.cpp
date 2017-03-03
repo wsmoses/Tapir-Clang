@@ -1554,7 +1554,7 @@ void MicrosoftCXXABI::EmitDestructorCall(CodeGenFunction &CGF,
 void MicrosoftCXXABI::emitVTableTypeMetadata(const VPtrInfo &Info,
                                              const CXXRecordDecl *RD,
                                              llvm::GlobalVariable *VTable) {
-  if (!CGM.getCodeGenOpts().PrepareForLTO)
+  if (!CGM.getCodeGenOpts().LTOUnit)
     return;
 
   // The location of the first virtual function pointer in the virtual table,
@@ -3536,7 +3536,7 @@ llvm::GlobalVariable *MSRTTIBuilder::getClassHierarchyDescriptor() {
 
   // Initialize the base class ClassHierarchyDescriptor.
   llvm::Constant *Fields[] = {
-      llvm::ConstantInt::get(CGM.IntTy, 0), // Unknown
+      llvm::ConstantInt::get(CGM.IntTy, 0), // reserved by the runtime
       llvm::ConstantInt::get(CGM.IntTy, Flags),
       llvm::ConstantInt::get(CGM.IntTy, Classes.size()),
       ABI.getImageRelativeConstant(llvm::ConstantExpr::getInBoundsGetElementPtr(

@@ -283,6 +283,7 @@ void OMPClauseProfiler::VistOMPClauseWithPostUpdate(
 }
 
 void OMPClauseProfiler::VisitOMPIfClause(const OMPIfClause *C) {
+  VistOMPClauseWithPreInit(C);
   if (C->getCondition())
     Profiler->VisitStmt(C->getCondition());
 }
@@ -293,6 +294,7 @@ void OMPClauseProfiler::VisitOMPFinalClause(const OMPFinalClause *C) {
 }
 
 void OMPClauseProfiler::VisitOMPNumThreadsClause(const OMPNumThreadsClause *C) {
+  VistOMPClauseWithPreInit(C);
   if (C->getNumThreads())
     Profiler->VisitStmt(C->getNumThreads());
 }
@@ -495,11 +497,13 @@ void OMPClauseProfiler::VisitOMPMapClause(const OMPMapClause *C) {
   VisitOMPClauseList(C);
 }
 void OMPClauseProfiler::VisitOMPNumTeamsClause(const OMPNumTeamsClause *C) {
+  VistOMPClauseWithPreInit(C);
   if (C->getNumTeams())
     Profiler->VisitStmt(C->getNumTeams());
 }
 void OMPClauseProfiler::VisitOMPThreadLimitClause(
     const OMPThreadLimitClause *C) {
+  VistOMPClauseWithPreInit(C);
   if (C->getThreadLimit())
     Profiler->VisitStmt(C->getThreadLimit());
 }
@@ -760,6 +764,16 @@ void StmtProfiler::VisitOMPTargetTeamsDistributeDirective(
 
 void StmtProfiler::VisitOMPTargetTeamsDistributeParallelForDirective(
     const OMPTargetTeamsDistributeParallelForDirective *S) {
+  VisitOMPLoopDirective(S);
+}
+
+void StmtProfiler::VisitOMPTargetTeamsDistributeParallelForSimdDirective(
+    const OMPTargetTeamsDistributeParallelForSimdDirective *S) {
+  VisitOMPLoopDirective(S);
+}
+
+void StmtProfiler::VisitOMPTargetTeamsDistributeSimdDirective(
+    const OMPTargetTeamsDistributeSimdDirective *S) {
   VisitOMPLoopDirective(S);
 }
 

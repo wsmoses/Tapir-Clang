@@ -1886,7 +1886,7 @@ Sema::ActOnObjCForCollectionStmt(SourceLocation ForLoc,
 
         D->setType(FirstType);
 
-        if (ActiveTemplateInstantiations.empty()) {
+        if (!inTemplateInstantiation()) {
           SourceLocation Loc =
               D->getTypeSourceInfo()->getTypeLoc().getBeginLoc();
           Diag(Loc, diag::warn_auto_var_is_id)
@@ -1957,8 +1957,7 @@ static bool FinishForRangeVarDecl(Sema &SemaRef, VarDecl *Decl, Expr *Init,
       SemaRef.inferObjCARCLifetime(Decl))
     Decl->setInvalidDecl();
 
-  SemaRef.AddInitializerToDecl(Decl, Init, /*DirectInit=*/false,
-                               /*TypeMayContainAuto=*/false);
+  SemaRef.AddInitializerToDecl(Decl, Init, /*DirectInit=*/false);
   SemaRef.FinalizeDeclaration(Decl);
   SemaRef.CurContext->addHiddenDecl(Decl);
   return false;
@@ -2081,8 +2080,7 @@ StmtResult Sema::ActOnCXXForRangeStmt(Scope *S, SourceLocation ForLoc,
 
   // Claim the type doesn't contain auto: we've already done the checking.
   DeclGroupPtrTy RangeGroup =
-      BuildDeclaratorGroup(MutableArrayRef<Decl *>((Decl **)&RangeVar, 1),
-                           /*TypeMayContainAuto=*/ false);
+      BuildDeclaratorGroup(MutableArrayRef<Decl *>((Decl **)&RangeVar, 1));
   StmtResult RangeDecl = ActOnDeclStmt(RangeGroup, RangeLoc, RangeLoc);
   if (RangeDecl.isInvalid()) {
     LoopVar->setInvalidDecl();
@@ -2484,8 +2482,7 @@ Sema::BuildCXXForRangeStmt(SourceLocation ForLoc, SourceLocation CoawaitLoc,
     // Attach  *__begin  as initializer for VD. Don't touch it if we're just
     // trying to determine whether this would be a valid range.
     if (!LoopVar->isInvalidDecl() && Kind != BFRK_Check) {
-      AddInitializerToDecl(LoopVar, DerefExpr.get(), /*DirectInit=*/false,
-                           /*TypeMayContainAuto=*/true);
+      AddInitializerToDecl(LoopVar, DerefExpr.get(), /*DirectInit=*/false);
       if (LoopVar->isInvalidDecl())
         NoteForRangeBeginEndFunction(*this, BeginExpr.get(), BEF_begin);
     }
@@ -2937,22 +2934,20 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
   // Add declaration to store the old loop var initialization.
   VarDecl *InitVar = BuildForRangeVarDecl(*this, CilkForLoc, LoopVarTy,
                                            "__init");
-  AddInitializerToDecl(InitVar, LoopVarInit,
-                       /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
+  AddInitializerToDecl(InitVar, LoopVarInit, /*DirectInit=*/false);
   FinalizeDeclaration(InitVar);
   CurContext->addHiddenDecl(InitVar);
   // Add declaration for new beginning loop control variable.
   VarDecl *BeginVar = BuildForRangeVarDecl(*this, CilkForLoc, LoopVarTy,
                                            "__begin");
   AddInitializerToDecl(BeginVar, ActOnIntegerConstant(CilkForLoc, 0).get(),
-                       /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
+                       /*DirectInit=*/false);
   FinalizeDeclaration(BeginVar);
   CurContext->addHiddenDecl(BeginVar);
   // Add declaration for new end loop control variable.
   VarDecl *EndVar = BuildForRangeVarDecl(*this, CilkForLoc, LoopVarTy,
                                          "__end");
-  AddInitializerToDecl(EndVar, NewLimit.get(), /*DirectInit=*/false,
-                       /*TypeMayContainAuto=*/false);
+  AddInitializerToDecl(EndVar, NewLimit.get(), /*DirectInit=*/false);
   FinalizeDeclaration(EndVar);
   CurContext->addHiddenDecl(EndVar);
 
@@ -2961,8 +2956,7 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
   NewDecls.push_back(InitVar);
   NewDecls.push_back(BeginVar);
   NewDecls.push_back(EndVar);
-  DeclGroupPtrTy DG = BuildDeclaratorGroup(MutableArrayRef<Decl *>(NewDecls),
-                                           /*TypeMayContainAuto=*/false);
+  DeclGroupPtrTy DG = BuildDeclaratorGroup(MutableArrayRef<Decl *>(NewDecls));
   StmtResult NewInit = ActOnDeclStmt(DG, CilkForLoc, CilkForLoc);
   if (NewInit.isInvalid())
     return StmtError();
@@ -3007,8 +3001,7 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
     BuildBinOp(S, CilkForLoc, BO_Add, InitRef.get(),
                BuildBinOp(S, CilkForLoc, BO_Mul,
                           BeginRef.get(), Stride).get());
-  AddInitializerToDecl(LoopVar, NewLoopVarInit.get(),
-                       /*DirectInit=*/false, /*TypeMayContainAuto=*/false);
+  AddInitializerToDecl(LoopVar, NewLoopVarInit.get(), /*DirectInit=*/false);
 
   Stmt* NewBody;
   if (isa<NullStmt>(Body))
@@ -3092,8 +3085,7 @@ StmtResult Sema::LiftCilkForLoopLimit(SourceLocation CilkForLoc,
   // declaration for the end of the loop.
   VarDecl *EndVar = BuildForRangeVarDecl(*this, EndLoc, EndType,
                                          "__end");
-  AddInitializerToDecl(EndVar, ToExtract, /*DirectInit=*/false,
-                       /*TypeMayContainAuto=*/false);
+  AddInitializerToDecl(EndVar, ToExtract, /*DirectInit=*/false);
   FinalizeDeclaration(EndVar);
   CurContext->addHiddenDecl(EndVar);
 
@@ -3101,8 +3093,7 @@ StmtResult Sema::LiftCilkForLoopLimit(SourceLocation CilkForLoc,
   SmallVector<Decl *, 2> NewDecls;
   NewDecls.push_back(LoopVar);
   NewDecls.push_back(EndVar);
-  DeclGroupPtrTy DG = BuildDeclaratorGroup(MutableArrayRef<Decl *>(NewDecls),
-                                           /*TypeMayContainAuto=*/false);
+  DeclGroupPtrTy DG = BuildDeclaratorGroup(MutableArrayRef<Decl *>(NewDecls));
   StmtResult NewInit = ActOnDeclStmt(DG, CilkForLoc, CilkForLoc);
   if (NewInit.isInvalid())
     return StmtError();
@@ -3232,8 +3223,7 @@ StmtResult Sema::LiftCilkForLoopLimit(SourceLocation CilkForLoc,
 //     //     *Third = ReplInc.get();
 //     //   }
 //     // }
-//     AddInitializerToDecl(EndVar, ToExtract, /*DirectInit=*/false,
-//                          /*TypeMayContainAuto=*/false);
+//     AddInitializerToDecl(EndVar, ToExtract, /*DirectInit=*/false);
 //     FinalizeDeclaration(EndVar);
 //     CurContext->addHiddenDecl(EndVar);
 
@@ -3397,14 +3387,16 @@ bool Sema::isCopyElisionCandidate(QualType ReturnType, const VarDecl *VD,
   // ...automatic...
   if (!VD->hasLocalStorage()) return false;
 
+  // Return false if VD is a __block variable. We don't want to implicitly move
+  // out of a __block variable during a return because we cannot assume the
+  // variable will no longer be used.
+  if (VD->hasAttr<BlocksAttr>()) return false;
+
   if (AllowParamOrMoveConstructible)
     return true;
 
   // ...non-volatile...
   if (VD->getType().isVolatileQualified()) return false;
-
-  // __block variables can't be allocated in a way that permits NRVO.
-  if (VD->hasAttr<BlocksAttr>()) return false;
 
   // Variables with higher required alignment than their type's ABI
   // alignment cannot use NRVO.

@@ -3040,6 +3040,7 @@
 // MIPS32BE:#define __llvm__ 1
 // MIPS32BE:#define __mips 32
 // MIPS32BE:#define __mips__ 1
+// MIPS32BE:#define __mips_abicalls 1
 // MIPS32BE:#define __mips_fpr 32
 // MIPS32BE:#define __mips_hard_float 1
 // MIPS32BE:#define __mips_o32 1
@@ -3246,6 +3247,7 @@
 // MIPS32EL:#define __llvm__ 1
 // MIPS32EL:#define __mips 32
 // MIPS32EL:#define __mips__ 1
+// MIPS32EL:#define __mips_abicalls 1
 // MIPS32EL:#define __mips_fpr 32
 // MIPS32EL:#define __mips_hard_float 1
 // MIPS32EL:#define __mips_o32 1
@@ -3555,6 +3557,7 @@
 // MIPSN32BE: #define __mips64 1
 // MIPSN32BE: #define __mips64__ 1
 // MIPSN32BE: #define __mips__ 1
+// MIPSN32BE: #define __mips_abicalls 1
 // MIPSN32BE: #define __mips_fpr 64
 // MIPSN32BE: #define __mips_hard_float 1
 // MIPSN32BE: #define __mips_isa_rev 2
@@ -3861,6 +3864,7 @@
 // MIPSN32EL: #define __mips64 1
 // MIPSN32EL: #define __mips64__ 1
 // MIPSN32EL: #define __mips__ 1
+// MIPSN32EL: #define __mips_abicalls 1
 // MIPSN32EL: #define __mips_fpr 64
 // MIPSN32EL: #define __mips_hard_float 1
 // MIPSN32EL: #define __mips_isa_rev 2
@@ -4073,6 +4077,7 @@
 // MIPS64BE:#define __mips64 1
 // MIPS64BE:#define __mips64__ 1
 // MIPS64BE:#define __mips__ 1
+// MIPS64BE:#define __mips_abicalls 1
 // MIPS64BE:#define __mips_fpr 64
 // MIPS64BE:#define __mips_hard_float 1
 // MIPS64BE:#define __mips_n64 1
@@ -4282,6 +4287,7 @@
 // MIPS64EL:#define __mips64 1
 // MIPS64EL:#define __mips64__ 1
 // MIPS64EL:#define __mips__ 1
+// MIPS64EL:#define __mips_abicalls 1
 // MIPS64EL:#define __mips_fpr 64
 // MIPS64EL:#define __mips_hard_float 1
 // MIPS64EL:#define __mips_n64 1
@@ -4512,6 +4518,45 @@
 // MIPS-XXR6:#define _MIPS_FPSET 32
 // MIPS-XXR6:#define __mips_fpr 64
 // MIPS-XXR6:#define __mips_nan2008 1
+//
+// RUN: %clang_cc1 -target-cpu mips32 \
+// RUN:   -E -dM -triple=mips-unknown-netbsd -mrelocation-model pic < /dev/null \
+// RUN:   | FileCheck -match-full-lines -check-prefix MIPS-ABICALLS-NETBSD %s
+// MIPS-ABICALLS-NETBSD-NOT: #define __ABICALLS__ 1
+// MIPS-ABICALLS-NETBSD: #define __mips_abicalls 1
+//
+// RUN: %clang_cc1 -target-cpu mips64 \
+// RUN:   -E -dM -triple=mips64-unknown-netbsd -mrelocation-model pic < \
+// RUN:   /dev/null | FileCheck -match-full-lines \
+// RUN:   -check-prefix MIPS-ABICALLS-NETBSD64 %s
+// MIPS-ABICALLS-NETBSD64-NOT: #define __ABICALLS__ 1
+// MIPS-ABICALLS-NETBSD64: #define __mips_abicalls 1
+//
+// RUN: %clang_cc1 -target-cpu mips32 \
+// RUN:   -E -dM -triple=mips-unknown-freebsd -mrelocation-model pic < /dev/null \
+// RUN:   | FileCheck -match-full-lines -check-prefix MIPS-ABICALLS-FREEBSD %s
+// MIPS-ABICALLS-FREEBSD: #define __ABICALLS__ 1
+// MIPS-ABICALLS-FREEBSD: #define __mips_abicalls 1
+//
+// RUN: %clang_cc1 -target-cpu mips64 \
+// RUN:   -E -dM -triple=mips64-unknown-freebsd -mrelocation-model pic < \
+// RUN:   /dev/null | FileCheck -match-full-lines \
+// RUN:   -check-prefix MIPS-ABICALLS-FREEBSD64 %s
+// MIPS-ABICALLS-FREEBSD64: #define __ABICALLS__ 1
+// MIPS-ABICALLS-FREEBSD64: #define __mips_abicalls 1
+//
+// RUN: %clang_cc1 -target-cpu mips32 \
+// RUN:   -E -dM -triple=mips-unknown-openbsd -mrelocation-model pic < /dev/null \
+// RUN:   | FileCheck -match-full-lines -check-prefix MIPS-ABICALLS-OPENBSD %s
+// MIPS-ABICALLS-OPENBSD: #define __ABICALLS__ 1
+// MIPS-ABICALLS-OPENBSD: #define __mips_abicalls 1
+//
+// RUN: %clang_cc1 -target-cpu mips64 \
+// RUN:   -E -dM -triple=mips64-unknown-openbsd -mrelocation-model pic < \
+// RUN:   /dev/null | FileCheck -match-full-lines \
+// RUN:   -check-prefix MIPS-ABICALLS-OPENBSD64 %s
+// MIPS-ABICALLS-OPENBSD64: #define __ABICALLS__ 1
+// MIPS-ABICALLS-OPENBSD64: #define __mips_abicalls 1
 //
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple=msp430-none-none < /dev/null | FileCheck -match-full-lines -check-prefix MSP430 %s
 // RUN: %clang_cc1 -x c++ -E -dM -ffreestanding -triple=msp430-none-none < /dev/null | FileCheck -match-full-lines -check-prefix MSP430 -check-prefix MSP430-CXX %s
@@ -5635,6 +5680,7 @@
 // PPC64LE:#define __SIZE_MAX__ 18446744073709551615UL
 // PPC64LE:#define __SIZE_TYPE__ long unsigned int
 // PPC64LE:#define __SIZE_WIDTH__ 64
+// PPC64LE:#define __STRUCT_PARM_ALIGN__ 16
 // PPC64LE:#define __UINT16_C_SUFFIX__
 // PPC64LE:#define __UINT16_MAX__ 65535
 // PPC64LE:#define __UINT16_TYPE__ unsigned short
@@ -8466,6 +8512,7 @@
 // PS4:#define __unix__ 1
 // PS4:#define __x86_64 1
 // PS4:#define __x86_64__ 1
+// PS4:#define unix 1
 //
 // RUN: %clang_cc1 -E -dM -triple=x86_64-pc-mingw32 < /dev/null | FileCheck -match-full-lines -check-prefix X86-64-DECLSPEC %s
 // RUN: %clang_cc1 -E -dM -fms-extensions -triple=x86_64-unknown-mingw32 < /dev/null | FileCheck -match-full-lines -check-prefix X86-64-DECLSPEC %s
@@ -8705,6 +8752,7 @@
 // WEBASSEMBLY32-NEXT:#define __LONG_MAX__ 2147483647L
 // WEBASSEMBLY32-NOT:#define __LP64__
 // WEBASSEMBLY32-NEXT:#define __NO_INLINE__ 1
+// WEBASSEMBLY32-NEXT:#define __OBJC_BOOL_IS_BOOL 0
 // WEBASSEMBLY32-NEXT:#define __ORDER_BIG_ENDIAN__ 4321
 // WEBASSEMBLY32-NEXT:#define __ORDER_LITTLE_ENDIAN__ 1234
 // WEBASSEMBLY32-NEXT:#define __ORDER_PDP_ENDIAN__ 3412
@@ -9020,6 +9068,7 @@
 // WEBASSEMBLY64-NEXT:#define __LONG_MAX__ 9223372036854775807L
 // WEBASSEMBLY64-NEXT:#define __LP64__ 1
 // WEBASSEMBLY64-NEXT:#define __NO_INLINE__ 1
+// WEBASSEMBLY64-NEXT:#define __OBJC_BOOL_IS_BOOL 0
 // WEBASSEMBLY64-NEXT:#define __ORDER_BIG_ENDIAN__ 4321
 // WEBASSEMBLY64-NEXT:#define __ORDER_LITTLE_ENDIAN__ 1234
 // WEBASSEMBLY64-NEXT:#define __ORDER_PDP_ENDIAN__ 3412
@@ -9189,3 +9238,174 @@
 // RUN: %clang_cc1 -E -dM -ffreestanding -triple x86_64-windows-cygnus < /dev/null | FileCheck -match-full-lines -check-prefix CYGWIN-X64 %s
 // CYGWIN-X64: #define __USER_LABEL_PREFIX__
 
+// RUN: %clang_cc1 -E -dM -ffreestanding -triple=avr \
+// RUN:   < /dev/null \
+// RUN:   | FileCheck -match-full-lines -check-prefix=AVR %s
+//
+// AVR:#define __ATOMIC_ACQUIRE 2
+// AVR:#define __ATOMIC_ACQ_REL 4
+// AVR:#define __ATOMIC_CONSUME 1
+// AVR:#define __ATOMIC_RELAXED 0
+// AVR:#define __ATOMIC_RELEASE 3
+// AVR:#define __ATOMIC_SEQ_CST 5
+// AVR:#define __AVR__ 1
+// AVR:#define __BIGGEST_ALIGNMENT__ 1
+// AVR:#define __BYTE_ORDER__ __ORDER_LITTLE_ENDIAN__
+// AVR:#define __CHAR16_TYPE__ unsigned int
+// AVR:#define __CHAR32_TYPE__ long unsigned int
+// AVR:#define __CHAR_BIT__ 8
+// AVR:#define __DBL_DECIMAL_DIG__ 9
+// AVR:#define __DBL_DENORM_MIN__ 1.40129846e-45
+// AVR:#define __DBL_DIG__ 6
+// AVR:#define __DBL_EPSILON__ 1.19209290e-7
+// AVR:#define __DBL_HAS_DENORM__ 1
+// AVR:#define __DBL_HAS_INFINITY__ 1
+// AVR:#define __DBL_HAS_QUIET_NAN__ 1
+// AVR:#define __DBL_MANT_DIG__ 24
+// AVR:#define __DBL_MAX_10_EXP__ 38
+// AVR:#define __DBL_MAX_EXP__ 128
+// AVR:#define __DBL_MAX__ 3.40282347e+38
+// AVR:#define __DBL_MIN_10_EXP__ (-37)
+// AVR:#define __DBL_MIN_EXP__ (-125)
+// AVR:#define __DBL_MIN__ 1.17549435e-38
+// AVR:#define __FINITE_MATH_ONLY__ 0
+// AVR:#define __FLT_DECIMAL_DIG__ 9
+// AVR:#define __FLT_DENORM_MIN__ 1.40129846e-45F
+// AVR:#define __FLT_DIG__ 6
+// AVR:#define __FLT_EPSILON__ 1.19209290e-7F
+// AVR:#define __FLT_EVAL_METHOD__ 0
+// AVR:#define __FLT_HAS_DENORM__ 1
+// AVR:#define __FLT_HAS_INFINITY__ 1
+// AVR:#define __FLT_HAS_QUIET_NAN__ 1
+// AVR:#define __FLT_MANT_DIG__ 24
+// AVR:#define __FLT_MAX_10_EXP__ 38
+// AVR:#define __FLT_MAX_EXP__ 128
+// AVR:#define __FLT_MAX__ 3.40282347e+38F
+// AVR:#define __FLT_MIN_10_EXP__ (-37)
+// AVR:#define __FLT_MIN_EXP__ (-125)
+// AVR:#define __FLT_MIN__ 1.17549435e-38F
+// AVR:#define __FLT_RADIX__ 2
+// AVR:#define __GCC_ATOMIC_BOOL_LOCK_FREE 1
+// AVR:#define __GCC_ATOMIC_CHAR16_T_LOCK_FREE 1
+// AVR:#define __GCC_ATOMIC_CHAR32_T_LOCK_FREE 1
+// AVR:#define __GCC_ATOMIC_CHAR_LOCK_FREE 1
+// AVR:#define __GCC_ATOMIC_INT_LOCK_FREE 1
+// AVR:#define __GCC_ATOMIC_LLONG_LOCK_FREE 1
+// AVR:#define __GCC_ATOMIC_LONG_LOCK_FREE 1
+// AVR:#define __GCC_ATOMIC_POINTER_LOCK_FREE 1
+// AVR:#define __GCC_ATOMIC_SHORT_LOCK_FREE 1
+// AVR:#define __GCC_ATOMIC_TEST_AND_SET_TRUEVAL 1
+// AVR:#define __GCC_ATOMIC_WCHAR_T_LOCK_FREE 1
+// AVR:#define __GXX_ABI_VERSION 1002
+// AVR:#define __INT16_C_SUFFIX__ 
+// AVR:#define __INT16_MAX__ 32767
+// AVR:#define __INT16_TYPE__ short
+// AVR:#define __INT32_C_SUFFIX__ L
+// AVR:#define __INT32_MAX__ 2147483647L
+// AVR:#define __INT32_TYPE__ long int
+// AVR:#define __INT64_C_SUFFIX__ LL
+// AVR:#define __INT64_MAX__ 9223372036854775807LL
+// AVR:#define __INT64_TYPE__ long long int
+// AVR:#define __INT8_C_SUFFIX__ 
+// AVR:#define __INT8_MAX__ 127
+// AVR:#define __INT8_TYPE__ signed char
+// AVR:#define __INTMAX_C_SUFFIX__ LL
+// AVR:#define __INTMAX_MAX__ 9223372036854775807LL
+// AVR:#define __INTMAX_TYPE__ long long int
+// AVR:#define __INTPTR_MAX__ 32767
+// AVR:#define __INTPTR_TYPE__ int
+// AVR:#define __INT_FAST16_MAX__ 32767
+// AVR:#define __INT_FAST16_TYPE__ int
+// AVR:#define __INT_FAST32_MAX__ 2147483647L
+// AVR:#define __INT_FAST32_TYPE__ long int
+// AVR:#define __INT_FAST64_MAX__ 9223372036854775807LL
+// AVR:#define __INT_FAST64_TYPE__ long long int
+// AVR:#define __INT_FAST8_MAX__ 127
+// AVR:#define __INT_FAST8_TYPE__ signed char
+// AVR:#define __INT_LEAST16_MAX__ 32767
+// AVR:#define __INT_LEAST16_TYPE__ int
+// AVR:#define __INT_LEAST32_MAX__ 2147483647L
+// AVR:#define __INT_LEAST32_TYPE__ long int
+// AVR:#define __INT_LEAST64_MAX__ 9223372036854775807LL
+// AVR:#define __INT_LEAST64_TYPE__ long long int
+// AVR:#define __INT_LEAST8_MAX__ 127
+// AVR:#define __INT_LEAST8_TYPE__ signed char
+// AVR:#define __INT_MAX__ 32767
+// AVR:#define __LDBL_DECIMAL_DIG__ 9
+// AVR:#define __LDBL_DENORM_MIN__ 1.40129846e-45L
+// AVR:#define __LDBL_DIG__ 6
+// AVR:#define __LDBL_EPSILON__ 1.19209290e-7L
+// AVR:#define __LDBL_HAS_DENORM__ 1
+// AVR:#define __LDBL_HAS_INFINITY__ 1
+// AVR:#define __LDBL_HAS_QUIET_NAN__ 1
+// AVR:#define __LDBL_MANT_DIG__ 24
+// AVR:#define __LDBL_MAX_10_EXP__ 38
+// AVR:#define __LDBL_MAX_EXP__ 128
+// AVR:#define __LDBL_MAX__ 3.40282347e+38L
+// AVR:#define __LDBL_MIN_10_EXP__ (-37)
+// AVR:#define __LDBL_MIN_EXP__ (-125)
+// AVR:#define __LDBL_MIN__ 1.17549435e-38L
+// AVR:#define __LONG_LONG_MAX__ 9223372036854775807LL
+// AVR:#define __LONG_MAX__ 2147483647L
+// AVR:#define __NO_INLINE__ 1
+// AVR:#define __ORDER_BIG_ENDIAN__ 4321
+// AVR:#define __ORDER_LITTLE_ENDIAN__ 1234
+// AVR:#define __ORDER_PDP_ENDIAN__ 3412
+// AVR:#define __PRAGMA_REDEFINE_EXTNAME 1
+// AVR:#define __PTRDIFF_MAX__ 32767
+// AVR:#define __PTRDIFF_TYPE__ int
+// AVR:#define __SCHAR_MAX__ 127
+// AVR:#define __SHRT_MAX__ 32767
+// AVR:#define __SIG_ATOMIC_MAX__ 127
+// AVR:#define __SIG_ATOMIC_WIDTH__ 8
+// AVR:#define __SIZEOF_DOUBLE__ 4
+// AVR:#define __SIZEOF_FLOAT__ 4
+// AVR:#define __SIZEOF_INT__ 2
+// AVR:#define __SIZEOF_LONG_DOUBLE__ 4
+// AVR:#define __SIZEOF_LONG_LONG__ 8
+// AVR:#define __SIZEOF_LONG__ 4
+// AVR:#define __SIZEOF_POINTER__ 2
+// AVR:#define __SIZEOF_PTRDIFF_T__ 2
+// AVR:#define __SIZEOF_SHORT__ 2
+// AVR:#define __SIZEOF_SIZE_T__ 2
+// AVR:#define __SIZEOF_WCHAR_T__ 2
+// AVR:#define __SIZEOF_WINT_T__ 2
+// AVR:#define __SIZE_MAX__ 65535U
+// AVR:#define __SIZE_TYPE__ unsigned int
+// AVR:#define __STDC__ 1
+// AVR:#define __UINT16_MAX__ 65535U
+// AVR:#define __UINT16_TYPE__ unsigned short
+// AVR:#define __UINT32_C_SUFFIX__ UL
+// AVR:#define __UINT32_MAX__ 4294967295UL
+// AVR:#define __UINT32_TYPE__ long unsigned int
+// AVR:#define __UINT64_C_SUFFIX__ ULL
+// AVR:#define __UINT64_MAX__ 18446744073709551615ULL
+// AVR:#define __UINT64_TYPE__ long long unsigned int
+// AVR:#define __UINT8_C_SUFFIX__ 
+// AVR:#define __UINT8_MAX__ 255
+// AVR:#define __UINT8_TYPE__ unsigned char
+// AVR:#define __UINTMAX_C_SUFFIX__ ULL
+// AVR:#define __UINTMAX_MAX__ 18446744073709551615ULL
+// AVR:#define __UINTMAX_TYPE__ long long unsigned int
+// AVR:#define __UINTPTR_MAX__ 65535U
+// AVR:#define __UINTPTR_TYPE__ unsigned int
+// AVR:#define __UINT_FAST16_MAX__ 65535U
+// AVR:#define __UINT_FAST16_TYPE__ unsigned int
+// AVR:#define __UINT_FAST32_MAX__ 4294967295UL
+// AVR:#define __UINT_FAST32_TYPE__ long unsigned int
+// AVR:#define __UINT_FAST64_MAX__ 18446744073709551615ULL
+// AVR:#define __UINT_FAST64_TYPE__ long long unsigned int
+// AVR:#define __UINT_FAST8_MAX__ 255
+// AVR:#define __UINT_FAST8_TYPE__ unsigned char
+// AVR:#define __UINT_LEAST16_MAX__ 65535U
+// AVR:#define __UINT_LEAST16_TYPE__ unsigned int
+// AVR:#define __UINT_LEAST32_MAX__ 4294967295UL
+// AVR:#define __UINT_LEAST32_TYPE__ long unsigned int
+// AVR:#define __UINT_LEAST64_MAX__ 18446744073709551615ULL
+// AVR:#define __UINT_LEAST64_TYPE__ long long unsigned int
+// AVR:#define __UINT_LEAST8_MAX__ 255
+// AVR:#define __UINT_LEAST8_TYPE__ unsigned char
+// AVR:#define __USER_LABEL_PREFIX__ 
+// AVR:#define __WCHAR_MAX__ 32767
+// AVR:#define __WCHAR_TYPE__ int
+// AVR:#define __WINT_TYPE__ int

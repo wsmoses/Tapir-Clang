@@ -509,7 +509,8 @@ void CGDebugInfo::CreateCompileUnit() {
                                    Checksum),
       Producer, LO.Optimize, CGM.getCodeGenOpts().DwarfDebugFlags, RuntimeVers,
       CGM.getCodeGenOpts().SplitDwarfFile, EmissionKind, 0 /* DWOid */,
-      CGM.getCodeGenOpts().SplitDwarfInlining);
+      CGM.getCodeGenOpts().SplitDwarfInlining,
+      CGM.getCodeGenOpts().DebugInfoForProfiling);
 }
 
 llvm::DIType *CGDebugInfo::CreateType(const BuiltinType *BT) {
@@ -581,8 +582,6 @@ llvm::DIType *CGDebugInfo::CreateType(const BuiltinType *BT) {
     return getOrCreateStructPtrType("opencl_clk_event_t", OCLClkEventDITy);
   case BuiltinType::OCLQueue:
     return getOrCreateStructPtrType("opencl_queue_t", OCLQueueDITy);
-  case BuiltinType::OCLNDRange:
-    return getOrCreateStructPtrType("opencl_ndrange_t", OCLNDRangeDITy);
   case BuiltinType::OCLReserveID:
     return getOrCreateStructPtrType("opencl_reserve_id_t", OCLReserveIDDITy);
 
@@ -1714,7 +1713,27 @@ void CGDebugInfo::completeType(const RecordDecl *RD) {
     completeRequiredType(RD);
 }
 
+/// Return true if the class or any of its methods are marked dllimport.
+static bool isClassOrMethodDLLImport(const CXXRecordDecl *RD) {
+  if (RD->hasAttr<DLLImportAttr>())
+    return true;
+  for (const CXXMethodDecl *MD : RD->methods())
+    if (MD->hasAttr<DLLImportAttr>())
+      return true;
+  return false;
+}
+
 void CGDebugInfo::completeClassData(const RecordDecl *RD) {
+  if (auto *CXXRD = dyn_cast<CXXRecordDecl>(RD))
+    if (CXXRD->isDynamicClass() &&
+        CGM.getVTableLinkage(CXXRD) ==
+            llvm::GlobalValue::AvailableExternallyLinkage &&
+        !isClassOrMethodDLLImport(CXXRD))
+      return;
+  completeClass(RD);
+}
+
+void CGDebugInfo::completeClass(const RecordDecl *RD) {
   if (DebugKind <= codegenoptions::DebugLineTablesOnly)
     return;
   QualType Ty = CGM.getContext().getRecordType(RD);
@@ -1758,16 +1777,6 @@ static bool isDefinedInClangModule(const RecordDecl *RD) {
     }
   }
   return true;
-}
-
-/// Return true if the class or any of its methods are marked dllimport.
-static bool isClassOrMethodDLLImport(const CXXRecordDecl *RD) {
-  if (RD->hasAttr<DLLImportAttr>())
-    return true;
-  for (const CXXMethodDecl *MD : RD->methods())
-    if (MD->hasAttr<DLLImportAttr>())
-      return true;
-  return false;
 }
 
 static bool shouldOmitDefinition(codegenoptions::DebugInfoKind DebugKind,
@@ -2408,6 +2417,21 @@ llvm::DIType *CGDebugInfo::CreateTypeDefinition(const EnumType *Ty) {
                                         FullName);
 }
 
+llvm::DIMacro *CGDebugInfo::CreateMacro(llvm::DIMacroFile *Parent,
+                                        unsigned MType, SourceLocation LineLoc,
+                                        StringRef Name, StringRef Value) {
+  unsigned Line = LineLoc.isInvalid() ? 0 : getLineNumber(LineLoc);
+  return DBuilder.createMacro(Parent, Line, MType, Name, Value);
+}
+
+llvm::DIMacroFile *CGDebugInfo::CreateTempMacroFile(llvm::DIMacroFile *Parent,
+                                                    SourceLocation LineLoc,
+                                                    SourceLocation FileLoc) {
+  llvm::DIFile *FName = getOrCreateFile(FileLoc);
+  unsigned Line = LineLoc.isInvalid() ? 0 : getLineNumber(LineLoc);
+  return DBuilder.createTempMacroFile(Parent, Line, FName);
+}
+
 static QualType UnwrapTypeForDebugInfo(QualType T, const ASTContext &C) {
   Qualifiers Quals;
   do {
@@ -2618,6 +2642,7 @@ llvm::DIType *CGDebugInfo::CreateTypeNode(QualType Ty, llvm::DIFile *Unit) {
   case Type::Attributed:
   case Type::Adjusted:
   case Type::Decayed:
+  case Type::DeducedTemplateSpecialization:
   case Type::Elaborated:
   case Type::Paren:
   case Type::SubstTemplateTypeParm:
@@ -2774,9 +2799,10 @@ void CGDebugInfo::collectFunctionDeclProps(GlobalDecl GD, llvm::DIFile *Unit,
   }
   // No need to replicate the linkage name if it isn't different from the
   // subprogram name, no need to have it at all unless coverage is enabled or
-  // debug is set to more than just line tables.
+  // debug is set to more than just line tables or extra debug info is needed.
   if (LinkageName == Name || (!CGM.getCodeGenOpts().EmitGcovArcs &&
                               !CGM.getCodeGenOpts().EmitGcovNotes &&
+                              !CGM.getCodeGenOpts().DebugInfoForProfiling &&
                               DebugKind <= codegenoptions::DebugLineTablesOnly))
     LinkageName = StringRef();
 

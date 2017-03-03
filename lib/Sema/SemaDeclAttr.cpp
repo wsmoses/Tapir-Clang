@@ -32,6 +32,7 @@
 #include "clang/Sema/Lookup.h"
 #include "clang/Sema/Scope.h"
 #include "clang/Sema/SemaInternal.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/MathExtras.h"
 
@@ -791,7 +792,7 @@ static void handleAllocSizeAttr(Sema &S, Decl *D, const AttributeList &Attr) {
 
   const Expr *SizeExpr = Attr.getArgAsExpr(0);
   int SizeArgNo;
-  // Paramater indices are 1-indexed, hence Index=1
+  // Parameter indices are 1-indexed, hence Index=1
   if (!checkPositiveIntArgument(S, Attr, SizeExpr, SizeArgNo, /*Index=*/1))
     return;
 
@@ -802,7 +803,7 @@ static void handleAllocSizeAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   int NumberArgNo = 0;
   if (Attr.getNumArgs() == 2) {
     const Expr *NumberExpr = Attr.getArgAsExpr(1);
-    // Paramater indices are 1-based, hence Index=2
+    // Parameter indices are 1-based, hence Index=2
     if (!checkPositiveIntArgument(S, Attr, NumberExpr, NumberArgNo,
                                   /*Index=*/2))
       return;
@@ -890,34 +891,117 @@ static void handleLocksExcludedAttr(Sema &S, Decl *D,
                                Attr.getAttributeSpellingListIndex()));
 }
 
-static void handleEnableIfAttr(Sema &S, Decl *D, const AttributeList &Attr) {
-  S.Diag(Attr.getLoc(), diag::ext_clang_enable_if);
-
-  Expr *Cond = Attr.getArgAsExpr(0);
+static bool checkFunctionConditionAttr(Sema &S, Decl *D,
+                                       const AttributeList &Attr,
+                                       Expr *&Cond, StringRef &Msg) {
+  Cond = Attr.getArgAsExpr(0);
   if (!Cond->isTypeDependent()) {
     ExprResult Converted = S.PerformContextuallyConvertToBool(Cond);
     if (Converted.isInvalid())
-      return;
+      return false;
     Cond = Converted.get();
   }
 
-  StringRef Msg;
   if (!S.checkStringLiteralArgumentAttr(Attr, 1, Msg))
-    return;
+    return false;
+
+  if (Msg.empty())
+    Msg = "<no message provided>";
 
   SmallVector<PartialDiagnosticAt, 8> Diags;
   if (!Cond->isValueDependent() &&
       !Expr::isPotentialConstantExprUnevaluated(Cond, cast<FunctionDecl>(D),
                                                 Diags)) {
-    S.Diag(Attr.getLoc(), diag::err_enable_if_never_constant_expr);
+    S.Diag(Attr.getLoc(), diag::err_attr_cond_never_constant_expr)
+        << Attr.getName();
     for (const PartialDiagnosticAt &PDiag : Diags)
       S.Diag(PDiag.first, PDiag.second);
+    return false;
+  }
+  return true;
+}
+
+static void handleEnableIfAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  S.Diag(Attr.getLoc(), diag::ext_clang_enable_if);
+
+  Expr *Cond;
+  StringRef Msg;
+  if (checkFunctionConditionAttr(S, D, Attr, Cond, Msg))
+    D->addAttr(::new (S.Context)
+                   EnableIfAttr(Attr.getRange(), S.Context, Cond, Msg,
+                                Attr.getAttributeSpellingListIndex()));
+}
+
+namespace {
+/// Determines if a given Expr references any of the given function's
+/// ParmVarDecls, or the function's implicit `this` parameter (if applicable).
+class ArgumentDependenceChecker
+    : public RecursiveASTVisitor<ArgumentDependenceChecker> {
+#ifndef NDEBUG
+  const CXXRecordDecl *ClassType;
+#endif
+  llvm::SmallPtrSet<const ParmVarDecl *, 16> Parms;
+  bool Result;
+
+public:
+  ArgumentDependenceChecker(const FunctionDecl *FD) {
+#ifndef NDEBUG
+    if (const auto *MD = dyn_cast<CXXMethodDecl>(FD))
+      ClassType = MD->getParent();
+    else
+      ClassType = nullptr;
+#endif
+    Parms.insert(FD->param_begin(), FD->param_end());
+  }
+
+  bool referencesArgs(Expr *E) {
+    Result = false;
+    TraverseStmt(E);
+    return Result;
+  }
+
+  bool VisitCXXThisExpr(CXXThisExpr *E) {
+    assert(E->getType()->getPointeeCXXRecordDecl() == ClassType &&
+           "`this` doesn't refer to the enclosing class?");
+    Result = true;
+    return false;
+  }
+
+  bool VisitDeclRefExpr(DeclRefExpr *DRE) {
+    if (const auto *PVD = dyn_cast<ParmVarDecl>(DRE->getDecl()))
+      if (Parms.count(PVD)) {
+        Result = true;
+        return false;
+      }
+    return true;
+  }
+};
+}
+
+static void handleDiagnoseIfAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  S.Diag(Attr.getLoc(), diag::ext_clang_diagnose_if);
+
+  Expr *Cond;
+  StringRef Msg;
+  if (!checkFunctionConditionAttr(S, D, Attr, Cond, Msg))
+    return;
+
+  StringRef DiagTypeStr;
+  if (!S.checkStringLiteralArgumentAttr(Attr, 2, DiagTypeStr))
+    return;
+
+  DiagnoseIfAttr::DiagnosticType DiagType;
+  if (!DiagnoseIfAttr::ConvertStrToDiagnosticType(DiagTypeStr, DiagType)) {
+    S.Diag(Attr.getArgAsExpr(2)->getLocStart(),
+           diag::err_diagnose_if_invalid_diagnostic_type);
     return;
   }
 
-  D->addAttr(::new (S.Context)
-             EnableIfAttr(Attr.getRange(), S.Context, Cond, Msg,
-                          Attr.getAttributeSpellingListIndex()));
+  auto *FD = cast<FunctionDecl>(D);
+  bool ArgDependent = ArgumentDependenceChecker(FD).referencesArgs(Cond);
+  D->addAttr(::new (S.Context) DiagnoseIfAttr(
+      Attr.getRange(), S.Context, Cond, Msg, DiagType, ArgDependent, FD,
+      Attr.getAttributeSpellingListIndex()));
 }
 
 static void handlePassObjectSizeAttr(Sema &S, Decl *D,
@@ -1336,7 +1420,7 @@ static void handleNonNullAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // check if the attribute came from a macro expansion or a template
   // instantiation.
   if (NonNullArgs.empty() && Attr.getLoc().isFileID() &&
-      S.ActiveTemplateInstantiations.empty()) {
+      !S.inTemplateInstantiation()) {
     bool AnyPointers = isFunctionOrMethodVariadic(D);
     for (unsigned I = 0, E = getFunctionOrMethodNumParams(D);
          I != E && !AnyPointers; ++I) {
@@ -5042,6 +5126,32 @@ static void handleAnyX86InterruptAttr(Sema &S, Decl *D,
   D->addAttr(UsedAttr::CreateImplicit(S.Context));
 }
 
+static void handleAVRInterruptAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  if (!isFunctionOrMethod(D)) {
+    S.Diag(D->getLocation(), diag::warn_attribute_wrong_decl_type)
+        << "'interrupt'" << ExpectedFunction;
+    return;
+  }
+
+  if (!checkAttributeNumArgs(S, Attr, 0))
+    return;
+
+  handleSimpleAttribute<AVRInterruptAttr>(S, D, Attr);
+}
+
+static void handleAVRSignalAttr(Sema &S, Decl *D, const AttributeList &Attr) {
+  if (!isFunctionOrMethod(D)) {
+    S.Diag(D->getLocation(), diag::warn_attribute_wrong_decl_type)
+        << "'signal'" << ExpectedFunction;
+    return;
+  }
+
+  if (!checkAttributeNumArgs(S, Attr, 0))
+    return;
+
+  handleSimpleAttribute<AVRSignalAttr>(S, D, Attr);
+}
+
 static void handleInterruptAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   // Dispatch the interrupt attribute based on the current target.
   switch (S.Context.getTargetInfo().getTriple().getArch()) {
@@ -5055,6 +5165,9 @@ static void handleInterruptAttr(Sema &S, Decl *D, const AttributeList &Attr) {
   case llvm::Triple::x86:
   case llvm::Triple::x86_64:
     handleAnyX86InterruptAttr(S, D, Attr);
+    break;
+  case llvm::Triple::avr:
+    handleAVRInterruptAttr(S, D, Attr);
     break;
   default:
     handleARMInterruptAttr(S, D, Attr);
@@ -5616,6 +5729,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
   case AttributeList::AT_AMDGPUNumVGPR:
     handleAMDGPUNumVGPRAttr(S, D, Attr);
     break;
+  case AttributeList::AT_AVRSignal:
+    handleAVRSignalAttr(S, D, Attr);
+    break;
   case AttributeList::AT_IBAction:
     handleSimpleAttribute<IBActionAttr>(S, D, Attr);
     break;
@@ -5681,6 +5797,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case AttributeList::AT_EnableIf:
     handleEnableIfAttr(S, D, Attr);
+    break;
+  case AttributeList::AT_DiagnoseIf:
+    handleDiagnoseIfAttr(S, D, Attr);
     break;
   case AttributeList::AT_ExtVectorType:
     handleExtVectorTypeAttr(S, scope, D, Attr);

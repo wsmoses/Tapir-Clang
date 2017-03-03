@@ -773,6 +773,7 @@ LANGBUILTIN(_rotr,   "UiUii",     "n", ALL_MS_LANGUAGES)
 LANGBUILTIN(_lrotr,  "ULiULii",   "n", ALL_MS_LANGUAGES)
 LANGBUILTIN(_rotr64, "ULLiULLii", "n", ALL_MS_LANGUAGES)
 LANGBUILTIN(__va_start,       "vc**.", "nt", ALL_MS_LANGUAGES)
+LANGBUILTIN(__fastfail, "vUi",    "nr", ALL_MS_LANGUAGES)
 
 // Microsoft library builtins.
 LIBBUILTIN(_setjmpex, "iJ", "fj",   "setjmpex.h", ALL_MS_LANGUAGES)
@@ -1339,6 +1340,7 @@ BUILTIN(__builtin_smulll_overflow, "bSLLiCSLLiCSLLi*", "n")
 BUILTIN(__builtin_addressof, "v*v&", "nct")
 BUILTIN(__builtin_operator_new, "v*z", "c")
 BUILTIN(__builtin_operator_delete, "vv*", "n")
+BUILTIN(__builtin_char_memchr, "c*cC*iz", "n")
 
 // Safestack builtins
 BUILTIN(__builtin___get_unsafe_stack_start, "v*", "Fn")

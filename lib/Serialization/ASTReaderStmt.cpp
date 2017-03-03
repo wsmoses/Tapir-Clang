@@ -1928,7 +1928,8 @@ OMPClause *OMPClauseReader::readClause() {
 }
 
 void OMPClauseReader::VisitOMPClauseWithPreInit(OMPClauseWithPreInit *C) {
-  C->setPreInitStmt(Reader->Record.readSubStmt());
+  C->setPreInitStmt(Reader->Record.readSubStmt(),
+                    static_cast<OpenMPDirectiveKind>(Reader->Record.readInt()));
 }
 
 void OMPClauseReader::VisitOMPClauseWithPostUpdate(OMPClauseWithPostUpdate *C) {
@@ -1937,6 +1938,7 @@ void OMPClauseReader::VisitOMPClauseWithPostUpdate(OMPClauseWithPostUpdate *C) {
 }
 
 void OMPClauseReader::VisitOMPIfClause(OMPIfClause *C) {
+  VisitOMPClauseWithPreInit(C);
   C->setNameModifier(static_cast<OpenMPDirectiveKind>(Reader->Record.readInt()));
   C->setNameModifierLoc(Reader->ReadSourceLocation());
   C->setColonLoc(Reader->ReadSourceLocation());
@@ -1950,6 +1952,7 @@ void OMPClauseReader::VisitOMPFinalClause(OMPFinalClause *C) {
 }
 
 void OMPClauseReader::VisitOMPNumThreadsClause(OMPNumThreadsClause *C) {
+  VisitOMPClauseWithPreInit(C);
   C->setNumThreads(Reader->Record.readSubExpr());
   C->setLParenLoc(Reader->ReadSourceLocation());
 }
@@ -2297,11 +2300,13 @@ void OMPClauseReader::VisitOMPMapClause(OMPMapClause *C) {
 }
 
 void OMPClauseReader::VisitOMPNumTeamsClause(OMPNumTeamsClause *C) {
+  VisitOMPClauseWithPreInit(C);
   C->setNumTeams(Reader->Record.readSubExpr());
   C->setLParenLoc(Reader->ReadSourceLocation());
 }
 
 void OMPClauseReader::VisitOMPThreadLimitClause(OMPThreadLimitClause *C) {
+  VisitOMPClauseWithPreInit(C);
   C->setThreadLimit(Reader->Record.readSubExpr());
   C->setLParenLoc(Reader->ReadSourceLocation());
 }
@@ -2566,6 +2571,8 @@ void ASTStmtReader::VisitOMPLoopDirective(OMPLoopDirective *D) {
   if (isOpenMPLoopBoundSharingDirective(D->getDirectiveKind())) {
     D->setPrevLowerBoundVariable(Record.readSubExpr());
     D->setPrevUpperBoundVariable(Record.readSubExpr());
+    D->setDistInc(Record.readSubExpr());
+    D->setPrevEnsureUpperBound(Record.readSubExpr());
   }
   SmallVector<Expr *, 4> Sub;
   unsigned CollapsedNum = D->getCollapsedNumber();
@@ -2860,6 +2867,16 @@ void ASTStmtReader::VisitOMPTargetTeamsDistributeParallelForDirective(
   VisitOMPLoopDirective(D);
 }
 
+void ASTStmtReader::VisitOMPTargetTeamsDistributeParallelForSimdDirective(
+    OMPTargetTeamsDistributeParallelForSimdDirective *D) {
+  VisitOMPLoopDirective(D);
+}
+
+void ASTStmtReader::VisitOMPTargetTeamsDistributeSimdDirective(
+    OMPTargetTeamsDistributeSimdDirective *D) {
+  VisitOMPLoopDirective(D);
+}
+
 //===----------------------------------------------------------------------===//
 // Cilk spawn, Cilk sync, Cilk for
 //===----------------------------------------------------------------------===//
@@ -2926,7 +2943,7 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
   llvm::BitstreamCursor &Cursor = F.DeclsCursor;
 
   // Map of offset to previously deserialized stmt. The offset points
-  /// just after the stmt record.
+  // just after the stmt record.
   llvm::DenseMap<uint64_t, Stmt *> StmtEntries;
 
 #ifndef NDEBUG
@@ -3673,6 +3690,22 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
       auto NumClauses = Record[ASTStmtReader::NumStmtFields];
       auto CollapsedNum = Record[ASTStmtReader::NumStmtFields + 1];
       S = OMPTargetTeamsDistributeParallelForDirective::CreateEmpty(
+          Context, NumClauses, CollapsedNum, Empty);
+      break;
+    }
+
+    case STMT_OMP_TARGET_TEAMS_DISTRIBUTE_PARALLEL_FOR_SIMD_DIRECTIVE: {
+      auto NumClauses = Record[ASTStmtReader::NumStmtFields];
+      auto CollapsedNum = Record[ASTStmtReader::NumStmtFields + 1];
+      S = OMPTargetTeamsDistributeParallelForSimdDirective::CreateEmpty(
+          Context, NumClauses, CollapsedNum, Empty);
+      break;
+    }
+
+    case STMT_OMP_TARGET_TEAMS_DISTRIBUTE_SIMD_DIRECTIVE: {
+      auto NumClauses = Record[ASTStmtReader::NumStmtFields];
+      auto CollapsedNum = Record[ASTStmtReader::NumStmtFields + 1];
+      S = OMPTargetTeamsDistributeSimdDirective::CreateEmpty(
           Context, NumClauses, CollapsedNum, Empty);
       break;
     }

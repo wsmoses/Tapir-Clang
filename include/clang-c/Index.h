@@ -2366,17 +2366,25 @@ enum CXCursorKind {
    */
   CXCursor_OMPTargetTeamsDistributeParallelForDirective = 277,
 
+  /** \brief OpenMP target teams distribute parallel for simd directive.
+   */
+  CXCursor_OMPTargetTeamsDistributeParallelForSimdDirective = 278,
+
+  /** \brief OpenMP target teams distribute simd directive.
+   */
+  CXCursor_OMPTargetTeamsDistributeSimdDirective = 279,
+
   /** \brief A _Cilk_spawn statement.
    */
-  CXCursor_CilkSpawnStmt                 = 278,
+  CXCursor_CilkSpawnStmt                 = 280,
 
   /** \brief A _Cilk_sync statement.
    */
-  CXCursor_CilkSyncStmt                  = 279,
+  CXCursor_CilkSyncStmt                  = 281,
 
   /** \brief A _Cilk_for statement.
    */
-  CXCursor_CilkForStmt                   = 280,
+  CXCursor_CilkForStmt                   = 282,
 
   CXCursor_LastStmt = CXCursor_CilkForStmt,
 
@@ -3015,8 +3023,9 @@ enum CXTypeKind {
   CXType_ObjCClass = 28,
   CXType_ObjCSel = 29,
   CXType_Float128 = 30,
+  CXType_Half = 31,
   CXType_FirstBuiltin = CXType_Void,
-  CXType_LastBuiltin  = CXType_ObjCSel,
+  CXType_LastBuiltin  = CXType_Half,
 
   CXType_Complex = 100,
   CXType_Pointer = 101,

@@ -136,6 +136,8 @@ def migrator_no_finalize_removal : Flag<["-"], "no-finalize-removal">,
 let Flags = [CC1Option, CC1AsOption, NoDriverOption] in {
 
 def debug_info_kind_EQ : Joined<["-"], "debug-info-kind=">;
+def debug_info_macro : Flag<["-"], "debug-info-macro">,
+  HelpText<"Emit macro debug information">;
 def dwarf_version_EQ : Joined<["-"], "dwarf-version=">;
 def debugger_tuning_EQ : Joined<["-"], "debugger-tuning=">;
 def fdebug_compilation_dir : Separate<["-"], "fdebug-compilation-dir">,
@@ -167,6 +169,9 @@ def disable_llvm_passes : Flag<["-"], "disable-llvm-passes">,
            "frontend by not running any LLVM passes at all">;
 def disable_llvm_optzns : Flag<["-"], "disable-llvm-optzns">,
   Alias<disable_llvm_passes>;
+def disable_lifetimemarkers : Flag<["-"], "disable-lifetime-markers">,
+  HelpText<"Disable lifetime-markers emission even when optimizations are "
+           "enabled">;
 def disable_red_zone : Flag<["-"], "disable-red-zone">,
   HelpText<"Do not emit code that uses the red zone.">;
 def dwarf_column_info : Flag<["-"], "dwarf-column-info">,
@@ -304,6 +309,9 @@ def fprofile_instrument_use_path_EQ :
 def flto_visibility_public_std:
     Flag<["-"], "flto-visibility-public-std">,
     HelpText<"Use public LTO visibility for classes in std and stdext namespaces">;
+def flto_unit: Flag<["-"], "flto-unit">,
+    HelpText<"Emit IR to support LTO unit features (CFI, whole program vtable opt)">;
+def fno_lto_unit: Flag<["-"], "fno-lto-unit">;
 
 //===----------------------------------------------------------------------===//
 // Dependency Output Options
@@ -426,6 +434,10 @@ def fmodules_local_submodule_visibility :
   Flag<["-"], "fmodules-local-submodule-visibility">,
   HelpText<"Enforce name visibility rules across submodules of the same "
            "top-level module.">;
+def fmodule_codegen :
+  Flag<["-"], "fmodules-codegen">,
+  HelpText<"Generate code for uses of this module that assumes an explicit "
+           "object file will be built for the module">;
 def fmodule_format_EQ : Joined<["-"], "fmodule-format=">,
   HelpText<"Select the container format for clang modules and PCH. "
            "Supported options are 'raw' and 'obj'.">;

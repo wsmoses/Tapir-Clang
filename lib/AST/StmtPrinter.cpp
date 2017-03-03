@@ -1250,6 +1250,18 @@ void StmtPrinter::VisitOMPTargetTeamsDistributeParallelForDirective(
   PrintOMPExecutableDirective(Node);
 }
 
+void StmtPrinter::VisitOMPTargetTeamsDistributeParallelForSimdDirective(
+    OMPTargetTeamsDistributeParallelForSimdDirective *Node) {
+  Indent() << "#pragma omp target teams distribute parallel for simd ";
+  PrintOMPExecutableDirective(Node);
+}
+
+void StmtPrinter::VisitOMPTargetTeamsDistributeSimdDirective(
+    OMPTargetTeamsDistributeSimdDirective *Node) {
+  Indent() << "#pragma omp target teams distribute simd ";
+  PrintOMPExecutableDirective(Node);
+}
+
 //===----------------------------------------------------------------------===//
 //  Expr printing methods.
 //===----------------------------------------------------------------------===//

@@ -774,6 +774,7 @@ static bool isImplicitlyDeclaredMemberFunctionName(DeclarationName Name) {
 /// that need to be declared in the given declaration context, do so.
 static void DeclareImplicitMemberFunctionsWithName(Sema &S,
                                                    DeclarationName Name,
+                                                   SourceLocation Loc,
                                                    const DeclContext *DC) {
   if (!DC)
     return;
@@ -816,6 +817,10 @@ static void DeclareImplicitMemberFunctionsWithName(Sema &S,
     }
     break;
 
+  case DeclarationName::CXXDeductionGuideName:
+    S.DeclareImplicitDeductionGuides(Name.getCXXDeductionGuideTemplate(), Loc);
+    break;
+
   default:
     break;
   }
@@ -828,7 +833,8 @@ static bool LookupDirect(Sema &S, LookupResult &R, const DeclContext *DC) {
 
   // Lazily declare C++ special member functions.
   if (S.getLangOpts().CPlusPlus)
-    DeclareImplicitMemberFunctionsWithName(S, R.getLookupName(), DC);
+    DeclareImplicitMemberFunctionsWithName(S, R.getLookupName(), R.getNameLoc(),
+                                           DC);
 
   // Perform lookup into this declaration context.
   DeclContext::lookup_result DR = DC->lookup(R.getLookupName());
@@ -1041,7 +1047,7 @@ bool Sema::CppLookupName(LookupResult &R, Scope *S) {
   if (isImplicitlyDeclaredMemberFunctionName(Name)) {
     for (Scope *PreS = S; PreS; PreS = PreS->getParent())
       if (DeclContext *DC = PreS->getEntity())
-        DeclareImplicitMemberFunctionsWithName(*this, Name, DC);
+        DeclareImplicitMemberFunctionsWithName(*this, Name, R.getNameLoc(), DC);
   }
 
   // Implicitly declare member functions with the name we're looking for, if in
@@ -2694,6 +2700,7 @@ addAssociatedClassesAndNamespaces(AssociatedLookup &Result, QualType Ty) {
 
     // Non-deduced auto types only get here for error cases.
     case Type::Auto:
+    case Type::DeducedTemplateSpecialization:
       break;
 
     // If T is an Objective-C object or interface type, or a pointer to an 
@@ -2831,6 +2838,9 @@ Sema::SpecialMemberOverloadResult *Sema::LookupSpecialMember(CXXRecordDecl *RD,
     assert((SM != CXXDefaultConstructor && SM != CXXDestructor) &&
            "parameter-less special members can't have qualified arguments");
 
+  // FIXME: Get the caller to pass in a location for the lookup.
+  SourceLocation LookupLoc = RD->getLocation();
+
   llvm::FoldingSetNodeID ID;
   ID.AddPointer(RD);
   ID.AddInteger(SM);
@@ -2912,7 +2922,7 @@ Sema::SpecialMemberOverloadResult *Sema::LookupSpecialMember(CXXRecordDecl *RD,
       VK = VK_RValue;
   }
 
-  OpaqueValueExpr FakeArg(SourceLocation(), ArgType, VK);
+  OpaqueValueExpr FakeArg(LookupLoc, ArgType, VK);
 
   if (SM != CXXDefaultConstructor) {
     NumArgs = 1;
@@ -2926,13 +2936,13 @@ Sema::SpecialMemberOverloadResult *Sema::LookupSpecialMember(CXXRecordDecl *RD,
   if (VolatileThis)
     ThisTy.addVolatile();
   Expr::Classification Classification =
-    OpaqueValueExpr(SourceLocation(), ThisTy,
+    OpaqueValueExpr(LookupLoc, ThisTy,
                     RValueThis ? VK_RValue : VK_LValue).Classify(Context);
 
   // Now we perform lookup on the name we computed earlier and do overload
   // resolution. Lookup is only performed directly into the class since there
   // will always be a (possibly implicit) declaration to shadow any others.
-  OverloadCandidateSet OCS(RD->getLocation(), OverloadCandidateSet::CSK_Normal);
+  OverloadCandidateSet OCS(LookupLoc, OverloadCandidateSet::CSK_Normal);
   DeclContext::lookup_result R = RD->lookup(Name);
 
   if (R.empty()) {
@@ -2987,7 +2997,7 @@ Sema::SpecialMemberOverloadResult *Sema::LookupSpecialMember(CXXRecordDecl *RD,
   }
 
   OverloadCandidateSet::iterator Best;
-  switch (OCS.BestViableFunction(*this, SourceLocation(), Best)) {
+  switch (OCS.BestViableFunction(*this, LookupLoc, Best)) {
     case OR_Success:
       Result->setMethod(cast<CXXMethodDecl>(Best->Function));
       Result->setKind(SpecialMemberOverloadResult::Success);
@@ -3425,6 +3435,12 @@ NamedDecl *VisibleDeclsRecord::checkHidden(NamedDecl *ND) {
       if (D->getUnderlyingDecl()->isFunctionOrFunctionTemplate() &&
           ND->getUnderlyingDecl()->isFunctionOrFunctionTemplate() &&
           SM == ShadowMaps.rbegin())
+        continue;
+
+      // A shadow declaration that's created by a resolved using declaration
+      // is not hidden by the same using declaration.
+      if (isa<UsingShadowDecl>(ND) && isa<UsingDecl>(D) &&
+          cast<UsingShadowDecl>(ND)->getUsingDecl() == D)
         continue;
 
       // We've found a declaration that hides this one.
