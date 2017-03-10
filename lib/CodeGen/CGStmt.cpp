@@ -1242,6 +1242,9 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
     // As long as the condition is true, iterate the loop.
     llvm::BasicBlock *DetachBlock = createBasicBlock("pfor.detach");
+    // Emit extra entry block for detached body, to ensure that this detached
+    // entry block has just one predecessor.
+    llvm::BasicBlock *ForBodyEntry = createBasicBlock("pfor.body.entry");
     llvm::BasicBlock *ForBody = createBasicBlock("pfor.body");
 
     // C99 6.8.5p2/p4: The first substatement is executed if the expression
@@ -1260,12 +1263,15 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
     }
 
     EmitBlock(DetachBlock);
-    Builder.CreateDetach(ForBody, Continue.getBlock());
+    Builder.CreateDetach(ForBodyEntry, Continue.getBlock());
 
     llvm::Value *Undef = llvm::UndefValue::get(Int32Ty);
-    AllocaInsertPt = new llvm::BitCastInst(Undef, Int32Ty, "", ForBody);
+    AllocaInsertPt = new llvm::BitCastInst(Undef, Int32Ty, "", ForBodyEntry);
     // if (Builder.isNamePreserving())
     //   AllocaInsertPt->setName("detallocapt");
+
+    EmitBlock(ForBodyEntry);
+    Builder.CreateBr(ForBody);
 
     EmitBlock(ForBody);
   }
