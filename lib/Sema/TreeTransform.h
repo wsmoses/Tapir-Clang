@@ -1296,9 +1296,9 @@ public:
   StmtResult RebuildCilkForStmt(SourceLocation ForLoc, SourceLocation LParenLoc,
                                 Stmt *Init, Sema::ConditionResult Cond,
                                 Sema::FullExprArg Inc, SourceLocation RParenLoc,
-                                Stmt *Body) {
+                                VarDecl *LoopVar, Stmt *Body) {
     return getSema().ActOnCilkForStmt(ForLoc, LParenLoc, Init, Cond,
-                                      Inc, RParenLoc, Body);
+                                      Inc, RParenLoc, Body, LoopVar);
   }
 
   /// \brief Build a new goto statement.
@@ -12475,10 +12475,10 @@ TreeTransform<Derived>::TransformCilkForStmt(CilkForStmt *S) {
   if (Init.isInvalid())
     return StmtError();
 
-  // In OpenMP loop region loop control variable must be captured and be
-  // private. Perform analysis of first part (if any).
-  if (getSema().getLangOpts().OpenMP && Init.isUsable())
-    getSema().ActOnOpenMPLoopInitialization(S->getCilkForLoc(), Init.get());
+  // // In OpenMP loop region loop control variable must be captured and be
+  // // private. Perform analysis of first part (if any).
+  // if (getSema().getLangOpts().OpenMP && Init.isUsable())
+  //   getSema().ActOnOpenMPLoopInitialization(S->getCilkForLoc(), Init.get());
 
   // Transform the condition
   Sema::ConditionResult Cond = getDerived().TransformCondition(
@@ -12496,7 +12496,16 @@ TreeTransform<Derived>::TransformCilkForStmt(CilkForStmt *S) {
   if (S->getInc() && !FullInc.get())
     return StmtError();
 
-  // Transform loop body.
+  // Transform the extracted loop-variable declaration
+  VarDecl *LoopVar = nullptr;
+  if (VarDecl *LV = S->getLoopVariable()) {
+    LoopVar = dyn_cast<VarDecl>(
+        getDerived().TransformDefinition(LV->getLocation(), LV));
+    if (!LoopVar)
+      return StmtError();
+  }
+
+  // Transform loop body
   StmtResult Body = getDerived().TransformStmt(S->getBody());
   if (Body.isInvalid())
     return StmtError();
@@ -12505,12 +12514,14 @@ TreeTransform<Derived>::TransformCilkForStmt(CilkForStmt *S) {
       Init.get() == S->getInit() &&
       Cond.get() == std::make_pair((clang::VarDecl*)nullptr, S->getCond()) &&
       Inc.get() == S->getInc() &&
+      LoopVar == S->getLoopVariable() &&
       Body.get() == S->getBody())
     return S;
 
   return getDerived().RebuildCilkForStmt(S->getCilkForLoc(), S->getLParenLoc(),
-                                     Init.get(), Cond, FullInc,
-                                     S->getRParenLoc(), Body.get());
+                                         Init.get(), Cond, FullInc,
+                                         S->getRParenLoc(), LoopVar,
+                                         Body.get());
 }
 
 } // end namespace clang

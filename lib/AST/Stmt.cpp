@@ -1137,7 +1137,7 @@ Stmt* CilkSpawnStmt::getSpawnedStmt() {
 // CilkForStmt
 CilkForStmt::CilkForStmt(const ASTContext &C, Stmt *Init,
                          Expr *Cond, /* VarDecl *condVar, */
-                         Expr *Inc, Stmt *Body, /* Expr *LoopCount, */
+                         Expr *Inc, VarDecl *LoopVar, Stmt *Body,
                          SourceLocation CFL, SourceLocation LP, SourceLocation RP)
   : Stmt(CilkForStmtClass), CilkForLoc(CFL), LParenLoc(LP), RParenLoc(RP)
 {
@@ -1145,6 +1145,7 @@ CilkForStmt::CilkForStmt(const ASTContext &C, Stmt *Init,
   SubExprs[COND] = Cond;
   // setConditionVariable(C, condVar);
   SubExprs[INC] = Inc;
+  setLoopVariable(C, LoopVar);
   SubExprs[BODY] = Body;
   // SubExprs[LOOP_COUNT] = LoopCount;
 }
@@ -1167,3 +1168,22 @@ CilkForStmt::CilkForStmt(const ASTContext &C, Stmt *Init,
 //   SubExprs[CONDVAR] = new (C) DeclStmt(DeclGroupRef(V), VarRange.getBegin(),
 //                                        VarRange.getEnd());
 // }
+
+VarDecl *CilkForStmt::getLoopVariable() const {
+  if (!SubExprs[LOOPVAR])
+    return nullptr;
+
+  DeclStmt *DS = cast<DeclStmt>(SubExprs[LOOPVAR]);
+  return cast<VarDecl>(DS->getSingleDecl());
+}
+
+void CilkForStmt::setLoopVariable(const ASTContext &C, VarDecl *V) {
+  if (!V) {
+    SubExprs[LOOPVAR] = nullptr;
+    return;
+  }
+
+  SourceRange VarRange = V->getSourceRange();
+  SubExprs[LOOPVAR] = new (C) DeclStmt(DeclGroupRef(V), VarRange.getBegin(),
+                                       VarRange.getEnd());
+}

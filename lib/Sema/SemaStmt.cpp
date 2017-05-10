@@ -2767,7 +2767,16 @@ StmtResult
 Sema::ActOnCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *SubStmt) {
   DiagnoseUnusedExprResult(SubStmt);
 
-  return new (Context) CilkSpawnStmt(SpawnLoc, SubStmt);
+  PushFunctionScope();
+  getCurFunction()->setHasBranchProtectedScope();
+  PushExpressionEvaluationContext(PotentiallyEvaluated);
+
+  StmtResult Result = new (Context) CilkSpawnStmt(SpawnLoc, SubStmt);
+
+  PopExpressionEvaluationContext();
+  PopFunctionScopeInfo();
+
+  return Result;
 }
 
 StmtResult
@@ -2875,13 +2884,17 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
     LimitExpr = Cond->getLHS();
 
   // Get the loop stride.
-  Expr *Stride = GetCilkForStride(*this, Decls, Increment);
+  Expr *Stride = nullptr;
+  if (const UnaryOperator *UO =
+      dyn_cast_or_null<UnaryOperator>(Increment)) {
+    if (UO->isIncrementOp())
+      Stride = ActOnIntegerConstant(Increment->getExprLoc(), 1).get();
+    else if (UO->isDecrementOp())
+      Stride = ActOnIntegerConstant(Increment->getExprLoc(), -1).get();
+  } else {
+    Stride = GetCilkForStride(*this, Decls, Increment);
+  }
   if (!Stride)
-    return StmtEmpty();
-
-  const CompoundAssignOperator *CAO =
-    dyn_cast<CompoundAssignOperator>(Increment);
-  if (!CAO)
     return StmtEmpty();
 
   // Determine the type of comparison.
@@ -2906,7 +2919,11 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
     return StmtEmpty();
 
   // Compute the range of this _Cilk_for loop: limit - init.
-  ExprResult Range = BuildBinOp(S, CilkForLoc, BO_Sub, LimitExpr, LoopVarInit);
+  ExprResult CastInit = ImplicitCastExpr::Create(Context, LimitExpr->getType(),
+                                                 CK_IntegralCast, LoopVarInit,
+                                                 nullptr, VK_RValue);
+  ExprResult Range = BuildBinOp(S, CilkForLoc, BO_Sub, LimitExpr,
+                                CastInit.get());
   if (Range.isInvalid())
     return StmtError();
 
@@ -2982,14 +2999,23 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
   // Create a new increment operation on the new beginning variable, and add it
   // to the existing increment operation.
   ExprResult NewInc;
-  switch (CAO->getOpcode()) {
-  default: break;  // Should not reach this case if we have a Stride.
-  case BO_AddAssign:
-    NewInc = BuildUnaryOp(S, CilkForLoc, UO_PreInc, BeginRef.get());
-    break;
-  case BO_SubAssign:
-    NewInc = BuildUnaryOp(S, CilkForLoc, UO_PreDec, BeginRef.get());
-    break;
+  if (const CompoundAssignOperator *CAO =
+      dyn_cast<CompoundAssignOperator>(Increment)) {
+    switch (CAO->getOpcode()) {
+    default: break;  // Should not reach this case if we have a Stride.
+    case BO_AddAssign:
+      NewInc = BuildUnaryOp(S, CilkForLoc, UO_PreInc, BeginRef.get());
+      break;
+    case BO_SubAssign:
+      NewInc = BuildUnaryOp(S, CilkForLoc, UO_PreDec, BeginRef.get());
+      break;
+    }
+  } else if (const UnaryOperator *UO =
+             dyn_cast_or_null<UnaryOperator>(Increment)) {
+    if (UO->isIncrementOp())
+      NewInc = BuildUnaryOp(S, CilkForLoc, UO_PreInc, BeginRef.get());
+    else if (UO->isDecrementOp())
+      NewInc = BuildUnaryOp(S, CilkForLoc, UO_PreDec, BeginRef.get());
   }
   if (NewInc.isInvalid())
     return StmtError();
@@ -3003,16 +3029,8 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
                           BeginRef.get(), Stride).get());
   AddInitializerToDecl(LoopVar, NewLoopVarInit.get(), /*DirectInit=*/false);
 
-  Stmt* NewBody;
-  if (isa<NullStmt>(Body))
-    NewBody = new (Context) CompoundStmt(Context, { LoopVarDS },
-                                         LParenLoc, RParenLoc);
-  else
-    NewBody = new (Context) CompoundStmt(Context, { LoopVarDS, Body },
-                                         LParenLoc, RParenLoc);
-
-  return new (Context) CilkForStmt(Context, NewInit.get(),
-                                   NewCond.get(), NewInc.get(), NewBody,
+  return new (Context) CilkForStmt(Context, NewInit.get(), NewCond.get(),
+                                   NewInc.get(), LoopVar, Body,
                                    CilkForLoc, LParenLoc, RParenLoc);
 }
 
@@ -3031,7 +3049,7 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
 /// can swap the positions of loop-var-expr and end-expr.
 StmtResult Sema::LiftCilkForLoopLimit(SourceLocation CilkForLoc,
                                       Stmt *First, Expr **Second) {
-  if (!First || !Second)
+  if (!First || !Second || !*Second)
     return StmtEmpty();
 
   // Get the single loop variable declared.
@@ -3252,7 +3270,7 @@ StmtResult Sema::LiftCilkForLoopLimit(SourceLocation CilkForLoc,
 StmtResult
 Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
                        Stmt *First, ConditionResult Second, FullExprArg Third,
-                       SourceLocation RParenLoc, Stmt *Body) {
+                       SourceLocation RParenLoc, Stmt *Body, VarDecl *LoopVar) {
   if (!getLangOpts().CPlusPlus) {
     if (DeclStmt *DS = dyn_cast_or_null<DeclStmt>(First)) {
       // C99 6.8.5p3: The declaration part of a 'for' statement shall only
@@ -3292,6 +3310,11 @@ Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
   DiagnoseUnusedExprResult(Increment);
   DiagnoseUnusedExprResult(Body);
 
+  if (LoopVar)
+    return new (Context) CilkForStmt(Context, First, Condition, Increment,
+                                     LoopVar, Body, CilkForLoc, LParenLoc,
+                                     RParenLoc);
+
   // Attempt to process this loop as a simple _Cilk_for loop.
   StmtResult SimpleCilkFor =
     HandleSimpleCilkForStmt(CilkForLoc, LParenLoc, First, Condition, Increment,
@@ -3312,16 +3335,15 @@ Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
   if (isa<NullStmt>(Body))
     getCurCompoundScope().setHasEmptyLoopBodies();
     
-  // Attempt to find the loop limit and extract it into its own
-  // declaration.
+  // Attempt to find the loop limit and extract it into its own declaration.
   StmtResult NewInit = LiftCilkForLoopLimit(CilkForLoc, First, &Condition);
   assert(!NewInit.isInvalid());
   if (!NewInit.isUnset())
     return new (Context) CilkForStmt(Context, NewInit.get(), Condition,
-                                     Increment, Body, CilkForLoc, LParenLoc,
+                                     Increment, nullptr, Body, CilkForLoc, LParenLoc,
                                      RParenLoc);
   return new (Context) CilkForStmt(Context, First, Condition,
-                                   Increment, Body, CilkForLoc, LParenLoc,
+                                   Increment, nullptr, Body, CilkForLoc, LParenLoc,
                                    RParenLoc);
 }
 

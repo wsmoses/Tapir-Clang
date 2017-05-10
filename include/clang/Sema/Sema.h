@@ -3617,7 +3617,8 @@ public:
                               ConditionResult second,
                               FullExprArg third,
                               SourceLocation RParenLoc,
-                              Stmt *Body);
+                              Stmt *Body,
+                              VarDecl *LoopVar = nullptr);
 
   StmtResult BuildCilkForStmt(SourceLocation CilkForLoc,
                               SourceLocation LParenLoc,

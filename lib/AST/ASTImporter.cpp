@@ -5751,6 +5751,13 @@ Stmt *ASTNodeImporter::VisitCilkForStmt(CilkForStmt *S) {
   //   if (!ToConditionVariable)
   //     return nullptr;
   // }
+  VarDecl *ToLoopVariable = nullptr;
+  if (VarDecl *FromLoopVariable = S->getLoopVariable()) {
+    ToLoopVariable =
+      dyn_cast_or_null<VarDecl>(Importer.Import(FromLoopVariable));
+    if (!ToLoopVariable)
+      return nullptr;
+  }
   Expr *ToInc = Importer.Import(S->getInc());
   if (!ToInc && S->getInc())
     return nullptr;
@@ -5764,7 +5771,7 @@ Stmt *ASTNodeImporter::VisitCilkForStmt(CilkForStmt *S) {
                                                    ToInit,
                                                    ToCondition,
                                                    // ToConditionVariable,
-                                                   ToInc, ToBody,
+                                                   ToInc, ToLoopVariable, ToBody,
                                                    ToForLoc, ToLParenLoc,
                                                    ToRParenLoc);
 }

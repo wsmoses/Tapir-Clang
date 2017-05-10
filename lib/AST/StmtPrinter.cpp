@@ -2665,6 +2665,11 @@ void StmtPrinter::VisitCilkForStmt(CilkForStmt *Node) {
   }
   OS << ") ";
 
+  if (const DeclStmt *DS = Node->getLoopVarDecl()) {
+    OS << "{\n";
+    PrintRawDeclStmt(DS);
+  }
+
   if (CompoundStmt *CS = dyn_cast<CompoundStmt>(Node->getBody())) {
     PrintRawCompoundStmt(CS);
     OS << "\n";
@@ -2672,6 +2677,9 @@ void StmtPrinter::VisitCilkForStmt(CilkForStmt *Node) {
     OS << "\n";
     PrintStmt(Node->getBody());
   }
+
+  if (Node->getLoopVarDecl())
+    Indent() << "}";
 }
 
 //===----------------------------------------------------------------------===//

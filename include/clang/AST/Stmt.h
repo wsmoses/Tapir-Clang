@@ -2287,16 +2287,14 @@ public:
 /// CilkForStmt - This represents a '_Cilk_for(init;cond;int)' stmt.
 class CilkForStmt : public Stmt {
   SourceLocation CilkForLoc;
-  enum { INIT, COND, INC, BODY,
-         /* LOOP_COUNT, */
+  enum { INIT, COND, INC, LOOPVAR, BODY,
          END_EXPR };
   Stmt* SubExprs[END_EXPR]; // SubExprs[INIT] is an expression or declstmt.
   SourceLocation LParenLoc, RParenLoc;
 
 public:
   CilkForStmt(const ASTContext &C, Stmt *Init,
-              Expr *Cond, /* VarDecl *condVar, */
-              Expr *Inc, Stmt *Body, /* Expr *LoopCount, */
+              Expr *Cond, Expr *Inc, VarDecl *LoopVar, Stmt *Body,
               SourceLocation CFL, SourceLocation LP, SourceLocation RP);
 
   /// \brief Build an empty for statement.
@@ -2321,19 +2319,20 @@ public:
   //   return reinterpret_cast<DeclStmt*>(SubExprs[CONDVAR]);
   // }
 
+  VarDecl *getLoopVariable() const;
+  void setLoopVariable(const ASTContext &C, VarDecl *V);
+
   Expr *getCond() { return reinterpret_cast<Expr*>(SubExprs[COND]); }
   Expr *getInc()  { return reinterpret_cast<Expr*>(SubExprs[INC]); }
   Stmt *getBody() { return SubExprs[BODY]; }
-  // /// \brief Retrieve the loop count expression.
-  // Expr *getLoopCount() { return reinterpret_cast<Expr*>(SubExprs[LOOP_COUNT]);}
 
   const Stmt *getInit() const { return SubExprs[INIT]; }
   const Expr *getCond() const { return reinterpret_cast<Expr*>(SubExprs[COND]);}
   const Expr *getInc()  const { return reinterpret_cast<Expr*>(SubExprs[INC]); }
+  const DeclStmt *getLoopVarDecl() const {
+    return reinterpret_cast<DeclStmt*>(SubExprs[LOOPVAR]);
+  }
   const Stmt *getBody() const { return SubExprs[BODY]; }
-  // const Expr *getLoopCount() const {
-  //   return reinterpret_cast<Expr *>(SubExprs[LOOP_COUNT]);
-  // }
 
   void setInit(Stmt *S) { SubExprs[INIT] = S; }
   void setCond(Expr *E) { SubExprs[COND] = reinterpret_cast<Stmt*>(E); }

@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CodeGenFunction.h"
+#include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CodeGenModule.h"
 #include "TargetInfo.h"
@@ -1223,10 +1224,18 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
   // Create a cleanup scope for the condition variable cleanups.
   LexicalScope ConditionScope(*this, S.getSourceRange());
 
-  auto temp = AllocaInsertPt;
+  // Emit any necessary exception-handling allocations
+  getInvokeDest();
+
+  auto OldAllocaInsertPt = AllocaInsertPt;
 
   llvm::BasicBlock *SyncContinueBlock = createBasicBlock("pfor.end.continue");
   bool madeSync = false;
+  const VarDecl *LoopVar = S.getLoopVariable();
+  RValue LoopVarInitRV;
+  llvm::BasicBlock *DetachBlock;
+  llvm::BasicBlock *ForBodyEntry;
+  llvm::BasicBlock *ForBody;
   {
     // // If the for statement has a condition scope, emit the local variable
     // // declaration.
@@ -1241,11 +1250,11 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
       ExitBlock = createBasicBlock("pfor.cond.cleanup");
 
     // As long as the condition is true, iterate the loop.
-    llvm::BasicBlock *DetachBlock = createBasicBlock("pfor.detach");
+    DetachBlock = createBasicBlock("pfor.detach");
     // Emit extra entry block for detached body, to ensure that this detached
     // entry block has just one predecessor.
-    llvm::BasicBlock *ForBodyEntry = createBasicBlock("pfor.body.entry");
-    llvm::BasicBlock *ForBody = createBasicBlock("pfor.body");
+    ForBodyEntry = createBasicBlock("pfor.body.entry");
+    ForBody = createBasicBlock("pfor.body");
 
     // C99 6.8.5p2/p4: The first substatement is executed if the expression
     // compares unequal to 0.  The condition must be a scalar type.
@@ -1263,6 +1272,10 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
     }
 
     EmitBlock(DetachBlock);
+
+    if (LoopVar)
+      LoopVarInitRV = EmitAnyExprToTemp(LoopVar->getInit());
+
     Builder.CreateDetach(ForBodyEntry, Continue.getBlock());
 
     llvm::Value *Undef = llvm::UndefValue::get(Int32Ty);
@@ -1271,10 +1284,25 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
     //   AllocaInsertPt->setName("detallocapt");
 
     EmitBlock(ForBodyEntry);
-    Builder.CreateBr(ForBody);
-
-    EmitBlock(ForBody);
   }
+
+  // Create a cleanup scope for the loop-variable cleanups.
+  RunCleanupsScope DetachedScope(*this);
+
+  if (LoopVar) {
+    AutoVarEmission LVEmission = EmitAutoVarAlloca(*LoopVar);
+    QualType type = LoopVar->getType();
+    Address Loc = LVEmission.getObjectAddress(*this);
+    LValue LV = MakeAddrLValue(Loc, type);
+    LV.setNonGC(true);
+    EmitStoreThroughLValue(LoopVarInitRV, LV, true);
+    EmitAutoVarCleanups(LVEmission);
+  }
+
+  Builder.CreateBr(ForBody);
+
+  EmitBlock(ForBody);
+
   incrementProfileCounter(&S);
 
   {
@@ -1287,10 +1315,13 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
   {
     EmitBlock(Preattach.getBlock());
+
+    DetachedScope.ForceCleanup();
+
     Builder.CreateReattach(Continue.getBlock());
 
     //AllocaInsertPt->eraseFromParent();
-    AllocaInsertPt = temp;
+    AllocaInsertPt = OldAllocaInsertPt;
   }
 
   // Emit the increment next.
