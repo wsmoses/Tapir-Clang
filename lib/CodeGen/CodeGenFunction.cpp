@@ -65,8 +65,8 @@ CodeGenFunction::CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext)
       CurFn(nullptr), ReturnValue(Address::invalid()),
       CapturedStmtInfo(nullptr), SanOpts(CGM.getLangOpts().Sanitize),
       IsSanitizerScope(false), CurFuncIsThunk(false), AutoreleaseResult(false),
-      SawAsmBlock(false), IsOutlinedSEHHelper(false), BlockInfo(nullptr),
-      BlockPointer(nullptr), LambdaThisCaptureField(nullptr),
+      SawAsmBlock(false), IsSpawned(false), IsOutlinedSEHHelper(false),
+      BlockInfo(nullptr), BlockPointer(nullptr), LambdaThisCaptureField(nullptr),
       NormalCleanupDest(nullptr), NextCleanupDestIndex(1),
       FirstBlockInfo(nullptr), EHResumeBlock(nullptr), ExceptionSlot(nullptr),
       EHSelectorSlot(nullptr), DebugInfo(CGM.getModuleDebugInfo()),
@@ -2037,6 +2037,19 @@ CodeGenFunction::SanitizerScope::SanitizerScope(CodeGenFunction *CGF)
 
 CodeGenFunction::SanitizerScope::~SanitizerScope() {
   CGF->IsSanitizerScope = false;
+}
+
+CodeGenFunction::SpawnedScope::SpawnedScope(CodeGenFunction *CGF)
+    : CGF(CGF), OldIsSpawned(CGF->IsSpawned) {
+  CGF->IsSpawned = false;
+}
+
+CodeGenFunction::SpawnedScope::~SpawnedScope() {
+  RestoreOldScope();
+}
+
+void CodeGenFunction::SpawnedScope::RestoreOldScope() {
+  CGF->IsSpawned = OldIsSpawned;
 }
 
 void CodeGenFunction::InsertHelper(llvm::Instruction *I,

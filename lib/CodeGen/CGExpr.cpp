@@ -3880,11 +3880,15 @@ RValue CodeGenFunction::EmitCallExpr(const CallExpr *E,
   CGCallee callee = EmitCallee(E->getCallee());
 
   if (callee.isBuiltin()) {
+    if (IsSpawned)
+      llvm::dbgs() << "Detached call to builtin!\n";
     return EmitBuiltinExpr(callee.getBuiltinDecl(), callee.getBuiltinID(),
                            E, ReturnValue);
   }
 
   if (callee.isPseudoDestructor()) {
+    if (IsSpawned)
+      llvm::dbgs() << "Detached call to psudeodestructor!\n";
     return EmitCXXPseudoDestructorExpr(callee.getPseudoDestructorExpr());
   }
 
@@ -4135,6 +4139,8 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType, const CGCallee &OrigCallee
   assert(CalleeType->isFunctionPointerType() &&
          "Call must have function pointer type!");
 
+  SpawnedScope SpawnScp(this);
+
   const Decl *TargetDecl = OrigCallee.getAbstractInfo().getCalleeDecl();
 
   if (const FunctionDecl *FD = dyn_cast_or_null<FunctionDecl>(TargetDecl))
@@ -4298,7 +4304,7 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType, const CGCallee &OrigCallee
     CalleePtr = Builder.CreateBitCast(CalleePtr, CalleeTy, "callee.knr.cast");
     Callee.setFunctionPointer(CalleePtr);
   }
-
+  SpawnScp.RestoreOldScope();
   return EmitCall(FnInfo, Callee, ReturnValue, Args);
 }
 

@@ -3569,11 +3569,54 @@ void CodeGenFunction::deferPlaceholderReplacement(llvm::Instruction *Old,
   DeferredReplacements.push_back(std::make_pair(Old, New));
 }
 
+static RValue EmitDetachedCall(CodeGenFunction &CGF,
+                               const CGFunctionInfo &CallInfo,
+                               const CGCallee &Callee,
+                               ReturnValueSlot ReturnValue,
+                               const CallArgList &CallArgs,
+                               llvm::Instruction **callOrInvoke) {
+  RValue Result;
+
+  // Create the detached and continue blocks.
+  llvm::BasicBlock *DetachedBlock = CGF.createBasicBlock("det.achd");
+  llvm::BasicBlock *ContinueBlock = CGF.createBasicBlock("det.cont");
+
+  // Create the detach
+  CGF.Builder.CreateDetach(DetachedBlock, ContinueBlock);
+
+  // Set the detached block as the new alloca insertion point.
+  auto OldAllocaInsertPt = CGF.AllocaInsertPt;
+  llvm::Value *Undef = llvm::UndefValue::get(CGF.Int32Ty);
+  CGF.AllocaInsertPt = new llvm::BitCastInst(Undef, CGF.Int32Ty, "",
+                                             DetachedBlock);
+
+  // Emit the call in the detached block.
+  CGF.EmitBlock(DetachedBlock);
+  Result = CGF.EmitCall(CallInfo, Callee, ReturnValue, CallArgs, callOrInvoke);
+
+  // The CFG path into the spawned statement should terminate with a `reattach'.
+  CGF.Builder.CreateReattach(ContinueBlock);
+
+  // Restore the alloca insertion point.
+  CGF.AllocaInsertPt = OldAllocaInsertPt;
+
+  // Emit the continue block.
+  CGF.EmitBlock(ContinueBlock);
+  return Result;
+}
+
 RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
                                  const CGCallee &Callee,
                                  ReturnValueSlot ReturnValue,
                                  const CallArgList &CallArgs,
                                  llvm::Instruction **callOrInvoke) {
+  if (IsSpawned) {
+    IsSpawned = false;
+    RValue RV = EmitDetachedCall(*this, CallInfo, Callee, ReturnValue, CallArgs,
+                                 callOrInvoke);
+    IsSpawned = true;
+    return RV;
+  }
   // FIXME: We no longer need the types from CallArgs; lift up and simplify.
 
   assert(Callee.isOrdinary());

@@ -330,6 +330,19 @@ public:
   /// potentially set the return value.
   bool SawAsmBlock;
 
+  /// In Cilk, whether the current call/invoke is spawned.
+  bool IsSpawned;
+
+  /// \brief RAII object to set/unset CodeGenFunction::IsSpawned.
+  class SpawnedScope {
+    CodeGenFunction *CGF;
+    bool OldIsSpawned;
+  public:
+    SpawnedScope(CodeGenFunction *CGF);
+    ~SpawnedScope();
+    void RestoreOldScope();
+  };
+
   const FunctionDecl *CurSEHParent = nullptr;
 
   /// True if the current function is an outlined SEH helper. This can be a

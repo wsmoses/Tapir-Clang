@@ -1119,50 +1119,71 @@ void CodeGenFunction::EmitReturnStmt(const ReturnStmt &S) {
   EmitBranchThroughCleanup(ReturnBlock);
 }
 
-void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
+/// \brief Cleanup to ensure parent stack frame is synced.
+struct ImplicitSyncCleanup : public EHScopeStack::Cleanup {
+public:
+  ImplicitSyncCleanup() {}
+  void Emit(CodeGenFunction &CGF, Flags F) {
+    if (F.isForEHCleanup()) {
+      llvm::BasicBlock *ContinueBlock = CGF.createBasicBlock("sync.continue");
+      CGF.Builder.CreateSync(ContinueBlock);
+      CGF.EmitBlock(ContinueBlock);
+    }
+  }
+};
 
-  llvm::BasicBlock *DetachedBlock = createBasicBlock("det.achd");
-  llvm::BasicBlock *ContinueBlock = createBasicBlock("det.cont");
+void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
+  // Check if the exception from this detach might be caught
+  EHScopeStack::iterator I = EHStack.begin(), E = EHStack.end();
+  for ( ; I != E; ++I)
+    if (EHScope::Catch == I->getKind() ||
+        EHScope::Filter == I->getKind())
+      break;
+  bool NonTrivialEH = (I != E);
+
+  if (NonTrivialEH)
+    llvm::dbgs() << "Non-trivial exception handling for cilk_spawn.\n";
+
+  if (NonTrivialEH) {
+    // The spawned function throws an exception that gets caught.  We need to
+    // handle the EH stack in a special manner.
+    //
+    // TODO: Replace this catch-all with a special cleanup block that can be
+    // separated from ordinary EH block set.
+    EHCatchScope *CatchScope = EHStack.pushCatch(1);
+    CatchScope->setCatchAllHandler(0, getEHResumeBlock(false));
+  }
+
+  // EHStack.pushCleanup<ImplicitSyncCleanup>(EHCleanup);
 
   // Handle spawning of calls in a special manner, to evaluate
   // arguments before spawn.
-  const CallExpr* callExpr = nullptr;
-  llvm::CallInst* finalInst = nullptr;
-  if ((callExpr = dyn_cast_or_null<CallExpr>(S.getSpawnedStmt()))) {
-    // Remember the block we came in on.
-    llvm::BasicBlock *incoming = Builder.GetInsertBlock();
-    assert(incoming && "expression emission must have an insertion point");
+  if (const CallExpr *CE = dyn_cast_or_null<CallExpr>(S.getSpawnedStmt())) {
+    // Emit the call
+    IsSpawned = true;
+    EmitCallExpr(CE, ReturnValueSlot());
+    IsSpawned = false;
 
-    EmitIgnoredExpr(callExpr);
+    // Pop the special catch scope if need be.
+    if (NonTrivialEH)
+      popCatchScope();
 
-    llvm::BasicBlock *outgoing = Builder.GetInsertBlock();
-    assert(outgoing && "expression emission cleared block!");
-
-    // The expression emitters assume (reasonably!) that the insertion
-    // point is always set.  To maintain that, the call-emission code
-    // for noreturn functions has to enter a new block with no
-    // predecessors.  We want to kill that block and mark the current
-    // insertion point unreachable in the common case of a call like
-    // "exit();".  Since expression emission doesn't otherwise create
-    // blocks with no predecessors, we can just test for that.
-    // However, we must be careful not to do this to our incoming
-    // block, because *statement* emission does sometimes create
-    // reachable blocks which will have no predecessors until later in
-    // the function.  This occurs with, e.g., labels that are not
-    // reachable by fallthrough.
-    if (incoming != outgoing && outgoing->use_empty()) {
-      outgoing->eraseFromParent();
-      Builder.ClearInsertionPoint();
-    }
-    finalInst = dyn_cast<llvm::CallInst>(&outgoing->back());
-    assert(finalInst);
+    return;
   }
 
-  // Otherwise, we assume that the programmer dealt with races
-  // correctly.
+  // Otherwise, we assume that the programmer dealt with races correctly.
+
+  // Before we create a detach block, initialize any structures for dealing
+  // with exceptions.
+  getInvokeDest();
+
+  // Create the detach instruction.
+  llvm::BasicBlock *DetachedBlock = createBasicBlock("det.achd");
+  llvm::BasicBlock *ContinueBlock = createBasicBlock("det.cont");
   Builder.CreateDetach(DetachedBlock, ContinueBlock);
 
-  auto temp = AllocaInsertPt;
+  // Set the detached block to be the new alloca insertion point.
+  auto OldAllocaInsertPt = AllocaInsertPt;
   llvm::Value *Undef = llvm::UndefValue::get(Int32Ty);
   AllocaInsertPt = new llvm::BitCastInst(Undef, Int32Ty, "", DetachedBlock);
 //  if (Builder.isNamePreserving())
@@ -1170,20 +1191,21 @@ void CodeGenFunction::EmitCilkSpawnStmt(const CilkSpawnStmt &S) {
 
   EmitBlock(DetachedBlock);
   // Emit the spawned statement
-  if (finalInst) {
-    DetachedBlock->getInstList().splice(DetachedBlock->begin(), finalInst->getParent()->getInstList(), finalInst->getIterator());
-  } else {
-    EmitStmt(S.getSpawnedStmt());
-  }
-  // }
+  EmitStmt(S.getSpawnedStmt());
+
   // The CFG path into the spawned statement should terminate with a
   // `reattach'.
   Builder.CreateReattach(ContinueBlock);
 
-  AllocaInsertPt = temp;
+  // Restore the old alloca insertion point.
+  AllocaInsertPt = OldAllocaInsertPt;
 
   // Now emit the parent block
   EmitBlock(ContinueBlock);
+
+  // Pop the special catch scope if need be.
+  if (NonTrivialEH)
+    popCatchScope();
 }
 
 void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
