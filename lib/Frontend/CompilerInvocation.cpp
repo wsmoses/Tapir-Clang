@@ -84,6 +84,9 @@ static unsigned getOptimizationLevel(ArgList &Args, InputKind IK,
   if (IK == IK_OpenCL && !Args.hasArg(OPT_cl_opt_disable))
     DefaultOpt = 2;
 
+  if (Args.hasArg(OPT_ftapir))
+    DefaultOpt = 2;
+
   if (Arg *A = Args.getLastArg(options::OPT_O_Group)) {
     if (A->getOption().matches(options::OPT_O0))
       return 0;
@@ -1968,7 +1971,8 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.Tapir = Args.hasArg(OPT_ftapir);
   Opts.Detach = Args.hasArg(OPT_fdetach);
   //llvm::errs() << "CI --  cp:" << Opts.CilkPlus << " nm:" << Opts.Detach << " tpr:" << Opts.Tapir << "\n";
-  Opts.CilkPlus = Args.hasArg(OPT_fcilkplus) || Args.hasArg(OPT_ftapir) || Args.hasArg(Opts.Detach);
+  Opts.CilkPlus = Args.hasArg(OPT_fcilkplus) || Args.hasArg(OPT_ftapir) ||
+    Args.hasArg(Opts.Detach);
   if (Opts.CilkPlus && (Opts.ObjC1 || Opts.ObjC2))
     Diags.Report(diag::err_drv_cilk_objc);
 
