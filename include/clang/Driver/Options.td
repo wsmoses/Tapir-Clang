@@ -1067,6 +1067,7 @@ def fno_implicit_modules :
 def fretain_comments_from_system_headers : Flag<["-"], "fretain-comments-from-system-headers">, Group<f_Group>, Flags<[CC1Option]>;
 def fcilkplus : Flag <["-"], "fcilkplus">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Enable Cilk Plus extensions">;
 def ftapir    : Flag <["-"], "ftapir">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Enable Tapir/Cilk Plus extensions">;
+def frhino    : Flag <["-"], "frhino">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Enable Rhino extension to Tapir">;
 def fdetach   : Flag <["-"], "fdetach">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Disable memory optimizations / Only run detach2cilk">;
 
 def fmudflapth : Flag<["-"], "fmudflapth">, Group<f_Group>;

@@ -333,6 +333,8 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   if (LangOpts.CilkPlus) PMBuilder.ParallelLevel = 1;
   if (LangOpts.Detach) PMBuilder.ParallelLevel = 3;
   if (LangOpts.Tapir) PMBuilder.ParallelLevel = 2;
+  if (LangOpts.Rhino) PMBuilder.Rhino = true;
+
   PMBuilder.SizeLevel = CodeGenOpts.OptimizeSize;
   PMBuilder.BBVectorize = CodeGenOpts.VectorizeBB;
   PMBuilder.SLPVectorize = CodeGenOpts.VectorizeSLP;

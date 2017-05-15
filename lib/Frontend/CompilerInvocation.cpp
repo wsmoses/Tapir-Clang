@@ -84,7 +84,7 @@ static unsigned getOptimizationLevel(ArgList &Args, InputKind IK,
   if (IK == IK_OpenCL && !Args.hasArg(OPT_cl_opt_disable))
     DefaultOpt = 2;
 
-  if (Args.hasArg(OPT_ftapir))
+  if (Args.hasArg(OPT_ftapir) || Args.hasArg(OPT_frhino))
     DefaultOpt = 2;
 
   if (Arg *A = Args.getLastArg(options::OPT_O_Group)) {
@@ -1969,6 +1969,7 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.Borland = Args.hasArg(OPT_fborland_extensions);
 
   Opts.Tapir = Args.hasArg(OPT_ftapir);
+  Opts.Rhino = Args.hasArg(OPT_frhino);
   Opts.Detach = Args.hasArg(OPT_fdetach);
   //llvm::errs() << "CI --  cp:" << Opts.CilkPlus << " nm:" << Opts.Detach << " tpr:" << Opts.Tapir << "\n";
   Opts.CilkPlus = Args.hasArg(OPT_fcilkplus) || Args.hasArg(OPT_ftapir) ||
