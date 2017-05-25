@@ -251,8 +251,6 @@ Parser::ParseRHSOfBinaryExpression(ExprResult LHS, prec::Level MinPrec) {
                                                getLangOpts().CPlusPlus11);
   SourceLocation ColonLoc;
 
-  bool isSpawning = false;
-
   while (1) {
     // If this token has a lower precedence than we are allowed to parse (e.g.
     // because we are called recursively, or because the token is not a binop),
@@ -1345,22 +1343,21 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
     cutOffParsing();
     return ExprError();
   }
-  /*
   // postfix-expression: [CP]
   //   _Cilk_spawn[opt] postfix-expression '(' argument-expression-list[opt] ')'
   case tok::kw__Cilk_spawn: {
     SourceLocation SpawnLoc = ConsumeToken();
-    if (!getLangOpts().CilkPlus) {
-      Diag(SpawnLoc, diag::err_cilkplus_disable);
-      SkipUntil(tok::semi, StopAtSemi | StopBeforeMatch);
-      return ExprError();
-    }
+    // if (!getLangOpts().CilkPlus) {
+    //   Diag(SpawnLoc, diag::err_cilkplus_disable);
+    //   SkipUntil(tok::semi, StopAtSemi | StopBeforeMatch);
+    //   return ExprError();
+    // }
 
     Res = ParseCastExpression(false);
-    if (Res.isInvalid()) return ExprError();
-    return Actions.ActOnCilkSpawnCall(SpawnLoc, Res.get());
+    if (!Res.isInvalid())
+      Res = Actions.ActOnCilkSpawnExpr(SpawnLoc, Res.get());
+    return Res;
   }
-  */
   case tok::l_square:
     if (getLangOpts().CPlusPlus11) {
       if (getLangOpts().ObjC1) {

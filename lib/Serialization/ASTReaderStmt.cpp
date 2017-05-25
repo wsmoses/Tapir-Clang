@@ -2887,6 +2887,12 @@ void ASTStmtReader::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
   S->setSpawnedStmt(Record.readSubStmt());
 }
 
+void ASTStmtReader::VisitCilkSpawnExpr(CilkSpawnExpr *E) {
+  VisitExpr(E);
+  E->setSpawnLoc(ReadSourceLocation());
+  E->setSpawnedExpr(Record.readSubExpr());
+}
+
 void ASTStmtReader::VisitCilkSyncStmt(CilkSyncStmt *S) {
   VisitStmt(S);
   S->setSyncLoc(ReadSourceLocation());
@@ -2898,6 +2904,7 @@ void ASTStmtReader::VisitCilkForStmt(CilkForStmt *S) {
   S->setCond(Record.readSubExpr());
   // S->setConditionVariable(Record.getContext(), ReadDeclAs<VarDecl>());
   S->setInc(Record.readSubExpr());
+  S->setLoopVariable(Record.getContext(), ReadDeclAs<VarDecl>());
   S->setBody(Record.readSubStmt());
   S->setCilkForLoc(ReadSourceLocation());
   S->setLParenLoc(ReadSourceLocation());
@@ -3073,6 +3080,10 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
 
     case STMT_CILKSPAWN:
       S = new (Context) CilkSpawnStmt(Empty);
+      break;
+
+    case EXPR_CILKSPAWN:
+      S = new (Context) CilkSpawnExpr(Empty);
       break;
       
     case STMT_CILKSYNC:

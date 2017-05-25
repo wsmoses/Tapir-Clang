@@ -19,10 +19,12 @@
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
+#include "clang/AST/ExprCilk.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprObjC.h"
 #include "clang/AST/ExprOpenMP.h"
 #include "clang/AST/Stmt.h"
+#include "clang/AST/StmtCilk.h"
 #include "clang/AST/StmtCXX.h"
 #include "clang/AST/StmtObjC.h"
 #include "clang/AST/StmtOpenMP.h"
@@ -1334,6 +1336,14 @@ public:
   /// Subclasses may override this routine to provide different behavior.
   StmtResult RebuildCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *S) {
     return getSema().ActOnCilkSpawnStmt(SpawnLoc, S);
+  }
+
+  /// \brief Build a new Cilk spawn expression.
+  ///
+  /// By default, performs semantic analysis to build the new expression.
+  /// Subclasses may override this routine to provide different behavior.
+  ExprResult RebuildCilkSpawnExpr(SourceLocation SpawnLoc, Expr *E) {
+    return getSema().ActOnCilkSpawnExpr(SpawnLoc, E);
   }
 
   /// \brief Build a new declaration statement.
@@ -12459,6 +12469,19 @@ TreeTransform<Derived>::TransformCilkSpawnStmt(CilkSpawnStmt *S) {
     return S;
 
   return getDerived().RebuildCilkSpawnStmt(S->getSpawnLoc(), Child.get());
+}
+
+template<typename Derived>
+ExprResult
+TreeTransform<Derived>::TransformCilkSpawnExpr(CilkSpawnExpr *E) {
+  ExprResult SpawnedExpr = getDerived().TransformExpr(E->getSpawnedExpr());
+  if (SpawnedExpr.isInvalid())
+    return ExprError();
+
+  if (!getDerived().AlwaysRebuild() && SpawnedExpr.get() == E->getSpawnedExpr())
+    return E;
+
+  return getDerived().RebuildCilkSpawnExpr(E->getSpawnLoc(), SpawnedExpr.get());
 }
 
 template<typename Derived>

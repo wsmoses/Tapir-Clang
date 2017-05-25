@@ -1714,6 +1714,13 @@ void ASTStmtWriter::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
   Code = serialization::STMT_CILKSPAWN;
 }
 
+void ASTStmtWriter::VisitCilkSpawnExpr(CilkSpawnExpr *E) {
+  VisitExpr(E);
+  Record.AddSourceLocation(E->getSpawnLoc());
+  Record.AddStmt(E->getSpawnedExpr());
+  Code = serialization::EXPR_CILKSPAWN;
+}
+
 void ASTStmtWriter::VisitCilkSyncStmt(CilkSyncStmt *S) {
   VisitStmt(S);
   Record.AddSourceLocation(S->getSyncLoc());
@@ -1726,6 +1733,7 @@ void ASTStmtWriter::VisitCilkForStmt(CilkForStmt *S) {
   Record.AddStmt(S->getCond());
   // Record.AddDeclRef(S->getConditionVariable());
   Record.AddStmt(S->getInc());
+  Record.AddDeclRef(S->getLoopVariable());
   Record.AddStmt(S->getBody());
   Record.AddSourceLocation(S->getCilkForLoc());
   Record.AddSourceLocation(S->getLParenLoc());

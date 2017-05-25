@@ -110,6 +110,10 @@ public:
   VisitSubstNonTypeTemplateParmExpr(SubstNonTypeTemplateParmExpr *PE) {
     return Visit(PE->getReplacement());
   }
+  ComplexPairTy VisitCilkSpawnExpr(CilkSpawnExpr *CSE) {
+    CGF.PushDetachScope();
+    return Visit(CSE->getSpawnedExpr());
+  }
 
   // l-values.
   ComplexPairTy VisitDeclRefExpr(DeclRefExpr *E) {
@@ -913,6 +917,31 @@ LValue ComplexExprEmitter::EmitBinAssignLValue(const BinaryOperator *E,
          "Invalid assignment");
   TestAndClearIgnoreReal();
   TestAndClearIgnoreImag();
+
+  if (isa<CilkSpawnExpr>(E->getRHS()->IgnoreImplicit())) {
+    assert(!CGF.IsSpawned &&
+           "_Cilk_spawn statement found in spawning environment.");
+
+    // Compute the address to store into.
+    LValue LHS = CGF.EmitLValue(E->getLHS());
+
+    // Prepare to detach.
+    CGF.IsSpawned = true;
+
+    // Emit the spawned RHS.
+    Val = Visit(E->getRHS());
+
+    // Store the result value into the LHS lvalue.
+    EmitStoreOfComplex(Val, LHS, /*isInit*/ false);
+
+    // Finish the detach.
+    assert(CGF.CurDetachScope && CGF.CurDetachScope->IsDetachStarted() &&
+           "Processing _Cilk_spawn of expression did not produce detach.");
+    CGF.IsSpawned = false;
+    CGF.PopDetachScope();
+
+    return LHS;
+  }
 
   // Emit the RHS.  __block variables need the RHS evaluated first.
   Val = Visit(E->getRHS());

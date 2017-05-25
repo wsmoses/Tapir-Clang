@@ -2378,13 +2378,17 @@ enum CXCursorKind {
    */
   CXCursor_CilkSpawnStmt                 = 280,
 
+  /** \brief Wrapper for an expression preceded by _Cilk_spawn.
+   */
+  CXCursor_CilkSpawnExpr                 = 281,
+
   /** \brief A _Cilk_sync statement.
    */
-  CXCursor_CilkSyncStmt                  = 281,
+  CXCursor_CilkSyncStmt                  = 282,
 
   /** \brief A _Cilk_for statement.
    */
-  CXCursor_CilkForStmt                   = 282,
+  CXCursor_CilkForStmt                   = 283,
 
   CXCursor_LastStmt = CXCursor_CilkForStmt,
 

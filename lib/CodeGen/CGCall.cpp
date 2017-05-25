@@ -3576,32 +3576,12 @@ static RValue EmitDetachedCall(CodeGenFunction &CGF,
                                const CallArgList &CallArgs,
                                llvm::Instruction **callOrInvoke) {
   RValue Result;
-
-  // Create the detached and continue blocks.
-  llvm::BasicBlock *DetachedBlock = CGF.createBasicBlock("det.achd");
-  llvm::BasicBlock *ContinueBlock = CGF.createBasicBlock("det.cont");
-
-  // Create the detach
-  CGF.Builder.CreateDetach(DetachedBlock, ContinueBlock);
-
-  // Set the detached block as the new alloca insertion point.
-  auto OldAllocaInsertPt = CGF.AllocaInsertPt;
-  llvm::Value *Undef = llvm::UndefValue::get(CGF.Int32Ty);
-  CGF.AllocaInsertPt = new llvm::BitCastInst(Undef, CGF.Int32Ty, "",
-                                             DetachedBlock);
-
-  // Emit the call in the detached block.
-  CGF.EmitBlock(DetachedBlock);
+  // Start the detach, if it hasn't yet been started.
+  assert(CGF.CurDetachScope &&
+         "A call was spawned, but no detach scope was pushed.");
+  if (!CGF.CurDetachScope->IsDetachStarted())
+    CGF.CurDetachScope->StartDetach();
   Result = CGF.EmitCall(CallInfo, Callee, ReturnValue, CallArgs, callOrInvoke);
-
-  // The CFG path into the spawned statement should terminate with a `reattach'.
-  CGF.Builder.CreateReattach(ContinueBlock);
-
-  // Restore the alloca insertion point.
-  CGF.AllocaInsertPt = OldAllocaInsertPt;
-
-  // Emit the continue block.
-  CGF.EmitBlock(ContinueBlock);
   return Result;
 }
 
@@ -3610,14 +3590,9 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
                                  ReturnValueSlot ReturnValue,
                                  const CallArgList &CallArgs,
                                  llvm::Instruction **callOrInvoke) {
-  if (IsSpawned) {
-    IsSpawned = false;
-    RValue RV = EmitDetachedCall(*this, CallInfo, Callee, ReturnValue, CallArgs,
-                                 callOrInvoke);
-    IsSpawned = true;
-    return RV;
-  }
   // FIXME: We no longer need the types from CallArgs; lift up and simplify.
+
+  IsSpawnedScope SpawnedScp(this);
 
   assert(Callee.isOrdinary());
 
@@ -4012,6 +3987,15 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   CalleePtr = simplifyVariadicCallee(CalleePtr);
 
   // 3. Perform the actual call.
+
+  // If this call is detached, start the detach, if it hasn't yet been started.
+  if (SpawnedScp.OldScopeIsSpawned()) {
+    SpawnedScp.RestoreOldScope();
+    assert(CurDetachScope &&
+           "A call was spawned, but no detach scope was pushed.");
+    if (!CurDetachScope->IsDetachStarted())
+      CurDetachScope->StartDetach();
+  }
 
   // Deactivate any cleanups that we're supposed to do immediately before
   // the call.

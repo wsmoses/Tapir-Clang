@@ -617,7 +617,7 @@ struct CallObjCArcUse final : EHScopeStack::Cleanup {
 RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
                                         unsigned BuiltinID, const CallExpr *E,
                                         ReturnValueSlot ReturnValue) {
-  SpawnedScope SpawnedScp(this);
+  IsSpawnedScope SpawnedScp(this);
   // See if we can constant fold this builtin.  If so, don't emit it at all.
   Expr::EvalResult Result;
   if (E->EvaluateAsRValue(Result, CGM.getContext()) &&

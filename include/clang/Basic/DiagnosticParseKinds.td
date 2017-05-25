@@ -1008,6 +1008,12 @@ def err_cilk_for_missing_increment: Error<
 def err_cilk_for_missing_semi: Error<
   "expected ';' in '_Cilk_for'">;
 
+def err_cilk_for_forrange_loop_not_supported: Error<
+  "'_Cilk_for' not supported on for-range loops">;
+
+def err_cilk_for_foreach_loop_not_supported: Error<
+  "'_Cilk_for' not supported on for-each loops">;
+
 def err_cilk_for_expect_grainsize: Error<
   "expected 'grainsize' in '#pragma cilk'">;
 

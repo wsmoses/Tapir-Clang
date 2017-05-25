@@ -19,6 +19,7 @@
 #include "clang/AST/DeclOpenMP.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
+#include "clang/AST/ExprCilk.h"
 #include "clang/AST/ExprCXX.h"
 #include "clang/AST/ExprOpenMP.h"
 #include "clang/AST/PrettyPrinter.h"
@@ -366,6 +367,11 @@ void StmtPrinter::VisitCilkSpawnStmt(CilkSpawnStmt *Node) {
   PrintStmt(Node->getSpawnedStmt());
   OS << ";";
   if (Policy.IncludeNewlines) OS << "\n";
+}
+
+void StmtPrinter::VisitCilkSpawnExpr(CilkSpawnExpr *Node) {
+  Indent() << "_Cilk_spawn ";
+  PrintExpr(Node->getSpawnedExpr());
 }
 
 void StmtPrinter::VisitReturnStmt(ReturnStmt *Node) {

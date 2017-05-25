@@ -7850,8 +7850,6 @@ def warn_empty_if_body : Warning<
   "if statement has empty body">, InGroup<EmptyBody>;
 def warn_empty_for_body : Warning<
   "for loop has empty body">, InGroup<EmptyBody>;
-def warn_empty_cilk_for_body : Warning<
-  "Cilk for loop has empty body">, InGroup<EmptyBody>;
 def warn_empty_range_based_for_body : Warning<
   "range-based for loop has empty body">, InGroup<EmptyBody>;
 def warn_empty_while_body : Warning<
@@ -8331,6 +8329,17 @@ def ext_opencl_ext_vector_type_rgba_selector: ExtWarn<
 } // end of sema category
 
 // Cilk Plus warnings and errors
+let CategoryName = "Cilk Issue" in {
+def err_cilk_unevaluated_context : Error<
+  "'%0' cannot be used in an unevaluated context">;
+def err_cilk_outside_function : Error<
+  "'%0' cannot be used outside a function">;
+def err_cilk_spawn_invalid_func_context : Error<
+  "'%1' cannot be used in %select{a constructor|a destructor"
+  "|a copy assignment operator|a move assignment operator|the 'main' function"
+  "|a constexpr function|a function with a deduced return type"
+  "|a varargs function}0">;
+
 // cilk_spawn
 def err_not_a_call : Error<
   "the argument to _Cilk_spawn must be a function call">;
@@ -8352,6 +8361,8 @@ def err_multiple_spawns: Error<
   "multiple spawn calls within a full expression">;
 def note_multiple_spawns: Note<
   "another spawn here">;
+def warn_spawn_assign_lhs_has_side_effects : Warning<
+  "left-hand side of _Cilk_spawn assignment has side effects">;
 
 // cilk_for
 def err_cilk_for_initializer_expected_variable : Error<
@@ -8409,6 +8420,8 @@ def warn_cilk_for_loop_control_var_aliased: Warning<
   "Modifying the loop control variable '%0' through an alias in '_Cilk_for' has undefined behavior">, InGroup<CilkPlusLoopControlVarModification>, DefaultIgnore;
 def note_cilk_for_loop_control_var_declared_here: Note<
   "'_Cilk_for' loop control variable declared here">;
+def warn_empty_cilk_for_body : Warning<
+  "Cilk for loop has empty body">, InGroup<EmptyBody>;
 
 def note_cilk_for_begin_expr: Note<
   "loop begin expression here">;
@@ -8439,6 +8452,7 @@ def warn_cilk_for_wraparound: Warning<
 
 def note_cilk_for_wraparound_undefined: Note<
   "wraparounds cause undefined behavior in Cilk for">;
+} // end of Cilk category
 
 let CategoryName = "OpenMP Issue" in {
 // OpenMP support.
