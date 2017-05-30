@@ -10,13 +10,13 @@
 // This file implements the Expression parsing implementation for C++.
 //
 //===----------------------------------------------------------------------===//
+#include "clang/Parse/Parser.h"
 #include "clang/AST/ASTContext.h"
-#include "RAIIObjectsForParser.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Lex/LiteralSupport.h"
 #include "clang/Parse/ParseDiagnostic.h"
-#include "clang/Parse/Parser.h"
+#include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Sema/DeclSpec.h"
 #include "clang/Sema/ParsedTemplate.h"
 #include "clang/Sema/Scope.h"
@@ -141,13 +141,16 @@ void Parser::CheckForTemplateAndDigraph(Token &Next, ParsedType ObjectType,
 /// filled in with the leading identifier in the last component of the
 /// nested-name-specifier, if any.
 ///
+/// \param OnlyNamespace If true, only considers namespaces in lookup.
+///
 /// \returns true if there was an error parsing a scope specifier
 bool Parser::ParseOptionalCXXScopeSpecifier(CXXScopeSpec &SS,
                                             ParsedType ObjectType,
                                             bool EnteringContext,
                                             bool *MayBePseudoDestructor,
                                             bool IsTypename,
-                                            IdentifierInfo **LastII) {
+                                            IdentifierInfo **LastII,
+                                            bool OnlyNamespace) {
   assert(getLangOpts().CPlusPlus &&
          "Call sites of this function should be guarded by checking for C++");
 
@@ -157,7 +160,7 @@ bool Parser::ParseOptionalCXXScopeSpecifier(CXXScopeSpec &SS,
     Actions.RestoreNestedNameSpecifierAnnotation(Tok.getAnnotationValue(),
                                                  Tok.getAnnotationRange(),
                                                  SS);
-    ConsumeToken();
+    ConsumeAnnotationToken();
     return false;
   }
 
@@ -343,7 +346,7 @@ bool Parser::ParseOptionalCXXScopeSpecifier(CXXScopeSpec &SS,
         *LastII = TemplateId->Name;
 
       // Consume the template-id token.
-      ConsumeToken();
+      ConsumeAnnotationToken();
 
       assert(Tok.is(tok::coloncolon) && "NextToken() not working properly!");
       SourceLocation CCLoc = ConsumeToken();
@@ -450,9 +453,9 @@ bool Parser::ParseOptionalCXXScopeSpecifier(CXXScopeSpec &SS,
 
       bool IsCorrectedToColon = false;
       bool *CorrectionFlagPtr = ColonIsSacred ? &IsCorrectedToColon : nullptr;
-      if (Actions.ActOnCXXNestedNameSpecifier(getCurScope(), IdInfo,
-                                              EnteringContext, SS,
-                                              false, CorrectionFlagPtr)) {
+      if (Actions.ActOnCXXNestedNameSpecifier(
+              getCurScope(), IdInfo, EnteringContext, SS, false,
+              CorrectionFlagPtr, OnlyNamespace)) {
         // Identifier is not recognized as a nested name, but we can have
         // mistyped '::' instead of ':'.
         if (CorrectionFlagPtr && IsCorrectedToColon) {
@@ -863,8 +866,8 @@ Optional<unsigned> Parser::ParseLambdaIntroducer(LambdaIntroducer &Intro,
         // Each lambda init-capture forms its own full expression, which clears
         // Actions.MaybeODRUseExprs. So create an expression evaluation context
         // to save the necessary state, and restore it later.
-        EnterExpressionEvaluationContext EC(Actions,
-                                            Sema::PotentiallyEvaluated);
+        EnterExpressionEvaluationContext EC(
+            Actions, Sema::ExpressionEvaluationContext::PotentiallyEvaluated);
 
         if (TryConsumeToken(tok::equal))
           InitKind = LambdaCaptureInitKind::CopyInit;
@@ -917,7 +920,7 @@ Optional<unsigned> Parser::ParseLambdaIntroducer(LambdaIntroducer &Intro,
             PP.AnnotateCachedTokens(Tok);
 
             // Consume the annotated initializer.
-            ConsumeToken();
+            ConsumeAnnotationToken();
           }
         }
       } else
@@ -1402,8 +1405,9 @@ ExprResult Parser::ParseCXXTypeid() {
   // We enter the unevaluated context before trying to determine whether we
   // have a type-id, because the tentative parse logic will try to resolve
   // names, and must treat them as unevaluated.
-  EnterExpressionEvaluationContext Unevaluated(Actions, Sema::Unevaluated,
-                                               Sema::ReuseLambdaContextDecl);
+  EnterExpressionEvaluationContext Unevaluated(
+      Actions, Sema::ExpressionEvaluationContext::Unevaluated,
+      Sema::ReuseLambdaContextDecl);
 
   if (isTypeIdInParens()) {
     TypeResult Ty = ParseTypeName();
@@ -1466,7 +1470,8 @@ ExprResult Parser::ParseCXXUuidof() {
                                     Ty.get().getAsOpaquePtr(), 
                                     T.getCloseLocation());
   } else {
-    EnterExpressionEvaluationContext Unevaluated(Actions, Sema::Unevaluated);
+    EnterExpressionEvaluationContext Unevaluated(
+        Actions, Sema::ExpressionEvaluationContext::Unevaluated);
     Result = ParseExpression();
 
     // Match the ')'.
@@ -1523,7 +1528,7 @@ Parser::ParseCXXPseudoDestructor(Expr *Base, SourceLocation OpLoc,
     // store it in the pseudo-dtor node (to be used when instantiating it).
     FirstTypeName.setTemplateId(
                               (TemplateIdAnnotation *)Tok.getAnnotationValue());
-    ConsumeToken();
+    ConsumeAnnotationToken();
     assert(Tok.is(tok::coloncolon) &&"ParseOptionalCXXScopeSpecifier fail");
     CCLoc = ConsumeToken();
   } else {
@@ -1877,7 +1882,7 @@ void Parser::ParseCXXSimpleTypeSpecifier(DeclSpec &DS) {
       DS.SetTypeSpecError();
     
     DS.SetRangeEnd(Tok.getAnnotationEndLoc());
-    ConsumeToken();
+    ConsumeAnnotationToken();
     
     DS.Finish(Actions, Policy);
     return;
@@ -1946,11 +1951,8 @@ void Parser::ParseCXXSimpleTypeSpecifier(DeclSpec &DS) {
     DS.Finish(Actions, Policy);
     return;
   }
-  if (Tok.is(tok::annot_typename))
-    DS.SetRangeEnd(Tok.getAnnotationEndLoc());
-  else
-    DS.SetRangeEnd(Tok.getLocation());
-  ConsumeToken();
+  ConsumeAnyToken();
+  DS.SetRangeEnd(PrevTokLocation);
   DS.Finish(Actions, Policy);
 }
 
@@ -2109,11 +2111,8 @@ bool Parser::ParseUnqualifiedIdTemplateId(CXXScopeSpec &SS,
   // Parse the enclosed template argument list.
   SourceLocation LAngleLoc, RAngleLoc;
   TemplateArgList TemplateArgs;
-  if (Tok.is(tok::less) &&
-      ParseTemplateIdAfterTemplateName(Template, Id.StartLocation,
-                                       SS, true, LAngleLoc,
-                                       TemplateArgs,
-                                       RAngleLoc))
+  if (Tok.is(tok::less) && ParseTemplateIdAfterTemplateName(
+                               true, LAngleLoc, TemplateArgs, RAngleLoc))
     return true;
   
   if (Id.getKind() == UnqualifiedId::IK_Identifier ||
@@ -2121,31 +2120,18 @@ bool Parser::ParseUnqualifiedIdTemplateId(CXXScopeSpec &SS,
       Id.getKind() == UnqualifiedId::IK_LiteralOperatorId) {
     // Form a parsed representation of the template-id to be stored in the
     // UnqualifiedId.
-    TemplateIdAnnotation *TemplateId
-      = TemplateIdAnnotation::Allocate(TemplateArgs.size(), TemplateIds);
 
     // FIXME: Store name for literal operator too.
-    if (Id.getKind() == UnqualifiedId::IK_Identifier) {
-      TemplateId->Name = Id.Identifier;
-      TemplateId->Operator = OO_None;
-      TemplateId->TemplateNameLoc = Id.StartLocation;
-    } else {
-      TemplateId->Name = nullptr;
-      TemplateId->Operator = Id.OperatorFunctionId.Operator;
-      TemplateId->TemplateNameLoc = Id.StartLocation;
-    }
+    IdentifierInfo *TemplateII =
+        Id.getKind() == UnqualifiedId::IK_Identifier ? Id.Identifier : nullptr;
+    OverloadedOperatorKind OpKind = Id.getKind() == UnqualifiedId::IK_Identifier
+                                        ? OO_None
+                                        : Id.OperatorFunctionId.Operator;
 
-    TemplateId->SS = SS;
-    TemplateId->TemplateKWLoc = TemplateKWLoc;
-    TemplateId->Template = Template;
-    TemplateId->Kind = TNK;
-    TemplateId->LAngleLoc = LAngleLoc;
-    TemplateId->RAngleLoc = RAngleLoc;
-    ParsedTemplateArgument *Args = TemplateId->getTemplateArgs();
-    for (unsigned Arg = 0, ArgEnd = TemplateArgs.size(); 
-         Arg != ArgEnd; ++Arg)
-      Args[Arg] = TemplateArgs[Arg];
-    
+    TemplateIdAnnotation *TemplateId = TemplateIdAnnotation::Create(
+        SS, TemplateKWLoc, Id.StartLocation, TemplateII, OpKind, Template, TNK,
+        LAngleLoc, RAngleLoc, TemplateArgs, TemplateIds);
+
     Id.setTemplateId(TemplateId);
     return false;
   }
@@ -2527,12 +2513,12 @@ bool Parser::ParseUnqualifiedId(CXXScopeSpec &SS, bool EnteringContext,
                                 /*NontrivialTypeSourceInfo=*/true);
         Result.setConstructorName(Ty, TemplateId->TemplateNameLoc,
                                   TemplateId->RAngleLoc);
-        ConsumeToken();
+        ConsumeAnnotationToken();
         return false;
       }
 
       Result.setConstructorTemplateId(TemplateId);
-      ConsumeToken();
+      ConsumeAnnotationToken();
       return false;
     }
 
@@ -2540,7 +2526,7 @@ bool Parser::ParseUnqualifiedId(CXXScopeSpec &SS, bool EnteringContext,
     // our unqualified-id.
     Result.setTemplateId(TemplateId);
     TemplateKWLoc = TemplateId->TemplateKWLoc;
-    ConsumeToken();
+    ConsumeAnnotationToken();
     return false;
   }
   

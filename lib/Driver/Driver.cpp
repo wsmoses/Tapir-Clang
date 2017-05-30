@@ -9,7 +9,37 @@
 
 #include "clang/Driver/Driver.h"
 #include "InputInfo.h"
-#include "ToolChains.h"
+#include "ToolChains/AMDGPU.h"
+#include "ToolChains/AVR.h"
+#include "ToolChains/Bitrig.h"
+#include "ToolChains/Clang.h"
+#include "ToolChains/CloudABI.h"
+#include "ToolChains/Contiki.h"
+#include "ToolChains/CrossWindows.h"
+#include "ToolChains/Cuda.h"
+#include "ToolChains/Darwin.h"
+#include "ToolChains/DragonFly.h"
+#include "ToolChains/FreeBSD.h"
+#include "ToolChains/Fuchsia.h"
+#include "ToolChains/Gnu.h"
+#include "ToolChains/BareMetal.h"
+#include "ToolChains/Haiku.h"
+#include "ToolChains/Hexagon.h"
+#include "ToolChains/Lanai.h"
+#include "ToolChains/Linux.h"
+#include "ToolChains/MinGW.h"
+#include "ToolChains/Minix.h"
+#include "ToolChains/MipsLinux.h"
+#include "ToolChains/MSVC.h"
+#include "ToolChains/Myriad.h"
+#include "ToolChains/NaCl.h"
+#include "ToolChains/NetBSD.h"
+#include "ToolChains/OpenBSD.h"
+#include "ToolChains/PS4CPU.h"
+#include "ToolChains/Solaris.h"
+#include "ToolChains/TCE.h"
+#include "ToolChains/WebAssembly.h"
+#include "ToolChains/XCore.h"
 #include "clang/Basic/Version.h"
 #include "clang/Basic/VirtualFileSystem.h"
 #include "clang/Config/config.h"
@@ -62,7 +92,7 @@ Driver::Driver(StringRef ClangExecutable, StringRef DefaultTargetTriple,
       CCCPrintBindings(false), CCPrintHeaders(false), CCLogDiagnostics(false),
       CCGenDiagnostics(false), DefaultTargetTriple(DefaultTargetTriple),
       CCCGenericGCCName(""), CheckInputsExist(true), CCCUsePCH(true),
-      SuppressMissingInputWarning(false) {
+      GenReproducer(false), SuppressMissingInputWarning(false) {
 
   // Provide a sane fallback if no VFS is specified.
   if (!this->VFS)
@@ -79,7 +109,8 @@ Driver::Driver(StringRef ClangExecutable, StringRef DefaultTargetTriple,
     llvm::sys::path::append(P, ClangResourceDir);
   } else {
     StringRef ClangLibdirSuffix(CLANG_LIBDIR_SUFFIX);
-    llvm::sys::path::append(P, "..", Twine("lib") + ClangLibdirSuffix, "clang",
+    P = llvm::sys::path::parent_path(Dir);
+    llvm::sys::path::append(P, Twine("lib") + ClangLibdirSuffix, "clang",
                             CLANG_VERSION_STRING);
   }
   ResourceDir = P.str();
@@ -568,6 +599,8 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
   bool CCCPrintPhases;
 
   InputArgList Args = ParseArgStrings(ArgList.slice(1));
+  if (Diags.hasErrorOccurred())
+    return nullptr;
 
   // Silence driver warnings if requested
   Diags.setIgnoreAllWarnings(Args.hasArg(options::OPT_w));
@@ -590,6 +623,9 @@ Compilation *Driver::BuildCompilation(ArrayRef<const char *> ArgList) {
     CCCGenericGCCName = A->getValue();
   CCCUsePCH =
       Args.hasFlag(options::OPT_ccc_pch_is_pch, options::OPT_ccc_pch_is_pth);
+  GenReproducer = Args.hasFlag(options::OPT_gen_reproducer,
+                               options::OPT_fno_crash_diagnostics,
+                               !!::getenv("FORCE_CLANG_DIAGNOSTICS_CRASH"));
   // FIXME: DefaultTargetTriple is used by the target-prefixed calls to as/ld
   // and getToolChain is const.
   if (IsCLMode()) {
@@ -1139,6 +1175,11 @@ bool Driver::HandleImmediateArgs(const Compilation &C) {
   if (C.getArgs().hasArg(options::OPT_v))
     TC.printVerboseInfo(llvm::errs());
 
+  if (C.getArgs().hasArg(options::OPT_print_resource_dir)) {
+    llvm::outs() << ResourceDir << '\n';
+    return false;
+  }
+
   if (C.getArgs().hasArg(options::OPT_print_search_dirs)) {
     llvm::outs() << "programs: =";
     bool separator = false;
@@ -1175,6 +1216,13 @@ bool Driver::HandleImmediateArgs(const Compilation &C) {
 
   if (Arg *A = C.getArgs().getLastArg(options::OPT_print_prog_name_EQ)) {
     llvm::outs() << GetProgramPath(A->getValue(), TC) << "\n";
+    return false;
+  }
+
+  if (Arg *A = C.getArgs().getLastArg(options::OPT_autocomplete)) {
+    // Print out all options that start with a given argument. This is used for
+    // shell autocompletion.
+    llvm::outs() << llvm::join(Opts->findByPrefix(A->getValue()), " ") << '\n';
     return false;
   }
 
@@ -2352,8 +2400,12 @@ void Driver::BuildActions(Compilation &C, DerivedArgList &Args,
   Arg *FinalPhaseArg;
   phases::ID FinalPhase = getFinalPhase(Args, &FinalPhaseArg);
 
-  if (FinalPhase == phases::Link && Args.hasArg(options::OPT_emit_llvm)) {
-    Diag(clang::diag::err_drv_emit_llvm_link);
+  if (FinalPhase == phases::Link) {
+    if (Args.hasArg(options::OPT_emit_llvm))
+      Diag(clang::diag::err_drv_emit_llvm_link);
+    if (IsCLMode() && LTOMode != LTOK_None &&
+        !Args.getLastArgValue(options::OPT_fuse_ld_EQ).equals_lower("lld"))
+      Diag(clang::diag::err_drv_lto_without_lld);
   }
 
   // Reject -Z* at the top level, these options should never have been exposed
@@ -3777,6 +3829,8 @@ const ToolChain &Driver::getToolChain(const ArgList &Args,
         if (Target.getVendor() == llvm::Triple::Myriad)
           TC = llvm::make_unique<toolchains::MyriadToolChain>(*this, Target,
                                                               Args);
+        else if (toolchains::BareMetal::handlesTarget(Target))
+          TC = llvm::make_unique<toolchains::BareMetal>(*this, Target, Args);
         else if (Target.isOSBinFormatELF())
           TC = llvm::make_unique<toolchains::Generic_ELF>(*this, Target, Args);
         else if (Target.isOSBinFormatMachO())

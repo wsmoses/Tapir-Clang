@@ -61,7 +61,8 @@ Sema::ActOnCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *SubStmt) {
   // TODO: Figure out how to prevent jumps into and out of the spawned
   // substatement.
   getCurFunction()->setHasBranchProtectedScope();
-  PushExpressionEvaluationContext(PotentiallyEvaluated);
+  PushExpressionEvaluationContext(
+      ExpressionEvaluationContext::PotentiallyEvaluated);
 
   StmtResult Result = new (Context) CilkSpawnStmt(SpawnLoc, SubStmt);
 

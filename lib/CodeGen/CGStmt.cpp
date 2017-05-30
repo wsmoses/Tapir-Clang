@@ -147,7 +147,7 @@ void CodeGenFunction::EmitStmt(const Stmt *S) {
     EmitCoroutineBody(cast<CoroutineBodyStmt>(*S));
     break;
   case Stmt::CoreturnStmtClass:
-    CGM.ErrorUnsupported(S, "coroutine");
+    EmitCoreturnStmt(cast<CoreturnStmt>(*S));
     break;
   case Stmt::CapturedStmtClass: {
     const CapturedStmt *CS = cast<CapturedStmt>(S);
@@ -1176,7 +1176,7 @@ void CodeGenFunction::EmitCaseStmtRange(const CaseStmt &S) {
       if (Rem)
         Rem--;
       SwitchInsn->addCase(Builder.getInt(LHS), CaseDest);
-      LHS++;
+      ++LHS;
     }
     return;
   }
@@ -2137,16 +2137,16 @@ void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {
     llvm::InlineAsm::get(FTy, AsmString, Constraints, HasSideEffect,
                          /* IsAlignStack */ false, AsmDialect);
   llvm::CallInst *Result = Builder.CreateCall(IA, Args);
-  Result->addAttribute(llvm::AttributeSet::FunctionIndex,
+  Result->addAttribute(llvm::AttributeList::FunctionIndex,
                        llvm::Attribute::NoUnwind);
 
   // Attach readnone and readonly attributes.
   if (!HasSideEffect) {
     if (ReadNone)
-      Result->addAttribute(llvm::AttributeSet::FunctionIndex,
+      Result->addAttribute(llvm::AttributeList::FunctionIndex,
                            llvm::Attribute::ReadNone);
     else if (ReadOnly)
-      Result->addAttribute(llvm::AttributeSet::FunctionIndex,
+      Result->addAttribute(llvm::AttributeList::FunctionIndex,
                            llvm::Attribute::ReadOnly);
   }
 
@@ -2167,7 +2167,7 @@ void CodeGenFunction::EmitAsmStmt(const AsmStmt &S) {
     // Conservatively, mark all inline asm blocks in CUDA as convergent
     // (meaning, they may call an intrinsically convergent op, such as bar.sync,
     // and so can't have certain optimizations applied around them).
-    Result->addAttribute(llvm::AttributeSet::FunctionIndex,
+    Result->addAttribute(llvm::AttributeList::FunctionIndex,
                          llvm::Attribute::Convergent);
   }
 

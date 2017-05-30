@@ -34,7 +34,8 @@ class SanitizerArgs {
   bool CfiCrossDso = false;
   int AsanFieldPadding = 0;
   bool AsanSharedRuntime = false;
-  bool AsanUseAfterScope = false;
+  bool AsanUseAfterScope = true;
+  bool AsanGlobalsDeadStripping = false;
   bool LinkCXXRuntimes = false;
   bool NeedPIE = false;
   bool Stats = false;
@@ -51,6 +52,7 @@ class SanitizerArgs {
   bool needsTsanRt() const { return Sanitizers.has(SanitizerKind::Thread) && !Sanitizers.has(SanitizerKind::Cilk); }
   bool needsCilksanRt() const { return Sanitizers.has(SanitizerKind::Cilk); }
   bool needsMsanRt() const { return Sanitizers.has(SanitizerKind::Memory); }
+  bool needsFuzzer() const { return Sanitizers.has(SanitizerKind::Fuzzer); }
   bool needsLsanRt() const {
     return Sanitizers.has(SanitizerKind::Leak) &&
            !Sanitizers.has(SanitizerKind::Address);

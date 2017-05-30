@@ -11,7 +11,7 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "RAIIObjectsForParser.h"
+#include "clang/Parse/RAIIObjectsForParser.h"
 #include "clang/Parse/Parser.h"
 
 using namespace clang;

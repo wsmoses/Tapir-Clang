@@ -483,16 +483,15 @@ namespace check_extended_pack {
 }
 
 namespace dependent_template_template_param_non_type_param_type {
-  template<int N> struct A { // expected-note 2{{candidate}}
+  template<int N> struct A {
     template<typename V = int, V M = 12, V (*Y)[M], template<V (*v)[M]> class W>
-    A(W<Y>); // expected-note {{[with V = int, M = 12, Y = &dependent_template_template_param_non_type_param_type::n]}}
+    A(W<Y>);
   };
 
   int n[12];
   template<int (*)[12]> struct Q {};
   Q<&n> qn;
-  // FIXME: This should be accepted, but we somehow fail to deduce W.
-  A<0> a(qn); // expected-error {{no matching constructor for initialization}}
+  A<0> a(qn);
 }
 
 namespace dependent_list_deduction {
@@ -526,13 +525,17 @@ namespace dependent_list_deduction {
     static_assert(is_same<X<T...>, X<int, char, char>>::value, "");
     static_assert(is_same<Y<V...>, Y<3, 2, 4>>::value, "");
   }
-  template<typename ...T, T ...V> void g(const T (&...p)[V]) { // expected-note {{deduced incomplete pack}}
+  template<typename ...T, T ...V> void g(const T (&...p)[V]) {
     static_assert(is_same<X<T...>, X<int, decltype(sizeof(0))>>::value, "");
     static_assert(is_same<Y<V...>, Y<2, 3>>::value, "");
   }
   void h() {
     f({1, 2, 3}, {'a', 'b'}, "foo");
-    // FIXME: Deduction in this case should succeed.
-    g({1, 2}, {{}, {}, {}}); // expected-error {{no match}}
+    g({1, 2}, {{}, {}, {}});
+#if __cplusplus <= 201402
+    // expected-error@-2 {{no match}}
+    // expected-note@-9 {{deduced incomplete pack}}
+    // We deduce V$1 = (size_t)3, which in C++1z also deduces T$1 = size_t.
+#endif
   }
 }
