@@ -2227,8 +2227,8 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
     llvm::Triple T(TargetOpts.Triple);
     llvm::Triple::ArchType Arch = T.getArch();
     bool emitError = (DefaultCC == LangOptions::DCC_FastCall ||
-                  DefaultCC == LangOptions::DCC_StdCall) &&
-                 Arch != llvm::Triple::x86;
+                      DefaultCC == LangOptions::DCC_StdCall) &&
+                     Arch != llvm::Triple::x86;
     emitError |= DefaultCC == LangOptions::DCC_VectorCall &&
                  !(Arch == llvm::Triple::x86 || Arch == llvm::Triple::x86_64);
     if (emitError)
@@ -2717,6 +2717,13 @@ std::string CompilerInvocation::getModuleHash() const {
   for (const auto &ext : frontendOpts.ModuleFileExtensions) {
     code = ext->hashExtension(code);
   }
+
+  // Extend the signature with the enabled sanitizers, if at least one is
+  // enabled. Sanitizers which cannot affect AST generation aren't hashed.
+  SanitizerSet SanHash = LangOpts->Sanitize;
+  SanHash.clear(getPPTransparentSanitizers());
+  if (!SanHash.empty())
+    code = hash_combine(code, SanHash.Mask);
 
   return llvm::APInt(64, code).toString(36, /*Signed=*/false);
 }
