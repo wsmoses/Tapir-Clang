@@ -2835,6 +2835,12 @@ static Expr *GetCilkForStride(Sema &S, llvm::SmallPtrSetImpl<VarDecl *> &Decls,
   return nullptr;
 }
 
+static void CheckCilkForInit(Sema &S,
+                             Stmt *First) {
+  if (!isa<DeclStmt>(First))
+    S.Diag(First->getLocStart(), diag::err_cilk_for_initializer_expected_decl);
+}
+
 /// Rewrite the loop control of simple _Cilk_for loops into a form that LLVM
 /// will have an easier time analyzing.  The transformation looks as follows:
 ///
@@ -2870,8 +2876,8 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
   Scope *S = getCurScope();
 
   // Get the single loop variable declared.
-  DeclStmt *LoopVarDS = cast<DeclStmt>(First);
-  if (!LoopVarDS->isSingleDecl())
+  DeclStmt *LoopVarDS = dyn_cast<DeclStmt>(First);
+  if (!LoopVarDS || !LoopVarDS->isSingleDecl())
     return StmtEmpty();
   VarDecl *LoopVar = dyn_cast<VarDecl>(LoopVarDS->getSingleDecl());
   if (!LoopVar)
@@ -2879,8 +2885,11 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
 
   // Get the loop variable initialization.
   Expr *LoopVarInit = LoopVar->getInit();
-  if (!LoopVarInit)
+  if (!LoopVarInit) {
+    Diag(First->getLocStart(),
+         diag::err_cilk_for_control_variable_not_initialized);
     return StmtEmpty();
+  }
 
   // Get the loop-limit expression, which the loop variable is compared against.
   BinaryOperator *Cond = dyn_cast_or_null<BinaryOperator>(Condition);
@@ -2930,6 +2939,7 @@ StmtResult Sema::HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
   case BO_LT:
   case BO_GT:
     CompareWithCeiling = true;
+    LLVM_FALLTHROUGH;
   case BO_LE:
   case BO_GE:
     RelationCompare = true;
@@ -3073,8 +3083,8 @@ StmtResult Sema::LiftCilkForLoopLimit(SourceLocation CilkForLoc,
     return StmtEmpty();
 
   // Get the single loop variable declared.
-  DeclStmt *LoopVarDS = cast<DeclStmt>(First);
-  if (!LoopVarDS->isSingleDecl())
+  DeclStmt *LoopVarDS = dyn_cast<DeclStmt>(First);
+  if (!LoopVarDS || !LoopVarDS->isSingleDecl())
     return StmtEmpty();
   VarDecl *LoopVar = dyn_cast<VarDecl>(LoopVarDS->getSingleDecl());
   if (!LoopVar)
@@ -3160,7 +3170,9 @@ StmtResult
 Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
                        Stmt *First, ConditionResult Second, FullExprArg Third,
                        SourceLocation RParenLoc, Stmt *Body, VarDecl *LoopVar) {
-  if (!getLangOpts().CPlusPlus) {
+  CheckCilkForInit(*this, First);
+
+  // if (!getLangOpts().CPlusPlus) {
     if (DeclStmt *DS = dyn_cast_or_null<DeclStmt>(First)) {
       // C99 6.8.5p3: The declaration part of a 'for' statement shall only
       // declare identifiers for objects having storage class 'auto' or
@@ -3175,7 +3187,7 @@ Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
         }
       }
     }
-  }
+  // }
 
   CheckBreakContinueBinding(Second.get().second);
   CheckBreakContinueBinding(Third.get());
@@ -3229,7 +3241,7 @@ Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
   //                                    Condition, Increment, NewBody, CilkForLoc,
   //                                    LParenLoc, RParenLoc);
   // }
-    
+
   // Attempt to find the loop limit and extract it into its own declaration.
   StmtResult NewInit = LiftCilkForLoopLimit(CilkForLoc, First, &Condition);
   assert(!NewInit.isInvalid());
