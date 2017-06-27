@@ -20,6 +20,16 @@
 using namespace clang;
 using namespace CodeGen;
 
+llvm::Instruction *CodeGenFunction::EmitSyncRegionStart() {
+  // Start the sync region.  To ensure the syncregion.start call dominates all
+  // uses of the generated token, we insert this call at the alloca insertion
+  // point.
+  llvm::Instruction *SRStart = llvm::CallInst::Create(
+      CGM.getIntrinsic(llvm::Intrinsic::syncregion_start),
+      "syncreg", AllocaInsertPt);
+  return SRStart;
+}
+
 /// EmitCilkSyncStmt - Emit a _Cilk_sync node.
 void CodeGenFunction::EmitCilkSyncStmt(const CilkSyncStmt &S) {
   llvm::BasicBlock *ContinueBlock = createBasicBlock("sync.continue");
@@ -30,7 +40,11 @@ void CodeGenFunction::EmitCilkSyncStmt(const CilkSyncStmt &S) {
   if (HaveInsertPoint())
     EmitStopPoint(&S);
 
-  Builder.CreateSync(ContinueBlock);
+  EnsureSyncRegion();
+
+  llvm::Instruction *SRStart = CurSyncRegion->getSyncRegionStart();
+
+  Builder.CreateSync(ContinueBlock, SRStart);
   EmitBlock(ContinueBlock);
 }
 
@@ -41,11 +55,13 @@ public:
   void Emit(CodeGenFunction &CGF, Flags F) {
     if (F.isForEHCleanup()) {
       llvm::BasicBlock *ContinueBlock = CGF.createBasicBlock("sync.continue");
-      CGF.Builder.CreateSync(ContinueBlock);
+      CGF.Builder.CreateSync(ContinueBlock,
+                             CGF.CurSyncRegion->getSyncRegionStart());
       CGF.EmitBlock(ContinueBlock);
     }
   }
 };
+
 // TODO: When a _Cilk_spawn or _Cilk_for appears withiin a try-catch block and
 // the spawned computation can throw, add an implicit sync cleanup for the
 // spawned computation.  This cleanup path should appear as the unwind
@@ -125,6 +141,10 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
                                       ArrayRef<const Attr *> ForAttrs) {
   JumpDest LoopExit = getJumpDestInCurrentScope("pfor.end");
 
+  PushSyncRegion();
+  llvm::Instruction *SyncRegionStart = EmitSyncRegionStart();
+  CurSyncRegion->setSyncRegionStart(SyncRegionStart);
+
   LexicalScope ForScope(*this, S.getSourceRange());
 
   // Evaluate the first part before the loop.
@@ -158,9 +178,6 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
   // Create a cleanup scope for the condition variable cleanups.
   LexicalScope ConditionScope(*this, S.getSourceRange());
-
-  // // Emit any necessary exception-handling allocations
-  // getInvokeDest();
 
   // Save the old alloca insert point.
   llvm::AssertingVH<llvm::Instruction> OldAllocaInsertPt = AllocaInsertPt;
@@ -205,8 +222,9 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
     if (ExitBlock != LoopExit.getBlock()) {
       EmitBlock(ExitBlock);
-      Builder.CreateSync(SyncContinueBlock);
+      Builder.CreateSync(SyncContinueBlock, SyncRegionStart);
       EmitBlock(SyncContinueBlock);
+      PopSyncRegion();
       madeSync = true;
       EmitBranchThroughCleanup(LoopExit);
     }
@@ -218,7 +236,7 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
     if (LoopVar)
       LoopVarInitRV = EmitAnyExprToTemp(LoopVar->getInit());
 
-    Builder.CreateDetach(ForBodyEntry, Continue.getBlock());
+    Builder.CreateDetach(ForBodyEntry, Continue.getBlock(), SyncRegionStart);
 
     // Create a new alloca insert point.
     llvm::Value *Undef = llvm::UndefValue::get(Int32Ty);
@@ -266,7 +284,7 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
     DetachCleanupsScope.ForceCleanup();
 
-    Builder.CreateReattach(Continue.getBlock());
+    Builder.CreateReattach(Continue.getBlock(), SyncRegionStart);
   }
 
   // Restore CGF state after detached region.
@@ -300,7 +318,8 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
   // Emit the fall-through block.
   EmitBlock(LoopExit.getBlock(), true);
   if (!madeSync) {
-    Builder.CreateSync(SyncContinueBlock);
+    Builder.CreateSync(SyncContinueBlock, SyncRegionStart);
     EmitBlock(SyncContinueBlock);
+    PopSyncRegion();
   }
 }

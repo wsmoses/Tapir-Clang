@@ -69,8 +69,8 @@ CodeGenFunction::CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext)
       BlockPointer(nullptr), LambdaThisCaptureField(nullptr),
       NormalCleanupDest(nullptr), NextCleanupDestIndex(1),
       FirstBlockInfo(nullptr), EHResumeBlock(nullptr), ExceptionSlot(nullptr),
-      EHSelectorSlot(nullptr), IsSpawned(false), CurDetachScope(nullptr),
-      DebugInfo(CGM.getModuleDebugInfo()),
+      EHSelectorSlot(nullptr), IsSpawned(false), CurSyncRegion(nullptr),
+      CurDetachScope(nullptr), DebugInfo(CGM.getModuleDebugInfo()),
       DisableDebugInfo(false), DidCallStackSave(false), IndirectBranch(nullptr),
       PGO(cgm), SwitchInsn(nullptr), SwitchWeights(nullptr),
       CaseRangeBlock(nullptr), UnreachableBlock(nullptr), NumReturnExprs(0),
@@ -2110,7 +2110,8 @@ void CodeGenFunction::DetachScope::StartDetach() {
     RestoreDetachScope();
 
   // Create the detach
-  CGF.Builder.CreateDetach(DetachedBlock, ContinueBlock);
+  CGF.Builder.CreateDetach(DetachedBlock, ContinueBlock,
+                           CGF.CurSyncRegion->getSyncRegionStart());
 
   // Save the old EH state.
   OldEHResumeBlock = CGF.EHResumeBlock;
@@ -2125,6 +2126,8 @@ void CodeGenFunction::DetachScope::StartDetach() {
 
   // Create a cleanups scope.
   CleanupsScope = new RunCleanupsScope(CGF);
+
+  CGF.PushSyncRegion();
 
   // Initialize lifetime intrinsics for the reference temporary.
   if (RefTmp.isValid()) {
@@ -2154,11 +2157,14 @@ void CodeGenFunction::DetachScope::FinishDetach() {
   assert(DetachStarted &&
          "Attempted to finish a detach that was not started.");
 
+  CGF.PopSyncRegion();
+
   // Force cleanups from detached code.
   CleanupsScope->ForceCleanup();
 
   // The CFG path into the spawned statement should terminate with a `reattach'.
-  CGF.Builder.CreateReattach(ContinueBlock);
+  CGF.Builder.CreateReattach(ContinueBlock,
+                             CGF.CurSyncRegion->getSyncRegionStart());
 
   // Restore the alloca insertion point.
   llvm::Instruction *Ptr = CGF.AllocaInsertPt;

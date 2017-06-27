@@ -1,22 +1,29 @@
 # Cilk-Clang
 
-This version of Clang supports the '_Cilk_spawn' and '_Cilk_sync'
-keywords.  These keywords don't quite work the same way as they do in
-Cilk.  In particular, the '_Cilk_spawn' keyword supports spawning a
-statement.  Suppose, for example, that you wrote the following in Cilk
-proper:
+This version of Clang supports the '_Cilk_spawn', '_Cilk_sync', and
+'_Cilk_for' keywords from Cilk.  In particular, this version of Clang
+supports the use of _Cilk_spawn before a function call in a statement,
+an assignment, or a declaration, as in the following examples:
 
-x = _Cilk_spawn fib(n-1);
+_Cilk_spawn foo(n);
 
-In this version of Clang, you would write this:
+x = _Cilk_spawn foo(n);
 
-_Cilk_spawn x = fib(n-1);
+int x = _Cilk_spawn foo(n);
 
-Alternatively, you could write this:
+When spawning a function call, the call arguments and function
+arguments are evaluated before the spawn occurs.  When spawning an
+assignment or declaration, the LHS is also evaluated before the spawn
+occurs.
 
-_Cilk_spawn { x = fib(n-1); }
+For convenience, this version of Clang allows _Cilk_spawn to spawn an
+arbitrary statement, as follows:
 
-In the future, we'll add support for _Cilk_for and spawning of
-declarations.  For now, however, this version of Clang should allow us
-to compile Cilk code into parallel LLVM IR with relatively little
-modification to that Cilk code.
+_Cilk_spawn { x = foo(n); }
+
+Please use this syntax with caution!  When spawning an arbitrary
+statement, the spawn occurs before the evaluation of any part of the
+spawned statement.  Furthermore, some statements, such as goto, are
+not legal to spawn.  In the future, we will add checks to catch
+illegal uses of _Cilk_spawn.
+

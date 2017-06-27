@@ -2743,9 +2743,10 @@ void CodeGenFunction::EmitFunctionEpilog(const CGFunctionInfo &FI,
     return;
   }
 
-  if (getLangOpts().CilkPlus) {
+  if (getLangOpts().CilkPlus &&
+      CurSyncRegion && CurSyncRegion->getSyncRegionStart()) {
     llvm::BasicBlock* SyncBlock = createBasicBlock("preSyncL");
-    Builder.CreateSync(SyncBlock);
+    Builder.CreateSync(SyncBlock, CurSyncRegion->getSyncRegionStart());
     EmitBlock(SyncBlock);
   }
 
@@ -4276,6 +4277,7 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
         Builder.CreateStore(elt, eltAddr);
       }
       // FALLTHROUGH
+      LLVM_FALLTHROUGH;
     }
 
     case ABIArgInfo::InAlloca:

@@ -784,7 +784,7 @@ public:
     }
   };
 
-  /// In Cilk, whether the current call/invoke is spawned.
+  /// In Cilk, flag indicating whether the current call/invoke is spawned.
   bool IsSpawned;
 
   /// \brief RAII object to set/unset CodeGenFunction::IsSpawned.
@@ -798,6 +798,55 @@ public:
     bool OldScopeIsSpawned();
     void RestoreOldScope();
   };
+
+  class SyncRegion {
+    CodeGenFunction &CGF;
+    SyncRegion *ParentRegion;
+    llvm::Instruction *SyncRegionStart;
+
+    SyncRegion(const SyncRegion &) = delete;
+    void operator=(const SyncRegion &) = delete;
+  public:
+    explicit SyncRegion(CodeGenFunction &CGF)
+        : CGF(CGF), ParentRegion(CGF.CurSyncRegion), SyncRegionStart(nullptr)
+    {}
+
+    ~SyncRegion() {
+      // if (SyncRegionStart)
+      //   // Emit end of sync region.
+      //   CGF.Builder.CreateCall(
+      //       CGF.CGM.getIntrinsic(llvm::Intrinsic::syncregion_end),
+      //       {SyncRegionStart});
+      CGF.CurSyncRegion = ParentRegion;
+    }
+
+    llvm::Instruction *getSyncRegionStart() {
+      return SyncRegionStart;
+    }
+    void setSyncRegionStart(llvm::Instruction *SRStart) {
+      SyncRegionStart = SRStart;
+    }
+  };
+
+  /// The current sync region.
+  SyncRegion *CurSyncRegion;
+
+  void PushSyncRegion() {
+    CurSyncRegion = new SyncRegion(*this);
+  }
+
+  llvm::Instruction *EmitSyncRegionStart();
+
+  void PopSyncRegion() {
+    delete CurSyncRegion;
+  }
+
+  void EnsureSyncRegion() {
+    if (!CurSyncRegion)
+      PushSyncRegion();
+    if (!CurSyncRegion->getSyncRegionStart())
+      CurSyncRegion->setSyncRegionStart(EmitSyncRegionStart());
+  }
 
   /// \brief RAII object to manage creation of detach/reattach instructions.
   class DetachScope {
@@ -863,6 +912,7 @@ public:
   /// \brief Push a new detach scope onto the stack, but do not begin the
   /// detach.
   void PushDetachScope() {
+    EnsureSyncRegion();
     if (!CurDetachScope || CurDetachScope->IsDetachStarted())
       CurDetachScope = new DetachScope(*this);
   }
