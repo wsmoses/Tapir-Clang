@@ -62,6 +62,24 @@ public:
   }
 };
 
+/// \brief Cleanup to ensure parent stack frame is synced.
+struct RethrowCleanup : public EHScopeStack::Cleanup {
+  llvm::BasicBlock *InvokeDest;
+public:
+  RethrowCleanup(llvm::BasicBlock *InvokeDest = nullptr)
+      : InvokeDest(InvokeDest) {}
+  void Emit(CodeGenFunction &CGF, Flags F) {
+    llvm::BasicBlock *DetRethrowBlock = CGF.createBasicBlock("det.rethrow");
+    if (InvokeDest)
+      CGF.Builder.CreateInvoke(
+          CGF.CGM.getIntrinsic(llvm::Intrinsic::detached_rethrow),
+          DetRethrowBlock, InvokeDest);
+    else
+      CGF.Builder.CreateBr(DetRethrowBlock);
+    CGF.EmitBlock(DetRethrowBlock);
+  }
+};
+
 // TODO: When a _Cilk_spawn or _Cilk_for appears withiin a try-catch block and
 // the spawned computation can throw, add an implicit sync cleanup for the
 // spawned computation.  This cleanup path should appear as the unwind
@@ -251,6 +269,7 @@ void CodeGenFunction::EmitCilkForStmt(const CilkForStmt &S,
 
   // Create a cleanup scope for the loop-variable cleanups.
   RunCleanupsScope DetachCleanupsScope(*this);
+  EHStack.pushCleanup<RethrowCleanup>(EHCleanup);
 
   // Inside the detached block, create the loop variable, setting its value to
   // the saved initialization value.
