@@ -3241,6 +3241,9 @@ void Clang::ConstructJob(Compilation &C, const JobAction &JA,
   const SanitizerArgs &Sanitize = getToolChain().getSanitizerArgs();
   Sanitize.addArgs(getToolChain(), Args, CmdArgs, InputType);
 
+  if (Args.hasArg(options::OPT_fcsi))
+    Args.AddLastArg(CmdArgs, options::OPT_fcsi);
+
   const XRayArgs &XRay = getToolChain().getXRayArgs();
   XRay.addArgs(getToolChain(), Args, CmdArgs, InputType);
 
