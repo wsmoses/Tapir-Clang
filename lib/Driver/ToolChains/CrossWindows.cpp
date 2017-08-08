@@ -171,6 +171,11 @@ void tools::CrossWindows::Linker::ConstructJob(
       CmdArgs.push_back("-Bdynamic");
   }
 
+  if (Args.hasArg(options::OPT_fcilkplus) ||
+      Args.hasArg(options::OPT_ftapir) ||
+      Args.hasArg(options::OPT_fdetach))
+    CmdArgs.push_back("-lcilkrts");
+
   if (!Args.hasArg(options::OPT_nostdlib)) {
     if (!Args.hasArg(options::OPT_nodefaultlibs)) {
       // TODO handle /MT[d] /MD[d]

@@ -181,6 +181,11 @@ void tools::MinGW::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   TC.AddFilePathLibArgs(Args, CmdArgs);
   AddLinkerInputs(TC, Inputs, Args, CmdArgs, JA);
 
+  if (Args.hasArg(options::OPT_fcilkplus) ||
+      Args.hasArg(options::OPT_ftapir) ||
+      Args.hasArg(options::OPT_fdetach))
+    CmdArgs.push_back("-lcilkrts");
+
   // TODO: Add ASan stuff here
 
   // TODO: Add profile stuff here

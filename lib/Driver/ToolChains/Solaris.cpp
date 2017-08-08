@@ -99,6 +99,11 @@ void solaris::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs, JA);
 
+  if (Args.hasArg(options::OPT_fcilkplus) ||
+      Args.hasArg(options::OPT_ftapir) ||
+      Args.hasArg(options::OPT_fdetach))
+    CmdArgs.push_back("-lcilkrts");
+
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     if (getToolChain().getDriver().CCCIsCXX())
       getToolChain().AddCXXStdlibLibArgs(Args, CmdArgs);

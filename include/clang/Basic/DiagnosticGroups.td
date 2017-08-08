@@ -664,6 +664,10 @@ def IntToVoidPointerCast : DiagGroup<"int-to-void-pointer-cast">;
 def IntToPointerCast : DiagGroup<"int-to-pointer-cast",
                                  [IntToVoidPointerCast]>;
 
+// Cilk Plus warnings.
+def SourceUsesCilkPlus : DiagGroup<"source-uses-cilk-plus">;
+def CilkPlusLoopControlVarModification : DiagGroup<"cilk-loop-control-var-modification">;
+
 def Move : DiagGroup<"move", [PessimizingMove, RedundantMove, SelfMove]>;
 
 def Extra : DiagGroup<"extra", [
@@ -705,6 +709,7 @@ def Most : DiagGroup<"most", [
     OverloadedVirtual,
     PrivateExtern,
     SelTypeCast,
+    CilkPlusLoopControlVarModification,
     ExternCCompat,
     UserDefinedWarnings
  ]>;
