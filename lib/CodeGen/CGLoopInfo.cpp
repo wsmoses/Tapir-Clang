@@ -28,6 +28,7 @@ static MDNode *createMetadata(LLVMContext &Ctx, const LoopAttributes &Attrs,
       Attrs.VectorizeEnable == LoopAttributes::Unspecified &&
       Attrs.UnrollEnable == LoopAttributes::Unspecified &&
       Attrs.DistributeEnable == LoopAttributes::Unspecified &&
+      Attrs.SpawnStrategy == LoopAttributes::Sequential &&
       !StartLoc && !EndLoc)
     return nullptr;
 
@@ -99,6 +100,14 @@ static MDNode *createMetadata(LLVMContext &Ctx, const LoopAttributes &Attrs,
     Args.push_back(MDNode::get(Ctx, Vals));
   }
 
+  // Setting tapir.loop.spawn.strategy
+  if (Attrs.SpawnStrategy != LoopAttributes::Sequential) {
+    Metadata *Vals[] = {MDString::get(Ctx, "tapir.loop.spawn.strategy"),
+                        ConstantAsMetadata::get(ConstantInt::get(
+                            Type::getInt32Ty(Ctx), Attrs.SpawnStrategy))};
+    Args.push_back(MDNode::get(Ctx, Vals));
+  }
+
   // Set the first operand to itself.
   MDNode *LoopID = MDNode::get(Ctx, Args);
   LoopID->replaceOperandWith(0, LoopID);
@@ -109,7 +118,8 @@ LoopAttributes::LoopAttributes(bool IsParallel)
     : IsParallel(IsParallel), VectorizeEnable(LoopAttributes::Unspecified),
       UnrollEnable(LoopAttributes::Unspecified), VectorizeWidth(0),
       InterleaveCount(0), UnrollCount(0),
-      DistributeEnable(LoopAttributes::Unspecified) {}
+      DistributeEnable(LoopAttributes::Unspecified),
+      SpawnStrategy(LoopAttributes::Sequential) {}
 
 void LoopAttributes::clear() {
   IsParallel = false;
@@ -119,6 +129,7 @@ void LoopAttributes::clear() {
   VectorizeEnable = LoopAttributes::Unspecified;
   UnrollEnable = LoopAttributes::Unspecified;
   DistributeEnable = LoopAttributes::Unspecified;
+  SpawnStrategy = LoopAttributes::Sequential;
 }
 
 LoopInfo::LoopInfo(BasicBlock *Header, const LoopAttributes &Attrs,

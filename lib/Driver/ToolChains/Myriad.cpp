@@ -170,6 +170,11 @@ void tools::Myriad::Linker::ConstructJob(Compilation &C, const JobAction &JA,
   bool NeedsSanitizerDeps = addSanitizerRuntimes(TC, Args, CmdArgs);
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs, JA);
 
+  if (Args.hasArg(options::OPT_fcilkplus) ||
+      Args.hasArg(options::OPT_ftapir) ||
+      Args.hasArg(options::OPT_fdetach))
+    CmdArgs.push_back("-lcilkrts");
+
   if (UseDefaultLibs) {
     if (NeedsSanitizerDeps)
       linkSanitizerRuntimeDeps(TC, CmdArgs);

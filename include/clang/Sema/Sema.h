@@ -3737,6 +3737,49 @@ public:
   RecordDecl *CreateCapturedStmtRecordDecl(CapturedDecl *&CD,
                                            SourceLocation Loc,
                                            unsigned NumParams);
+
+  void DiagnoseCilkSpawn(Stmt *S);
+
+  StmtResult ActOnCilkSyncStmt(SourceLocation SyncLoc);
+  StmtResult ActOnCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *S);
+  ExprResult ActOnCilkSpawnExpr(SourceLocation SpawnLoc, Expr *E);
+  ExprResult BuildCilkSpawnExpr(SourceLocation SpawnLoc, Expr *E);
+
+  // bool CheckIfBodyModifiesLoopControlVar(Stmt *Body);
+  StmtResult HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
+                                     SourceLocation LParenLoc,
+                                     Stmt *First,
+                                     Expr *Condition,
+                                     Expr *Increment,
+                                     SourceLocation RParenLoc,
+                                     Stmt *Body);
+  StmtResult LiftCilkForLoopLimit(SourceLocation CilkForLoc,
+                                  Stmt *First, Expr **Second);
+  StmtResult ActOnCilkForStmt(SourceLocation CilkForLoc,
+                              SourceLocation LParenLoc,
+                              Stmt *Init,
+                              ConditionResult second,
+                              FullExprArg third,
+                              SourceLocation RParenLoc,
+                              Stmt *Body,
+                              VarDecl *LoopVar = nullptr);
+
+  StmtResult BuildCilkForStmt(SourceLocation CilkForLoc,
+                              SourceLocation LParenLoc,
+                              Stmt *Init, Expr *Cond, Expr *Inc,
+                              SourceLocation RParenLoc, Stmt *Body,
+                              Expr *LoopCount, Expr *Stride,
+                              QualType SpanType);
+
+  // void ActOnStartOfCilkForStmt(SourceLocation CilkForLoc, Scope *CurScope,
+  //                              StmtResult FirstPart);
+
+  // void ActOnCilkForStmtError();
+
+  ExprResult CalculateCilkForLoopCount(SourceLocation CilkForLoc, Expr *Span,
+                                       Expr *Increment, Expr *StrideExpr,
+                                       int Dir, BinaryOperatorKind Opcode);
+
   VarDecl *getCopyElisionCandidate(QualType ReturnType, Expr *E,
                                    bool AllowParamOrMoveConstructible);
   bool isCopyElisionCandidate(QualType ReturnType, const VarDecl *VD,

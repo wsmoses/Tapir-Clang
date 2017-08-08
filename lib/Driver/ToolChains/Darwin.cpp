@@ -498,6 +498,11 @@ void darwin::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   Args.AddAllArgs(CmdArgs, options::OPT_L);
 
+  if (Args.hasArg(options::OPT_fcilkplus) ||
+      Args.hasArg(options::OPT_ftapir) ||
+      Args.hasArg(options::OPT_fdetach))
+    CmdArgs.push_back("-lcilkrts");
+
   AddLinkerInputs(getToolChain(), Inputs, Args, CmdArgs, JA);
   // Build the input file for -filelist (list of linker input files) in case we
   // need it later
@@ -1053,6 +1058,8 @@ void DarwinClang::AddLinkRuntimeLibArgs(const ArgList &Args,
     AddLinkSanitizerLibArgs(Args, CmdArgs, "ubsan");
   if (Sanitize.needsTsanRt())
     AddLinkSanitizerLibArgs(Args, CmdArgs, "tsan");
+  if (Sanitize.needsCilksanRt())
+    AddLinkSanitizerLibArgs(Args, CmdArgs, "cilk");
   if (Sanitize.needsFuzzer() && !Args.hasArg(options::OPT_dynamiclib))
     AddFuzzerLinkArgs(Args, CmdArgs);
   if (Sanitize.needsStatsRt()) {
@@ -2019,11 +2026,15 @@ SanitizerMask Darwin::getSupportedSanitizers() const {
     if (!isMacosxVersionLT(10, 9))
       Res |= SanitizerKind::Vptr;
     Res |= SanitizerKind::SafeStack;
-    if (IsX86_64)
+    if (IsX86_64) {
       Res |= SanitizerKind::Thread;
+      Res |= SanitizerKind::Cilk;
+    }
   } else if (isTargetIOSSimulator() || isTargetTvOSSimulator()) {
-    if (IsX86_64)
+    if (IsX86_64) {
       Res |= SanitizerKind::Thread;
+      Res |= SanitizerKind::Cilk;
+    }
   }
   return Res;
 }

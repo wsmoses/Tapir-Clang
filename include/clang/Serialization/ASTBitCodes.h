@@ -1553,6 +1553,12 @@ namespace clang {
       EXPR_COAWAIT,
       EXPR_COYIELD,
       EXPR_DEPENDENT_COAWAIT,
+
+      // Cilk Plus
+      STMT_CILKSPAWN,
+      EXPR_CILKSPAWN,
+      STMT_CILKSYNC,
+      STMT_CILKFOR,
     };
 
     /// \brief The kinds of designators that can occur in a
