@@ -4,17 +4,17 @@ int Cilk_for_tests(int n) {
   /* int n = 10; */
   /* _Cilk_for(int i = 0; i < n; i += 2); */
   /* _Cilk_for(int j = 0, __begin = 0, __end = n/2; __begin < __end; j += 2, __begin++); */
-  _Cilk_for (int i = 0; i < n; ++i);
-  _Cilk_for (int i = 0, __end = n; i < __end; ++i);
+  _Cilk_for (int i = 0; i < n; ++i); // expected-warning {{Cilk for loop has empty body}}
+  _Cilk_for (int i = 0, __end = n; i < __end; ++i); // expected-warning {{Cilk for loop has empty body}}
   unsigned long long m = 10;
-  _Cilk_for (int i = 0; i < m; ++i);
-  _Cilk_for (int i = 0, __end = m; i < __end; ++i);
+  _Cilk_for (int i = 0; i < m; ++i); // expected-warning {{Cilk for loop has empty body}}
+  _Cilk_for (int i = 0, __end = m; i < __end; ++i); // expected-warning {{Cilk for loop has empty body}}
   return 0;
 }
 
 int pragma_tests(int n) {
 #pragma clang loop unroll_count(4)
-  _Cilk_for (int i = 0; i < n; ++i);
+  _Cilk_for (int i = 0; i < n; ++i); // expected-warning {{Cilk for loop has empty body}}
 
   return 0;
 }
