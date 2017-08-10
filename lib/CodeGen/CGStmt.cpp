@@ -12,7 +12,6 @@
 //===----------------------------------------------------------------------===//
 
 #include "CodeGenFunction.h"
-#include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CodeGenModule.h"
 #include "TargetInfo.h"

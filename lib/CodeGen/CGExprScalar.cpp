@@ -1168,7 +1168,6 @@ void ScalarExprEmitter::EmitBinOpCheck(
 
 Value *ScalarExprEmitter::VisitExpr(Expr *E) {
   CGF.ErrorUnsupported(E, "scalar expression");
-  assert(0);
   if (E->getType()->isVoidType())
     return nullptr;
   return llvm::UndefValue::get(CGF.ConvertType(E->getType()));
