@@ -1,4 +1,4 @@
-// RUN: %clang_cc1 -std=c++1z -verify -c %s
+// RUN: %clang_cc1 -std=c++1z -verify %s
 
 class Bar {
   int myVal;
@@ -90,9 +90,8 @@ int basic_spawn_decl_tests(int n) {
 int spawn_assign_eval_order_tests(int n) {
   int i = 0;
   int Arr[5];
-  Arr[i++] = _Cilk_spawn bar(i++); // expected-warning {{unsequenced modification and access to 'i'}}
-  // Arr[i] = _Cilk_spawn i++; // expected-error {{???}}
-  // Arr[i++] += bar(i); // expected-warning {{unsequenced modification and access to 'i'}}
-  // Arr[i++] += _Cilk_spawn bar(i); // expected-warning {{unsequenced modification and access to 'i'}}
+  Arr[i++] = _Cilk_spawn bar(i++); // expected-warning {{multiple unsequenced modifications to 'i'}}
+  Arr[i++] += bar(i); // expected-warning {{unsequenced modification and access to 'i'}}
+  Arr[i++] += _Cilk_spawn bar(i); // expected-warning {{unsequenced modification and access to 'i'}}
   return 0;
 }
