@@ -282,6 +282,11 @@ static void addEfficiencySanitizerPass(const PassManagerBuilder &Builder,
   PM.add(createEfficiencySanitizerPass(Opts));
 }
 
+static void addCilkSanitizerPass(const PassManagerBuilder &Builder,
+                                 legacy::PassManagerBase &PM) {
+  PM.add(createCilkSanitizerPass());
+}
+
 static void
 addComprehensiveStaticInstrumentationPass(const PassManagerBuilder &Builder,
                                           PassManagerBase &PM) {
@@ -573,14 +578,6 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
                            addThreadSanitizerPass);
   }
 
-  if (LangOpts.Sanitize.has(SanitizerKind::Cilk)) {
-    PMBuilder.InstrumentCilk = true;
-    PMBuilder.addExtension(PassManagerBuilder::EP_OptimizerLast,
-                           addThreadSanitizerPass);
-    PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,
-                           addThreadSanitizerPass);
-  }
-
   if (LangOpts.Sanitize.has(SanitizerKind::DataFlow)) {
     PMBuilder.addExtension(PassManagerBuilder::EP_OptimizerLast,
                            addDataFlowSanitizerPass);
@@ -596,6 +593,18 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
                            addEfficiencySanitizerPass);
     PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,
                            addEfficiencySanitizerPass);
+  }
+
+  if (LangOpts.Sanitize.has(SanitizerKind::Cilk)) {
+    // PMBuilder.InstrumentCilk = true;
+    // PMBuilder.addExtension(PassManagerBuilder::EP_OptimizerLast,
+    //                        addThreadSanitizerPass);
+    // PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,
+    //                        addThreadSanitizerPass);
+    PMBuilder.addExtension(PassManagerBuilder::EP_TapirLate,
+                           addCilkSanitizerPass);
+    PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,
+                           addCilkSanitizerPass);
   }
 
   if (LangOpts.ComprehensiveStaticInstrumentation) {
