@@ -2071,15 +2071,6 @@ static void ParseLangArgs(LangOptions &Opts, ArgList &Args, InputKind IK,
   Opts.VtorDispMode = getLastArgIntValue(Args, OPT_vtordisp_mode_EQ, 1, Diags);
   Opts.Borland = Args.hasArg(OPT_fborland_extensions);
 
-  Opts.Tapir = Args.hasArg(OPT_ftapir);
-  Opts.Rhino = Args.hasArg(OPT_frhino);
-  Opts.Detach = Args.hasArg(OPT_fdetach);
-  //llvm::errs() << "CI --  cp:" << Opts.CilkPlus << " nm:" << Opts.Detach << " tpr:" << Opts.Tapir << "\n";
-  Opts.CilkPlus = Args.hasArg(OPT_fcilkplus) || Args.hasArg(OPT_ftapir) ||
-    Args.hasArg(Opts.Detach);
-  if (Opts.CilkPlus && (Opts.ObjC1 || Opts.ObjC2))
-    Diags.Report(diag::err_drv_cilk_objc);
-
   Opts.WritableStrings = Args.hasArg(OPT_fwritable_strings);
   Opts.ConstStrings = Args.hasFlag(OPT_fconst_strings, OPT_fno_const_strings,
                                    Opts.ConstStrings);
@@ -2666,6 +2657,15 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
     if (Res.getFrontendOpts().ProgramAction == frontend::RewriteObjC)
       LangOpts.ObjCExceptions = 1;
   }
+
+  LangOpts.Tapir = Args.hasArg(OPT_ftapir);
+  LangOpts.Rhino = Args.hasArg(OPT_frhino);
+  LangOpts.Detach = Args.hasArg(OPT_fdetach);
+
+  LangOpts.CilkPlus = Args.hasArg(OPT_fcilkplus) || Args.hasArg(OPT_ftapir) ||
+    Args.hasArg(OPT_fdetach);
+  if (LangOpts.CilkPlus && (LangOpts.ObjC1 || LangOpts.ObjC2))
+    Diags.Report(diag::err_drv_cilk_objc);
 
   if (LangOpts.CUDA) {
     // During CUDA device-side compilation, the aux triple is the
