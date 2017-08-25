@@ -1138,6 +1138,7 @@ static bool HasFeature(const Preprocessor &PP, StringRef Feature) {
       .Case("dataflow_sanitizer", LangOpts.Sanitize.has(SanitizerKind::DataFlow))
       .Case("efficiency_sanitizer",
             LangOpts.Sanitize.hasOneOf(SanitizerKind::Efficiency))
+      .Case("cilk_sanitizer", LangOpts.Sanitize.has(SanitizerKind::Cilk))
       .Case("comprehensive_static_instrumentation",
             LangOpts.ComprehensiveStaticInstrumentation)
       // Objective-C features

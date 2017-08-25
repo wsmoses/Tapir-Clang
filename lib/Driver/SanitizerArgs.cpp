@@ -169,7 +169,7 @@ bool SanitizerArgs::needsUbsanRt() const {
           CoverageFeatures) &&
          !Sanitizers.has(Address) && !Sanitizers.has(Memory) &&
          !Sanitizers.has(Thread) && !Sanitizers.has(DataFlow) && 
-         !Sanitizers.has(Leak) && !CfiCrossDso;
+         !Sanitizers.has(Leak) && !CfiCrossDso && !Sanitizers.has(Cilk);
 }
 
 bool SanitizerArgs::needsCfiRt() const {
