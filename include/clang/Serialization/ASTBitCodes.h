@@ -1545,9 +1545,14 @@ namespace clang {
 
       // ARC
       EXPR_OBJC_BRIDGED_CAST,     // ObjCBridgedCastExpr
-      
+
       STMT_MS_DEPENDENT_EXISTS,   // MSDependentExistsStmt
       EXPR_LAMBDA,                // LambdaExpr
+      STMT_COROUTINE_BODY,
+      STMT_CORETURN,
+      EXPR_COAWAIT,
+      EXPR_COYIELD,
+      EXPR_DEPENDENT_COAWAIT,
 
       // Cilk Plus
       STMT_CILKSPAWN,

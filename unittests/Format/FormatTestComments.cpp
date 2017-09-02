@@ -805,6 +805,70 @@ TEST_F(FormatTestComments, ParsesCommentsAdjacentToPPDirectives) {
             format("namespace {}\n   /* Test */    #define A"));
 }
 
+TEST_F(FormatTestComments, KeepsLevelOfCommentBeforePPDirective) {
+  // Keep the current level if the comment was originally not aligned with
+  // the preprocessor directive.
+  EXPECT_EQ("void f() {\n"
+            "  int i;\n"
+            "  /* comment */\n"
+            "#ifdef A\n"
+            "  int j;\n"
+            "}",
+            format("void f() {\n"
+                   "  int i;\n"
+                   "  /* comment */\n"
+                   "#ifdef A\n"
+                   "  int j;\n"
+                   "}"));
+
+  EXPECT_EQ("void f() {\n"
+            "  int i;\n"
+            "  /* comment */\n"
+            "\n"
+            "#ifdef A\n"
+            "  int j;\n"
+            "}",
+            format("void f() {\n"
+                   "  int i;\n"
+                   "  /* comment */\n"
+                   "\n"
+                   "#ifdef A\n"
+                   "  int j;\n"
+                   "}"));
+
+  // Keep the current level if there is an empty line between the comment and
+  // the preprocessor directive.
+  EXPECT_EQ("void f() {\n"
+            "  int i;\n"
+            "  /* comment */\n"
+            "\n"
+            "#ifdef A\n"
+            "  int j;\n"
+            "}",
+            format("void f() {\n"
+                   "  int i;\n"
+                   "/* comment */\n"
+                   "\n"
+                   "#ifdef A\n"
+                   "  int j;\n"
+                   "}"));
+
+  // Align with the preprocessor directive if the comment was originally aligned
+  // with the preprocessor directive.
+  EXPECT_EQ("void f() {\n"
+            "  int i;\n"
+            "/* comment */\n"
+            "#ifdef A\n"
+            "  int j;\n"
+            "}",
+            format("void f() {\n"
+                   "  int i;\n"
+                   "/* comment */\n"
+                   "#ifdef A\n"
+                   "  int j;\n"
+                   "}"));
+}
+
 TEST_F(FormatTestComments, SplitsLongLinesInComments) {
   EXPECT_EQ("/* This is a long\n"
             " * comment that\n"
@@ -1050,6 +1114,30 @@ TEST_F(FormatTestComments, KeepsTrailingPPCommentsAndSectionCommentsSeparate) {
                "  i = 4;\n"
                "#endif\n"
                "}", getLLVMStyleWithColumns(80));
+}
+
+TEST_F(FormatTestComments, AlignsPPElseEndifComments) {
+  verifyFormat("#if A\n"
+               "#else  // A\n"
+               "int iiii;\n"
+               "#endif // B",
+               getLLVMStyleWithColumns(20));
+  verifyFormat("#if A\n"
+               "#else  // A\n"
+               "int iiii; // CC\n"
+               "#endif // B",
+               getLLVMStyleWithColumns(20));
+  EXPECT_EQ("#if A\n"
+            "#else  // A1\n"
+            "       // A2\n"
+            "int ii;\n"
+            "#endif // B",
+            format("#if A\n"
+                   "#else  // A1\n"
+                   "       // A2\n"
+                   "int ii;\n"
+                   "#endif // B",
+                   getLLVMStyleWithColumns(20)));
 }
 
 TEST_F(FormatTestComments, CommentsInStaticInitializers) {
@@ -2169,6 +2257,22 @@ TEST_F(FormatTestComments, AlignTrailingComments) {
                    "\n"
                    "// long",
                    getLLVMStyleWithColumns(15)));
+
+  // Don't align newly broken trailing comments if that would put them over the
+  // column limit.
+  EXPECT_EQ("int i, j; // line 1\n"
+            "int k; // line longg\n"
+            "       // long",
+            format("int i, j; // line 1\n"
+                   "int k; // line longg long",
+                   getLLVMStyleWithColumns(20)));
+
+  // Always align if ColumnLimit = 0
+  EXPECT_EQ("int i, j; // line 1\n"
+            "int k;    // line longg long",
+            format("int i, j; // line 1\n"
+                   "int k; // line longg long",
+                   getLLVMStyleWithColumns(0)));
 
   // Align comment line sections aligned with the next token with the next
   // token.

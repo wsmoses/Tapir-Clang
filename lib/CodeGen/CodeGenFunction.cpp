@@ -22,6 +22,7 @@
 #include "CodeGenPGO.h"
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
+#include "clang/AST/ASTLambda.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/StmtCXX.h"
@@ -863,6 +864,13 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
 
   Builder.SetInsertPoint(EntryBB);
 
+  // If we're checking the return value, allocate space for a pointer to a
+  // precise source location of the checked return statement.
+  if (requiresReturnValueCheck()) {
+    ReturnLocation = CreateDefaultAlignTempAlloca(Int8PtrTy, "return.sloc.ptr");
+    InitTempAlloca(ReturnLocation, llvm::ConstantPointerNull::get(Int8PtrTy));
+  }
+
   // Emit subprogram debug descriptor.
   if (CGDebugInfo *DI = getDebugInfo()) {
     // Reconstruct the type from the argument list so that implicit parameters,
@@ -890,8 +898,10 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
   if (CGM.getCodeGenOpts().InstrumentForProfiling) {
     if (CGM.getCodeGenOpts().CallFEntry)
       Fn->addFnAttr("fentry-call", "true");
-    else
-      Fn->addFnAttr("counting-function", getTarget().getMCountName());
+    else {
+      if (!CurFuncDecl || !CurFuncDecl->hasAttr<NoInstrumentFunctionAttr>())
+        Fn->addFnAttr("counting-function", getTarget().getMCountName());
+    }
   }
 
   if (RetTy->isVoidType()) {
@@ -977,11 +987,22 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
     }
 
     // Check the 'this' pointer once per function, if it's available.
-    if (CXXThisValue) {
+    if (CXXABIThisValue) {
       SanitizerSet SkippedChecks;
       SkippedChecks.set(SanitizerKind::ObjectSize, true);
       QualType ThisTy = MD->getThisType(getContext());
-      EmitTypeCheck(TCK_Load, Loc, CXXThisValue, ThisTy,
+
+      // If this is the call operator of a lambda with no capture-default, it
+      // may have a static invoker function, which may call this operator with
+      // a null 'this' pointer.
+      if (isLambdaCallOperator(MD) &&
+          cast<CXXRecordDecl>(MD->getParent())->getLambdaCaptureDefault() ==
+              LCD_None)
+        SkippedChecks.set(SanitizerKind::Null, true);
+
+      EmitTypeCheck(isa<CXXConstructorDecl>(MD) ? TCK_ConstructorCall
+                                                : TCK_MemberCall,
+                    Loc, CXXABIThisValue, ThisTy,
                     getContext().getTypeAlignInChars(ThisTy->getPointeeType()),
                     SkippedChecks);
     }
@@ -1086,10 +1107,9 @@ QualType CodeGenFunction::BuildFunctionArgList(GlobalDecl GD,
       if (!Param->hasAttr<PassObjectSizeAttr>())
         continue;
 
-      IdentifierInfo *NoID = nullptr;
       auto *Implicit = ImplicitParamDecl::Create(
-          getContext(), Param->getDeclContext(), Param->getLocation(), NoID,
-          getContext().getSizeType());
+          getContext(), Param->getDeclContext(), Param->getLocation(),
+          /*Id=*/nullptr, getContext().getSizeType(), ImplicitParamDecl::Other);
       SizeArguments[Param] = Implicit;
       Args.push_back(Implicit);
     }
