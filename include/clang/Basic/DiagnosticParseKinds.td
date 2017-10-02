@@ -1071,11 +1071,11 @@ def err_cilk_for_forrange_loop_not_supported: Error<
 def err_cilk_for_foreach_loop_not_supported: Error<
   "'_Cilk_for' not supported on for-each loops">;
 
-def err_cilk_for_expect_grainsize: Error<
-  "expected 'grainsize' in '#pragma cilk'">;
+def err_pragma_cilk_invalid_option : Error<
+  "%select{invalid|missing}0 option%select{ %1|}0; expected grainsize">;
 
-def err_cilk_for_expect_assign: Error<
-  "expected '=' in '#pragma cilk'">;
+def err_pragma_cilk_grainsize_missing_argument : Error<
+  "missing argument; expected an integer value">;
 
 def warn_cilk_for_following_grainsize: Warning<
   "'#pragma cilk' ignored, because it is not followed by a '_Cilk_for' loop">,
