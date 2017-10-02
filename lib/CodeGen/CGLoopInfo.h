@@ -58,6 +58,9 @@ struct LoopAttributes {
   /// \brief llvm.unroll.
   unsigned UnrollCount;
 
+  /// \brief tapir.loop.grainsize.
+  unsigned TapirGrainsize;
+
   /// \brief Value for llvm.loop.distribute.enable metadata.
   LVEnableState DistributeEnable;
 
@@ -162,6 +165,9 @@ public:
   void setSpawnStrategy(const LoopAttributes::LSStrategy &Strat) {
     StagedAttrs.SpawnStrategy = Strat;
   }
+
+  /// \brief Set the Tapir-loop grainsize for the next loop pushed.
+  void setTapirGrainsize(unsigned C) { StagedAttrs.TapirGrainsize = C; }
 
 private:
   /// \brief Returns true if there is LoopInfo on the stack.
