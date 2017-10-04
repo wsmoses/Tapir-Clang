@@ -42,6 +42,7 @@
 #include "llvm/Support/Path.h"
 #include "llvm/Support/Process.h"
 #include "llvm/Target/TargetOptions.h"
+#include "llvm/Transforms/Tapir/TapirTypes.h"
 #include "llvm/Support/ScopedPrinter.h"
 #include <atomic>
 #include <memory>
@@ -2685,13 +2686,27 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
     if (Res.getFrontendOpts().ProgramAction == frontend::RewriteObjC)
       LangOpts.ObjCExceptions = 1;
   }
-  
-  LangOpts.Tapir = Args.hasArg(OPT_ftapir);
+
   LangOpts.Rhino = Args.hasArg(OPT_frhino);
   LangOpts.Detach = Args.hasArg(OPT_fdetach);
-  
-  LangOpts.CilkPlus = Args.hasArg(OPT_fcilkplus) || Args.hasArg(OPT_ftapir) ||
-    Args.hasArg(OPT_fdetach);
+
+  if (Args.hasArg(OPT_ftapir))
+  if (Arg *A = Args.getLastArg(OPT_ftapir)) {
+    StringRef Name = A->getValue();
+    if (Name == "none")
+      LangOpts.Tapir = llvm::tapir::TapirTargetType::None;
+    else if (Name == "cilk")
+      LangOpts.Tapir = llvm::tapir::TapirTargetType::Cilk;
+    else if (Name == "openmp")
+      LangOpts.Tapir = llvm::tapir::TapirTargetType::OpenMP;
+    else if (Name == "serial")
+      LangOpts.Tapir = llvm::tapir::TapirTargetType::Serial;
+    else
+      Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args) << Name;
+  }
+
+  if (Args.hasArg(OPT_fcilkplus) && !Args.hasArg(OPT_ftapir))
+    LangOpts.Tapir = llvm::tapir::TapirTargetType::Cilk;
   if (LangOpts.CilkPlus && (LangOpts.ObjC1 || LangOpts.ObjC2))
     Diags.Report(diag::err_drv_cilk_objc);
 

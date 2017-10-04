@@ -2744,8 +2744,7 @@ void CodeGenFunction::EmitFunctionEpilog(const CGFunctionInfo &FI,
     return;
   }
 
-  if (getLangOpts().CilkPlus &&
-      CurSyncRegion && CurSyncRegion->getSyncRegionStart()) {
+  if (CurSyncRegion && CurSyncRegion->getSyncRegionStart()) {
     llvm::BasicBlock* SyncBlock = createBasicBlock("preSyncL");
     Builder.CreateSync(SyncBlock, CurSyncRegion->getSyncRegionStart());
     EmitBlock(SyncBlock);
@@ -3299,7 +3298,7 @@ void CodeGenFunction::EmitNonNullArgCheck(RValue RV, QualType ArgType,
   auto PVD = ParmNum < AC.getNumParams() ? AC.getParamDecl(ParmNum) : nullptr;
   unsigned ArgNo = PVD ? PVD->getFunctionScopeIndex() : ParmNum;
 
-  // Prefer the nonnull attribute if it's present. 
+  // Prefer the nonnull attribute if it's present.
   const NonNullAttr *NNAttr = nullptr;
   if (SanOpts.has(SanitizerKind::NonnullAttribute))
     NNAttr = getNonNullAttr(AC.getDecl(), PVD, ArgType, ArgNo);

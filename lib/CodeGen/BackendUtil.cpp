@@ -54,6 +54,10 @@
 #include "llvm/Transforms/ObjCARC.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Scalar/GVN.h"
+#include "llvm/Transforms/Tapir/TapirTypes.h"
+#include "llvm/Transforms/Tapir/TapirUtils.h"
+#include "llvm/Transforms/Tapir/CilkABI.h"
+#include "llvm/Transforms/Tapir/OpenMPABI.h"
 #include "llvm/Transforms/Utils/NameAnonGlobals.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
 #include <memory>
@@ -495,10 +499,22 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   }
 
   PMBuilder.OptLevel = CodeGenOpts.OptimizationLevel;
-  PMBuilder.ParallelLevel = 0;
-  if (LangOpts.CilkPlus) PMBuilder.ParallelLevel = 1;
-  if (LangOpts.Detach) PMBuilder.ParallelLevel = 3;
-  if (LangOpts.Tapir) PMBuilder.ParallelLevel = 2;
+
+  switch(LangOpts.Tapir){
+    case tapir::TapirTargetType::Cilk:
+      PMBuilder.tapirTarget = new llvm::tapir::CilkABI();
+      break;
+    case tapir::TapirTargetType::OpenMP:
+      PMBuilder.tapirTarget = new llvm::tapir::OpenMPABI();
+      break;
+    case tapir::TapirTargetType::Serial:
+      assert(0 && "TODO MAKE OTHER TAPIR OPTS");
+    case tapir::TapirTargetType::None:
+      PMBuilder.tapirTarget = nullptr;
+      break;
+  }
+
+  if (LangOpts.Detach) PMBuilder.DisableTapirOpts = true;
   if (LangOpts.Rhino) PMBuilder.Rhino = true;
 
   PMBuilder.SizeLevel = CodeGenOpts.OptimizeSize;
@@ -576,7 +592,7 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   }
 
   if (LangOpts.Sanitize.has(SanitizerKind::Cilk)) {
-    PMBuilder.InstrumentCilk = true;
+    //PMBuilder.tapirTarget = new llvm::tapir::CilkABI(/*Instrument=*/true);
     PMBuilder.addExtension(PassManagerBuilder::EP_OptimizerLast,
                            addThreadSanitizerPass);
     PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,

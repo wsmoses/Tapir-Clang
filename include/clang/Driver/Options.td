@@ -1123,10 +1123,12 @@ def fno_implicit_modules :
   Flag <["-"], "fno-implicit-modules">,
   Group<f_Group>, Flags<[DriverOption, CC1Option]>;
 def fretain_comments_from_system_headers : Flag<["-"], "fretain-comments-from-system-headers">, Group<f_Group>, Flags<[CC1Option]>;
-def fcilkplus : Flag <["-"], "fcilkplus">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Enable Cilk Plus extensions">;
-def ftapir    : Flag <["-"], "ftapir">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Enable Tapir/Cilk Plus extensions">;
+
+def ftapir : Joined<["-"], "ftapir=">, Group<f_Group>, Flags<[CC1Option]>,
+    HelpText<"Choose the backend for tapir instructions (i.e. parallel runtime)">, Values<"cilk,openmp,serial,none">;
+def fcilkplus : Flag<["-"], "fcilkplus">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Enable Cilkplus extensions">;
 def frhino    : Flag <["-"], "frhino">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Enable Rhino extension to Tapir">;
-def fdetach   : Flag <["-"], "fdetach">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Disable memory optimizations / Only run detach2cilk">;
+def fdetach   : Flag <["-"], "fdetach">, Group<f_Group>, Flags<[CC1Option]>, HelpText<"Disable memory optimizations and immediately lower">;
 
 def fmudflapth : Flag<["-"], "fmudflapth">, Group<f_Group>;
 def fmudflap : Flag<["-"], "fmudflap">, Group<f_Group>;
@@ -1315,7 +1317,7 @@ def fopenmp_use_tls : Flag<["-"], "fopenmp-use-tls">, Group<f_Group>, Flags<[NoA
 def fnoopenmp_use_tls : Flag<["-"], "fnoopenmp-use-tls">, Group<f_Group>, Flags<[CC1Option, NoArgumentUnused]>;
 def fopenmp_targets_EQ : CommaJoined<["-"], "fopenmp-targets=">, Flags<[DriverOption, CC1Option]>,
   HelpText<"Specify comma-separated list of triples OpenMP offloading targets to be supported">;
-def fopenmp_dump_offload_linker_script : Flag<["-"], "fopenmp-dump-offload-linker-script">, Group<f_Group>, 
+def fopenmp_dump_offload_linker_script : Flag<["-"], "fopenmp-dump-offload-linker-script">, Group<f_Group>,
   Flags<[NoArgumentUnused]>;
 def fno_optimize_sibling_calls : Flag<["-"], "fno-optimize-sibling-calls">, Group<f_Group>;
 def foptimize_sibling_calls : Flag<["-"], "foptimize-sibling-calls">, Group<f_Group>;
