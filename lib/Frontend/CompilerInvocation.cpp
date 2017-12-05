@@ -2689,25 +2689,31 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
 
   LangOpts.Rhino = Args.hasArg(OPT_frhino);
   LangOpts.Detach = Args.hasArg(OPT_fdetach);
+  LangOpts.Cilk = Args.hasArg(OPT_fcilkplus);
 
-  if (Args.hasArg(OPT_ftapir))
-  if (Arg *A = Args.getLastArg(OPT_ftapir)) {
-    StringRef Name = A->getValue();
-    if (Name == "none")
-      LangOpts.Tapir = llvm::tapir::TapirTargetType::None;
-    else if (Name == "cilk")
-      LangOpts.Tapir = llvm::tapir::TapirTargetType::Cilk;
-    else if (Name == "openmp")
-      LangOpts.Tapir = llvm::tapir::TapirTargetType::OpenMP;
-    else if (Name == "serial")
-      LangOpts.Tapir = llvm::tapir::TapirTargetType::Serial;
-    else
-      Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args) << Name;
+  // FIXME: Fix -ftapir=* parsing to use conventional mechanisms for handling
+  // arguments.
+  if (Args.hasArg(OPT_ftapir)) {
+    if (Arg *A = Args.getLastArg(OPT_ftapir)) {
+      StringRef Name = A->getValue();
+      if (Name == "none")
+        LangOpts.Tapir = llvm::tapir::TapirTargetType::None;
+      else if (Name == "cilk") {
+        LangOpts.Tapir = llvm::tapir::TapirTargetType::Cilk;
+        LangOpts.Cilk |= true;
+      } else if (Name == "openmp")
+        LangOpts.Tapir = llvm::tapir::TapirTargetType::OpenMP;
+      else if (Name == "serial")
+        LangOpts.Tapir = llvm::tapir::TapirTargetType::Serial;
+      else
+        Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args) <<
+          Name;
+    }
   }
 
   if (Args.hasArg(OPT_fcilkplus) && !Args.hasArg(OPT_ftapir))
     LangOpts.Tapir = llvm::tapir::TapirTargetType::Cilk;
-  if (LangOpts.CilkPlus && (LangOpts.ObjC1 || LangOpts.ObjC2))
+  if (LangOpts.Cilk && (LangOpts.ObjC1 || LangOpts.ObjC2))
     Diags.Report(diag::err_drv_cilk_objc);
 
   if (LangOpts.CUDA) {

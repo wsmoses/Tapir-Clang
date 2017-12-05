@@ -1399,7 +1399,7 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   //   _Cilk_spawn[opt] postfix-expression '(' argument-expression-list[opt] ')'
   case tok::kw__Cilk_spawn: {
     SourceLocation SpawnLoc = ConsumeToken();
-    // if (!getLangOpts().CilkPlus) {
+    // if (!getLangOpts().Cilk) {
     //   Diag(SpawnLoc, diag::err_cilkplus_disable);
     //   SkipUntil(tok::semi, StopAtSemi | StopBeforeMatch);
     //   return ExprError();

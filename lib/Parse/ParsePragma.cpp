@@ -290,7 +290,7 @@ void Parser::initializePragmaHandlers() {
     PP.AddPragmaHandler("clang", CUDAForceHostDeviceHandler.get());
   }
 
-  // if (getLangOpts().CilkPlus) {
+  // if (getLangOpts().Cilk) {
     CilkHintHandler.reset(new PragmaCilkHintHandler());
     PP.AddPragmaHandler(CilkHintHandler.get());
   // }
@@ -379,7 +379,7 @@ void Parser::resetPragmaHandlers() {
     CUDAForceHostDeviceHandler.reset();
   }
 
-  // if (getLangOpts().CilkPlus) {
+  // if (getLangOpts().Cilk) {
     PP.RemovePragmaHandler(CilkHintHandler.get());
     CilkHintHandler.reset();
   // }

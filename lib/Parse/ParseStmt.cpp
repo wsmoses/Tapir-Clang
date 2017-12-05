@@ -361,7 +361,7 @@ Retry:
     return HandlePragmaCaptured();
 
   case tok::kw__Cilk_spawn:              // [CP] _Cilk_spawn statement
-    // if (!getLangOpts().CilkPlus) {
+    // if (!getLangOpts().Cilk) {
     //   Diag(Tok, diag::err_cilkplus_disable);
     //   SkipUntil(tok::semi);
     //   return StmtError();
@@ -369,7 +369,7 @@ Retry:
     return ParseCilkSpawnStatement();
 
   case tok::kw__Cilk_sync:               // [CP] _Cilk_sync statement
-    // if (!getLangOpts().CilkPlus) {
+    // if (!getLangOpts().Cilk) {
     //   Diag(Tok, diag::err_cilkplus_disable);
     //   SkipUntil(tok::semi);
     //   return StmtError();
@@ -379,7 +379,7 @@ Retry:
     break;
 
   case tok::kw__Cilk_for:
-    // if (!getLangOpts().CilkPlus) {
+    // if (!getLangOpts().Cilk) {
     //   Diag(Tok, diag::err_cilkplus_disable);
     //   SkipUntil(tok::semi);
     //   return StmtError();

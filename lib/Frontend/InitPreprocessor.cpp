@@ -991,7 +991,7 @@ static void InitializePredefinedMacros(const TargetInfo &TI,
   }
 
   // Cilk definition
-  if (LangOpts.CilkPlus)
+  if (LangOpts.Cilk)
     Builder.defineMacro("__cilk", "200");
 
   // CUDA device path compilaton
