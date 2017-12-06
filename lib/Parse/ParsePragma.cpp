@@ -895,6 +895,9 @@ static std::string PragmaLoopHintString(Token PragmaName, Token Option) {
   if (PragmaName.getIdentifierInfo()->getName() == "loop") {
     PragmaString = "clang loop ";
     PragmaString += Option.getIdentifierInfo()->getName();
+  } else if (PragmaName.getIdentifierInfo()->getName() == "cilk") {
+    PragmaString = "cilk ";
+    PragmaString += Option.getIdentifierInfo()->getName();
   } else {
     assert(PragmaName.getIdentifierInfo()->getName() == "unroll" &&
            "Unexpected pragma name");

@@ -1,5 +1,7 @@
 // RUN: %clang_cc1 -std=c++1z -verify %s
 
+int foo(int n);
+
 int Cilk_for_tests(int n) {
   /* int n = 10; */
   /* _Cilk_for(int i = 0; i < n; i += 2); */
@@ -14,7 +16,22 @@ int Cilk_for_tests(int n) {
 
 int pragma_tests(int n) {
 #pragma clang loop unroll_count(4)
-  _Cilk_for (int i = 0; i < n; ++i); // expected-warning {{Cilk for loop has empty body}}
+  _Cilk_for (int i = 0; i < n; ++i)
+    foo(i);
+
+#pragma cilk grainsize(4)
+  _Cilk_for (int i = 0; i < n; ++i)
+    foo(i);
+
+#pragma cilk grainsize 4
+  _Cilk_for (int i = 0; i < n; ++i)
+    foo(i);
+
+#pragma cilk grainsize = 4 \
+// expected-error{{expected expression}}                              \
+   expected-warning{{extra tokens at end of '#pragma cilk grainsize' - ignored}}
+  _Cilk_for (int i = 0; i < n; ++i)
+    foo(i);
 
   return 0;
 }
