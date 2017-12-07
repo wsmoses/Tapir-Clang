@@ -2906,8 +2906,7 @@ static Expr *GetCilkForStride(Sema &S, llvm::SmallPtrSetImpl<VarDecl *> &Decls,
   return nullptr;
 }
 
-static void CheckCilkForInit(Sema &S,
-                             Stmt *First) {
+static void CheckCilkForInit(Sema &S, Stmt *First) {
   if (!isa<DeclStmt>(First))
     S.Diag(First->getLocStart(), diag::err_cilk_for_initializer_expected_decl);
 }
@@ -3184,9 +3183,17 @@ StmtResult Sema::LiftCilkForLoopLimit(SourceLocation CilkForLoc,
   bool DeclUseInRHS = DeclFinder(*this, Decls, E->getRHS()).FoundDeclInUse();
   bool DeclUseInLHS = DeclFinder(*this, Decls, E->getLHS()).FoundDeclInUse();
   Expr *ToExtract;
-  if ((DeclUseInLHS && DeclUseInRHS) ||
-      (!DeclUseInLHS && !DeclUseInRHS))
-    return StmtEmpty();
+  if (DeclUseInLHS && DeclUseInRHS) {
+    Diag((*Second)->getLocStart(), diag::err_cilk_for_difference_ill_formed)
+      << LoopVar;
+    Diag((*Second)->getLocStart(), diag::note_cilk_for_cond_allowed) << LoopVar;
+    return StmtError();
+  } else if (!DeclUseInLHS && !DeclUseInRHS) {
+    Diag((*Second)->getLocStart(), diag::err_cilk_for_difference_ill_formed)
+      << LoopVar;
+    Diag((*Second)->getLocStart(), diag::note_cilk_for_cond_allowed) << LoopVar;
+    return StmtError();
+  }
 
   // Get the expression to lift.
   if (DeclUseInLHS)
@@ -3263,9 +3270,18 @@ Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
   CheckBreakContinueBinding(Second.get().second);
   CheckBreakContinueBinding(Third.get());
 
+  // Check the condition of the _Cilk_for
   Expr* Condition = Second.get().second;
   if (!Condition)
     return StmtError(Diag(CilkForLoc, diag::err_cilk_for_invalid_cond_expr));
+
+  BinaryOperator *Cond = dyn_cast_or_null<BinaryOperator>(Condition);
+  if (!Cond)
+    return StmtError(Diag(Condition->getLocStart(),
+                          diag::err_cilk_for_invalid_cond_expr));
+  if (!Cond->isComparisonOp())
+    return StmtError(Diag(Condition->getLocStart(),
+                          diag::err_cilk_for_invalid_cond_operator));
 
   CheckForLoopConditionalStatement(*this, Condition, Third.get(), Body);
   CheckForRedundantIteration(*this, Third.get(), Body);
@@ -3315,7 +3331,9 @@ Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
 
   // Attempt to find the loop limit and extract it into its own declaration.
   StmtResult NewInit = LiftCilkForLoopLimit(CilkForLoc, First, &Condition);
-  assert(!NewInit.isInvalid());
+  if (NewInit.isInvalid())
+    return NewInit;
+
   if (!NewInit.isUnset())
     return new (Context) CilkForStmt(Context, NewInit.get(), Condition,
                                      Increment, nullptr, Body, CilkForLoc, LParenLoc,
