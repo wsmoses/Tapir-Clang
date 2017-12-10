@@ -3183,17 +3183,8 @@ StmtResult Sema::LiftCilkForLoopLimit(SourceLocation CilkForLoc,
   bool DeclUseInRHS = DeclFinder(*this, Decls, E->getRHS()).FoundDeclInUse();
   bool DeclUseInLHS = DeclFinder(*this, Decls, E->getLHS()).FoundDeclInUse();
   Expr *ToExtract;
-  if (DeclUseInLHS && DeclUseInRHS) {
-    Diag((*Second)->getLocStart(), diag::err_cilk_for_difference_ill_formed)
-      << LoopVar;
-    Diag((*Second)->getLocStart(), diag::note_cilk_for_cond_allowed) << LoopVar;
-    return StmtError();
-  } else if (!DeclUseInLHS && !DeclUseInRHS) {
-    Diag((*Second)->getLocStart(), diag::err_cilk_for_difference_ill_formed)
-      << LoopVar;
-    Diag((*Second)->getLocStart(), diag::note_cilk_for_cond_allowed) << LoopVar;
-    return StmtError();
-  }
+  if ((DeclUseInLHS && DeclUseInRHS) || (!DeclUseInLHS && !DeclUseInRHS))
+    return StmtEmpty();
 
   // Get the expression to lift.
   if (DeclUseInLHS)
@@ -3274,14 +3265,6 @@ Sema::ActOnCilkForStmt(SourceLocation CilkForLoc, SourceLocation LParenLoc,
   Expr* Condition = Second.get().second;
   if (!Condition)
     return StmtError(Diag(CilkForLoc, diag::err_cilk_for_invalid_cond_expr));
-
-  BinaryOperator *Cond = dyn_cast_or_null<BinaryOperator>(Condition);
-  if (!Cond)
-    return StmtError(Diag(Condition->getLocStart(),
-                          diag::err_cilk_for_invalid_cond_expr));
-  if (!Cond->isComparisonOp())
-    return StmtError(Diag(Condition->getLocStart(),
-                          diag::err_cilk_for_invalid_cond_operator));
 
   CheckForLoopConditionalStatement(*this, Condition, Third.get(), Body);
   CheckForRedundantIteration(*this, Third.get(), Body);
