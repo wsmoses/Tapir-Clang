@@ -70,10 +70,7 @@ void tools::minix::Linker::ConstructJob(Compilation &C, const JobAction &JA,
 
   getToolChain().addProfileRTLibs(Args, CmdArgs);
 
-  if (Args.hasArg(options::OPT_fcilkplus) ||
-      Args.hasArg(options::OPT_ftapir) ||
-      Args.hasArg(options::OPT_fdetach))
-    CmdArgs.push_back("-lcilkrts");
+  getToolChain().AddTapirRuntimeLibArgs(Args, CmdArgs);
 
   if (!Args.hasArg(options::OPT_nostdlib, options::OPT_nodefaultlibs)) {
     if (D.CCCIsCXX()) {
