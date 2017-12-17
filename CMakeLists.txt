@@ -232,6 +232,9 @@ endif()
 set(CLANG_DEFAULT_OPENMP_RUNTIME "libomp" CACHE STRING
   "Default OpenMP runtime used by -fopenmp.")
 
+set(CLANG_DEFAULT_TAPIR_RUNTIME "cilk" CACHE STRING
+  "Default Tapir runtime used by -ftapir.")
+
 set(CLANG_VENDOR ${PACKAGE_VENDOR} CACHE STRING
   "Vendor-specific text for showing with version information.")
 

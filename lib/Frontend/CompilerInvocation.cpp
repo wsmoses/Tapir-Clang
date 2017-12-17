@@ -2701,6 +2701,9 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
       else if (Name == "cilk") {
         LangOpts.Tapir = llvm::tapir::TapirTargetType::Cilk;
         LangOpts.Cilk |= true;
+      } else if (Name == "cilkr") {
+        LangOpts.Tapir = llvm::tapir::TapirTargetType::CilkR;
+        LangOpts.Cilk |= true;
       } else if (Name == "openmp")
         LangOpts.Tapir = llvm::tapir::TapirTargetType::OpenMP;
       else if (Name == "serial")

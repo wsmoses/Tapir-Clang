@@ -57,6 +57,7 @@
 #include "llvm/Transforms/Tapir/TapirTypes.h"
 #include "llvm/Transforms/Tapir/TapirUtils.h"
 #include "llvm/Transforms/Tapir/CilkABI.h"
+#include "llvm/Transforms/Tapir/CilkRABI.h"
 #include "llvm/Transforms/Tapir/OpenMPABI.h"
 #include "llvm/Transforms/Utils/NameAnonGlobals.h"
 #include "llvm/Transforms/Utils/SymbolRewriter.h"
@@ -508,6 +509,9 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
   switch(LangOpts.Tapir){
     case tapir::TapirTargetType::Cilk:
       PMBuilder.tapirTarget = new llvm::tapir::CilkABI();
+      break;
+    case tapir::TapirTargetType::CilkR:
+      PMBuilder.tapirTarget = new llvm::tapir::CilkRABI();
       break;
     case tapir::TapirTargetType::OpenMP:
       PMBuilder.tapirTarget = new llvm::tapir::OpenMPABI();

@@ -171,10 +171,7 @@ void tools::CrossWindows::Linker::ConstructJob(
       CmdArgs.push_back("-Bdynamic");
   }
 
-  if (Args.hasArg(options::OPT_fcilkplus) ||
-      Args.hasArg(options::OPT_ftapir) ||
-      Args.hasArg(options::OPT_fdetach))
-    CmdArgs.push_back("-lcilkrts");
+  TC.AddTapirRuntimeLibArgs(Args, CmdArgs);
 
   if (!Args.hasArg(options::OPT_nostdlib)) {
     if (!Args.hasArg(options::OPT_nodefaultlibs)) {
