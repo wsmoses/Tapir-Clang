@@ -20,9 +20,6 @@
 /* Default OpenMP runtime used by -fopenmp. */
 #define CLANG_DEFAULT_OPENMP_RUNTIME "${CLANG_DEFAULT_OPENMP_RUNTIME}"
 
-/* Default Tapir runtime used by -ftapir. */
-#define CLANG_DEFAULT_TAPIR_RUNTIME "${CLANG_DEFAULT_TAPIR_RUNTIME}"
-
 /* Multilib suffix for libdir. */
 #define CLANG_LIBDIR_SUFFIX "${CLANG_LIBDIR_SUFFIX}"
 

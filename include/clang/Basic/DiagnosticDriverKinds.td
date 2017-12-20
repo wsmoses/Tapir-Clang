@@ -304,7 +304,4 @@ def warn_drv_msvc_not_found : Warning<
   "unable to find a Visual Studio installation; "
   "try running Clang from a developer command prompt">,
   InGroup<DiagGroup<"msvc-not-found">>;
-
-def err_drv_invalid_tapir_argument : Error<
-  "invalid tapir argument '%0'">;
 }
