@@ -781,6 +781,9 @@ ToolChain::TapirRuntimeLibType ToolChain::GetTapirRuntimeLibType(
   if (Args.hasArg(options::OPT_fcilkplus) || Args.hasArg(options::OPT_fdetach))
     return ToolChain::TRLT_Cilk;
 
+  if (!Args.hasArg(options::OPT_ftapir))
+    return ToolChain::TRLT_None;
+
   const Arg *A = Args.getLastArg(options::OPT_ftapir);
   StringRef LibName = A ? A->getValue() : CLANG_DEFAULT_TAPIR_RUNTIME;
 
