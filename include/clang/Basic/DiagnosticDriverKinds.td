@@ -358,7 +358,4 @@ def warn_drv_fine_grained_bitfield_accesses_ignored : Warning<
 def note_drv_verify_prefix_spelling : Note<
   "-verify prefixes must start with a letter and contain only alphanumeric"
   " characters, hyphens, and underscores">;
-
-def err_drv_invalid_tapir_argument : Error<
-  "invalid tapir argument '%0'">;
 }
