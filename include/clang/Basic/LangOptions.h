@@ -97,7 +97,7 @@ public:
   };
 
 public:
-  llvm::tapir::TapirTargetType Tapir;
+  llvm::TapirTargetType Tapir;
 
   /// \brief Set of enabled sanitizers.
   SanitizerSet Sanitize;
