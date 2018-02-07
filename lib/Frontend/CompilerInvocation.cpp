@@ -2697,14 +2697,14 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
     if (Arg *A = Args.getLastArg(OPT_ftapir)) {
       StringRef Name = A->getValue();
       if (Name == "none")
-        LangOpts.Tapir = llvm::tapir::TapirTargetType::None;
+        LangOpts.Tapir = llvm::TapirTargetType::None;
       else if (Name == "cilk") {
-        LangOpts.Tapir = llvm::tapir::TapirTargetType::Cilk;
+        LangOpts.Tapir = llvm::TapirTargetType::Cilk;
         LangOpts.Cilk |= true;
       } else if (Name == "openmp")
-        LangOpts.Tapir = llvm::tapir::TapirTargetType::OpenMP;
+        LangOpts.Tapir = llvm::TapirTargetType::OpenMP;
       else if (Name == "serial")
-        LangOpts.Tapir = llvm::tapir::TapirTargetType::Serial;
+        LangOpts.Tapir = llvm::TapirTargetType::Serial;
       else
         Diags.Report(diag::err_drv_invalid_value) << A->getAsString(Args) <<
           Name;
@@ -2712,7 +2712,7 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   }
 
   if (Args.hasArg(OPT_fcilkplus) && !Args.hasArg(OPT_ftapir))
-    LangOpts.Tapir = llvm::tapir::TapirTargetType::Cilk;
+    LangOpts.Tapir = llvm::TapirTargetType::Cilk;
   if (LangOpts.Cilk && (LangOpts.ObjC1 || LangOpts.ObjC2))
     Diags.Report(diag::err_drv_cilk_objc);
 
