@@ -1176,8 +1176,8 @@ CanThrowResult Sema::canThrow(const Expr *E) {
   case Expr::ShuffleVectorExprClass:
   case Expr::ConvertVectorExprClass:
   case Expr::VAArgExprClass:
-  case Expr::CilkSpawnExprClass:
-    return canSubExprsThrow(*this, E);
+  // case Expr::CilkSpawnExprClass:
+  //   return canSubExprsThrow(*this, E);
 
     // Some might be dependent for other reasons.
   case Expr::ArraySubscriptExprClass:
@@ -1225,6 +1225,7 @@ CanThrowResult Sema::canThrow(const Expr *E) {
   case Expr::AsTypeExprClass:
   case Expr::BinaryConditionalOperatorClass:
   case Expr::BlockExprClass:
+  case Expr::CilkSpawnExprClass:
   case Expr::CUDAKernelCallExprClass:
   case Expr::DeclRefExprClass:
   case Expr::ObjCBridgedCastExprClass:

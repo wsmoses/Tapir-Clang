@@ -122,7 +122,9 @@ public:
   void VisitSubstNonTypeTemplateParmExpr(SubstNonTypeTemplateParmExpr *E) {
     return Visit(E->getReplacement());
   }
-
+  void VisitCilkSpawnExpr(CilkSpawnExpr *E) {
+    CGF.EmitCilkSpawnExpr(E);
+  }
   // l-values.
   void VisitDeclRefExpr(DeclRefExpr *E) { EmitAggLoadOfLValue(E); }
   void VisitMemberExpr(MemberExpr *ME) { EmitAggLoadOfLValue(ME); }
@@ -144,7 +146,7 @@ public:
   void VisitPointerToDataMemberBinaryOperator(const BinaryOperator *BO);
   void VisitBinAssign(const BinaryOperator *E);
   void VisitBinComma(const BinaryOperator *E);
-  void VisitCilkSpawnExpr(CilkSpawnExpr *E);
+  // void VisitCilkSpawnExpr(CilkSpawnExpr *E);
 
   void VisitObjCMessageExpr(ObjCMessageExpr *E);
   void VisitObjCIvarRefExpr(ObjCIvarRefExpr *E) {
@@ -757,10 +759,10 @@ void AggExprEmitter::VisitCastExpr(CastExpr *E) {
   }
 }
 
-void AggExprEmitter::VisitCilkSpawnExpr(CilkSpawnExpr *E) {
-  CGF.PushDetachScope();
-  Visit(E->getSpawnedExpr());
-}
+// void AggExprEmitter::VisitCilkSpawnExpr(CilkSpawnExpr *E) {
+//   CGF.PushDetachScope();
+//   Visit(E->getSpawnedExpr());
+// }
 
 void AggExprEmitter::VisitCallExpr(const CallExpr *E) {
   if (E->getCallReturnType(CGF.getContext())->isReferenceType()) {
@@ -903,11 +905,11 @@ void AggExprEmitter::VisitBinAssign(const BinaryOperator *E) {
   
   LValue LHS = CGF.EmitLValue(E->getLHS());
 
-  if (isa<CilkSpawnExpr>(E->getRHS()->IgnoreImplicit())) {
-    assert(!CGF.IsSpawned &&
-           "_Cilk_spawn expression found in spawning environment.");
-    CGF.IsSpawned = true;
-  }
+  // if (isa<CilkSpawnExpr>(E->getRHS()->IgnoreImplicit())) {
+  //   assert(!CGF.IsSpawned &&
+  //          "_Cilk_spawn expression found in spawning environment.");
+  //   CGF.IsSpawned = true;
+  // }
 
   // If we have an atomic type, evaluate into the destination and then
   // do an atomic copy.
@@ -916,12 +918,12 @@ void AggExprEmitter::VisitBinAssign(const BinaryOperator *E) {
     EnsureDest(E->getRHS()->getType());
     Visit(E->getRHS());
     CGF.EmitAtomicStore(Dest.asRValue(), LHS, /*isInit*/ false);
-    if (CGF.IsSpawned) {
-      assert(CGF.CurDetachScope && CGF.CurDetachScope->IsDetachStarted() &&
-             "Processing _Cilk_spawn of expression did not produce a detach.");
-      CGF.IsSpawned = false;
-      CGF.PopDetachScope();
-    }
+    // if (CGF.IsSpawned) {
+    //   assert(CGF.CurDetachScope && CGF.CurDetachScope->IsDetachStarted() &&
+    //          "Processing _Cilk_spawn of expression did not produce a detach.");
+    //   CGF.IsSpawned = false;
+    //   CGF.PopDetachScope();
+    // }
     return;
   }
 
@@ -940,12 +942,12 @@ void AggExprEmitter::VisitBinAssign(const BinaryOperator *E) {
   // Copy into the destination if the assignment isn't ignored.
   EmitFinalDestCopy(E->getType(), LHS);
 
-  if (CGF.IsSpawned) {
-    assert(CGF.CurDetachScope && CGF.CurDetachScope->IsDetachStarted() &&
-           "Processing _Cilk_spawn of expression did not produce a detach.");
-    CGF.IsSpawned = false;
-    CGF.PopDetachScope();
-  }
+  // if (CGF.IsSpawned) {
+  //   assert(CGF.CurDetachScope && CGF.CurDetachScope->IsDetachStarted() &&
+  //          "Processing _Cilk_spawn of expression did not produce a detach.");
+  //   CGF.IsSpawned = false;
+  //   CGF.PopDetachScope();
+  // }
 }
 
 void AggExprEmitter::

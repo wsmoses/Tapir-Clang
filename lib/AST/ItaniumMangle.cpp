@@ -3436,7 +3436,7 @@ recurse:
   case Expr::TypoExprClass:  // This should no longer exist in the AST by now.
   case Expr::OMPArraySectionExprClass:
   case Expr::CXXInheritedCtorInitExprClass:
-  case Expr::CilkSpawnExprClass:
+  // case Expr::CilkSpawnExprClass:
     llvm_unreachable("unexpected statement kind");
 
   // FIXME: invent manglings for all these.
@@ -3472,6 +3472,7 @@ recurse:
   case Expr::AsTypeExprClass:
   case Expr::PseudoObjectExprClass:
   case Expr::AtomicExprClass:
+  case Expr::CilkSpawnExprClass:
   {
     if (!NullOut) {
       // As bad as this diagnostic is, it's better than crashing.

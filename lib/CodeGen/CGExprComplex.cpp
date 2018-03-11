@@ -119,10 +119,10 @@ public:
   ComplexPairTy VisitUnaryCoawait(const UnaryOperator *E) {
     return Visit(E->getSubExpr());
   }
-  ComplexPairTy VisitCilkSpawnExpr(CilkSpawnExpr *CSE) {
-    CGF.PushDetachScope();
-    return Visit(CSE->getSpawnedExpr());
-  }
+  // ComplexPairTy VisitCilkSpawnExpr(CilkSpawnExpr *CSE) {
+  //   CGF.PushDetachScope();
+  //   return Visit(CSE->getSpawnedExpr());
+  // }
 
   ComplexPairTy emitConstant(const CodeGenFunction::ConstantEmission &Constant,
                              Expr *E) {
@@ -886,6 +886,15 @@ EmitCompoundAssignLValue(const CompoundAssignOperator *E,
   OpInfo.Ty = E->getComputationResultType();
   QualType ComplexElementTy = cast<ComplexType>(OpInfo.Ty)->getElementType();
 
+  LValue LHS;
+
+  // Cilk Plus needs the LHS evaluated first to handle cases such as
+  // array[f()] = _Cilk_spawn foo();
+  // This evaluation order requirement implies that _Cilk_spawn cannot
+  // spawn Objective C block calls.
+  if (CGF.getLangOpts().Cilk &&  E->getRHS()->isCilkSpawn())
+    LHS = CGF.EmitLValue(E->getLHS());
+
   // The RHS should have been converted to the computation type.
   if (E->getRHS()->getType()->isRealFloatingType()) {
     assert(
@@ -898,7 +907,9 @@ EmitCompoundAssignLValue(const CompoundAssignOperator *E,
     OpInfo.RHS = Visit(E->getRHS());
   }
 
-  LValue LHS = CGF.EmitLValue(E->getLHS());
+  // LValue LHS = CGF.EmitLValue(E->getLHS());
+  if (!(CGF.getLangOpts().Cilk &&  E->getRHS()->isCilkSpawn()))
+    LHS = CGF.EmitLValue(E->getLHS());
 
   // Load from the l-value and convert it.
   SourceLocation Loc = E->getExprLoc();
@@ -963,36 +974,51 @@ LValue ComplexExprEmitter::EmitBinAssignLValue(const BinaryOperator *E,
   TestAndClearIgnoreReal();
   TestAndClearIgnoreImag();
 
-  if (isa<CilkSpawnExpr>(E->getRHS()->IgnoreImplicit())) {
-    assert(!CGF.IsSpawned &&
-           "_Cilk_spawn statement found in spawning environment.");
+  // if (isa<CilkSpawnExpr>(E->getRHS()->IgnoreImplicit())) {
+  //   assert(!CGF.IsSpawned &&
+  //          "_Cilk_spawn statement found in spawning environment.");
 
-    // Compute the address to store into.
-    LValue LHS = CGF.EmitLValue(E->getLHS());
+  //   // Compute the address to store into.
+  //   LValue LHS = CGF.EmitLValue(E->getLHS());
 
-    // Prepare to detach.
-    CGF.IsSpawned = true;
+  //   // Prepare to detach.
+  //   CGF.IsSpawned = true;
 
-    // Emit the spawned RHS.
+  //   // Emit the spawned RHS.
+  //   Val = Visit(E->getRHS());
+
+  //   // Store the result value into the LHS lvalue.
+  //   EmitStoreOfComplex(Val, LHS, /*isInit*/ false);
+
+  //   // Finish the detach.
+  //   assert(CGF.CurDetachScope && CGF.CurDetachScope->IsDetachStarted() &&
+  //          "Processing _Cilk_spawn of expression did not produce detach.");
+  //   CGF.IsSpawned = false;
+  //   CGF.PopDetachScope();
+
+  //   return LHS;
+  // }
+
+  LValue LHS;
+  // Cilk Plus needs the LHS evaluated first to handle cases such as
+  // array[f()] = _Cilk_spawn foo();
+  // This evaluation order requirement implies that _Cilk_spawn cannot
+  // spawn Objective C block calls.
+  if (CGF.getLangOpts().Cilk && E->getRHS()->isCilkSpawn()) {
+    LHS = CGF.EmitLValue(E->getLHS());
     Val = Visit(E->getRHS());
-
-    // Store the result value into the LHS lvalue.
-    EmitStoreOfComplex(Val, LHS, /*isInit*/ false);
-
-    // Finish the detach.
-    assert(CGF.CurDetachScope && CGF.CurDetachScope->IsDetachStarted() &&
-           "Processing _Cilk_spawn of expression did not produce detach.");
-    CGF.IsSpawned = false;
-    CGF.PopDetachScope();
-
-    return LHS;
+  } else {
+    // Emit the RHS.  __block variables need the RHS evaluated first.
+    Val = Visit(E->getRHS());
+    // Compute the address to store into.
+    LHS = CGF.EmitLValue(E->getLHS());
   }
 
-  // Emit the RHS.  __block variables need the RHS evaluated first.
-  Val = Visit(E->getRHS());
+  // // Emit the RHS.  __block variables need the RHS evaluated first.
+  // Val = Visit(E->getRHS());
 
-  // Compute the address to store into.
-  LValue LHS = CGF.EmitLValue(E->getLHS());
+  // // Compute the address to store into.
+  // LValue LHS = CGF.EmitLValue(E->getLHS());
 
   // Store the result value into the LHS lvalue.
   EmitStoreOfComplex(Val, LHS, /*isInit*/ false);

@@ -739,6 +739,32 @@ public:
     return const_cast<Expr*>(this)->IgnoreImplicit();
   }
 
+  /// \brief Skip past implicit casts or other intermediate nodes introduced
+  /// by semantic analysis.
+  Expr *IgnoreImpCastsAsWritten() LLVM_READONLY;
+
+  const Expr *IgnoreImpCastsAsWritten() const LLVM_READONLY {
+    return const_cast<Expr*>(this)->IgnoreImpCastsAsWritten();
+  }
+
+  /// \brief Skip past any implicit AST node and other intermediate nodes
+  /// introduced by semantic analysis.
+  Expr *getSubExprAsWritten() LLVM_READONLY;
+
+  const Expr *getSubExprAsWritten() const LLVM_READONLY {
+    return const_cast<Expr*>(this)->getSubExprAsWritten();
+  }
+
+  /// \brief Skip past any implicit AST nodes and other immediate nodes
+  /// introduced by semantics analysis for a Cilk spawn call.
+  Expr *IgnoreImplicitForCilkSpawn();
+  const Expr *IgnoreImplicitForCilkSpawn() const LLVM_READONLY {
+    return const_cast<Expr*>(this)->IgnoreImplicitForCilkSpawn();
+  }
+  /// \biref Returns true if this is a Cilk spawn call expression, with
+  /// possible implicit AST nodes associated.
+  bool isCilkSpawn() const;
+
   /// IgnoreParens - Ignore parentheses.  If this Expr is a ParenExpr, return
   ///  its subexpression.  If that subexpression is also a ParenExpr,
   ///  then this method recursively returns its subexpression, and so forth.
@@ -2212,6 +2238,9 @@ class CallExpr : public Expr {
   unsigned NumArgs;
   SourceLocation RParenLoc;
 
+  // Valid only if it is a Cilk spawn call
+  SourceLocation CilkSpawnLoc;
+
   void updateDependenciesFromArg(Expr *Arg);
 
 protected:
@@ -2347,6 +2376,10 @@ public:
 
   SourceLocation getLocStart() const LLVM_READONLY;
   SourceLocation getLocEnd() const LLVM_READONLY;
+
+  void setCilkSpawnLoc(SourceLocation Loc) { CilkSpawnLoc = Loc; }
+  SourceLocation getCilkSpawnLoc() const LLVM_READONLY { return CilkSpawnLoc; }
+  bool isCilkSpawnCall() const { return CilkSpawnLoc.isValid(); }
 
   bool isCallToStdMove() const {
     const FunctionDecl* FD = getDirectCallee();

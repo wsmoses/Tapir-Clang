@@ -15,6 +15,7 @@
 #include "CGCall.h"
 #include "ABIInfo.h"
 #include "CGBlocks.h"
+#include "CGCilk.h"
 #include "CGCXXABI.h"
 #include "CGCleanup.h"
 #include "CodeGenFunction.h"
@@ -2207,10 +2208,10 @@ void CodeGenFunction::EmitFunctionProlog(const CGFunctionInfo &FI,
     }
   }
 
-  // For Cilk functions, ensure that a sync is implicitly executed before this
-  // function returns.
-  if (getLangOpts().Cilk)
-    EHStack.pushCleanup<ImplicitSyncCleanup>(NormalCleanup);
+  // // For Cilk functions, ensure that a sync is implicitly executed before this
+  // // function returns.
+  // if (getLangOpts().Cilk)
+  //   EHStack.pushCleanup<ImplicitSyncCleanup>(NormalCleanup);
 
   // FIXME: We no longer need the types from FunctionArgList; lift up and
   // simplify.
@@ -2775,7 +2776,7 @@ void CodeGenFunction::EmitFunctionEpilog(const CGFunctionInfo &FI,
     return;
   }
 
-  PopSyncRegion();
+  // PopSyncRegion();
 
   // Functions with no result always return void.
   if (!ReturnValue.isValid()) {
@@ -3732,10 +3733,11 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
                                  ReturnValueSlot ReturnValue,
                                  const CallArgList &CallArgs,
                                  llvm::Instruction **callOrInvoke,
-                                 SourceLocation Loc) {
+                                 SourceLocation Loc,
+                                 bool IsCilkSpawnCall) {
   // FIXME: We no longer need the types from CallArgs; lift up and simplify.
 
-  IsSpawnedScope SpawnedScp(this);
+  // IsSpawnedScope SpawnedScp(this);
 
   assert(Callee.isOrdinary());
 
@@ -4137,13 +4139,13 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
   // 3. Perform the actual call.
 
   // If this call is detached, start the detach, if it hasn't yet been started.
-  if (SpawnedScp.OldScopeIsSpawned()) {
-    SpawnedScp.RestoreOldScope();
-    assert(CurDetachScope &&
-           "A call was spawned, but no detach scope was pushed.");
-    if (!CurDetachScope->IsDetachStarted())
-      CurDetachScope->StartDetach();
-  }
+  // if (SpawnedScp.OldScopeIsSpawned()) {
+  //   SpawnedScp.RestoreOldScope();
+  //   assert(CurDetachScope &&
+  //          "A call was spawned, but no detach scope was pushed.");
+  //   if (!CurDetachScope->IsDetachStarted())
+  //     CurDetachScope->StartDetach();
+  // }
 
   // Deactivate any cleanups that we're supposed to do immediately before
   // the call.
@@ -4192,6 +4194,11 @@ RValue CodeGenFunction::EmitCall(const CGFunctionInfo &CallInfo,
         Attrs.addAttribute(getLLVMContext(), llvm::AttributeList::FunctionIndex,
                            llvm::Attribute::NoInline);
   }
+
+  // If this call is a Cilk spawn call, then we need to emit the prologue
+  // before emitting the real call.
+  if (IsCilkSpawnCall)
+    CGM.getCilkPlusRuntime().EmitCilkHelperPrologue(*this);
 
   // Decide whether to use a call or an invoke.
   bool CannotThrow;

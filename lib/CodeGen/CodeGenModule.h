@@ -84,6 +84,7 @@ namespace CodeGen {
 class CallArgList;
 class CodeGenFunction;
 class CodeGenTBAA;
+class CGCilkPlusRuntime;
 class CGCXXABI;
 class CGDebugInfo;
 class CGObjCRuntime;
@@ -302,6 +303,8 @@ private:
   InstrProfStats PGOStats;
   std::unique_ptr<llvm::SanitizerStatReport> SanStats;
 
+  std::unique_ptr<CGCilkPlusRuntime> CilkPlusRuntime;
+
   // A set of references that have only been seen via a weakref so far. This is
   // used to remove the weak of the reference if we ever see a direct reference
   // or a definition.
@@ -450,6 +453,7 @@ private:
   void createOpenCLRuntime();
   void createOpenMPRuntime();
   void createCUDARuntime();
+  void createCilkPlusRuntime();
 
   bool isTriviallyRecursive(const FunctionDecl *F);
   bool shouldEmitFunction(GlobalDecl GD);
@@ -543,6 +547,11 @@ public:
   CGCUDARuntime &getCUDARuntime() {
     assert(CUDARuntime != nullptr);
     return *CUDARuntime;
+  }
+
+  CGCilkPlusRuntime &getCilkPlusRuntime() {
+    assert(CilkPlusRuntime != nullptr);
+    return *CilkPlusRuntime;
   }
 
   ObjCEntrypoints &getObjCEntrypoints() const {

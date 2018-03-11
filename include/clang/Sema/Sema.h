@@ -17,6 +17,7 @@
 
 #include "clang/AST/Attr.h"
 #include "clang/AST/Availability.h"
+#include "clang/AST/Cilk.h"
 #include "clang/AST/DeclarationName.h"
 #include "clang/AST/DeclTemplate.h"
 #include "clang/AST/Expr.h"
@@ -210,6 +211,7 @@ namespace sema {
   class PossiblyUnreachableDiag;
   class SemaPPCallbacks;
   class TemplateDeductionInfo;
+  class CilkForScopeInfo;
 }
 
 namespace threadSafety {
@@ -527,6 +529,16 @@ public:
   ///  of the enclosing full expression.  This is cleared at the end of each
   ///  full expression.
   llvm::SmallPtrSet<Expr*, 2> MaybeODRUseExprs;
+
+  /// \brief All the Cilk spawn call expressions in this expression
+  /// evaluation context.
+  llvm::SmallVector<CallExpr*, 2> CilkSpawnCalls;
+  // FIXME: it's a temporary decision to call static feature
+  //        from another source file
+  void BuildCapturedStmtCaptureList(
+      SmallVectorImpl<CapturedStmt::Capture> &Captures,
+      SmallVectorImpl<Expr *> &CaptureInits,
+      ArrayRef<sema::CapturingScopeInfo::Capture> Candidates);
 
   /// \brief Stack containing information about each of the nested
   /// function, block, and method scopes that are currently active.
@@ -954,6 +966,10 @@ public:
 
     llvm::SmallPtrSet<Expr*, 2> SavedMaybeODRUseExprs;
 
+    /// \brief All the Cilk spawn call expressions when we entered this
+    /// expression evaluation context.
+    llvm::SmallVector<CallExpr*, 2> SavedCilkSpawnCalls;
+
     /// \brief The lambdas that are present within this context, if it
     /// is indeed an unevaluated context.
     SmallVector<LambdaExpr *, 2> Lambdas;
@@ -1312,6 +1328,9 @@ public:
   void PushCapturedRegionScope(Scope *RegionScope, CapturedDecl *CD,
                                RecordDecl *RD,
                                CapturedRegionKind K);
+  void PushCilkForScope(Scope *S, CapturedDecl *FD, RecordDecl *RD,
+                        const VarDecl *LoopControlVariable,
+                        SourceLocation CilkForLoc);
   void
   PopFunctionScopeInfo(const sema::AnalysisBasedWarnings::Policy *WP = nullptr,
                        const Decl *D = nullptr,
@@ -1343,6 +1362,21 @@ public:
   void PopCompoundScope();
 
   sema::CompoundScopeInfo &getCurCompoundScope() const;
+
+  /// \brief Retrieve the enclosing compound scope but skip Cilk for scopes.
+  /// For example, the compound scope of the function body is returned in
+  /// the following example:
+  /// \code
+  /// void func() {
+  ///   _Cilk_for (int i = 0; i < 10; ++i) {
+  ///     foo();
+  ///   }
+  /// }
+  /// \endcode
+  sema::CompoundScopeInfo &getCurCompoundScopeSkipCilkFor() const;
+
+  /// \brief Retrieve the current cilk for region, if any.
+  sema::CilkForScopeInfo *getCurCilkFor();
 
   bool hasAnyUnrecoverableErrorsInThisFunction() const;
 
@@ -1962,7 +1996,14 @@ public:
   bool SetParamDefaultArgument(ParmVarDecl *Param, Expr *DefaultArg,
                                SourceLocation EqualLoc);
 
-  void AddInitializerToDecl(Decl *dcl, Expr *init, bool DirectInit);
+  void AddInitializerToDecl(Decl *dcl, Expr *init, bool DirectInit)
+  {
+    bool IsCilkSpawnReceiver = false;
+    AddInitializerToDecl(dcl, init, DirectInit, IsCilkSpawnReceiver);
+  }
+  void AddInitializerToDecl(Decl *dcl, Expr *init, bool DirectInit,
+                            bool &IsCilkSpawnReceiver);
+
   void ActOnUninitializedDecl(Decl *dcl);
   void ActOnInitializerError(Decl *Dcl);
 
@@ -3736,6 +3777,8 @@ public:
                          SourceLocation WhileLoc, SourceLocation CondLParen,
                          Expr *Cond, SourceLocation CondRParen);
 
+  void CheckForLoopConditionalStatement(Expr *Second, Expr *Third, Stmt *Body);
+
   StmtResult ActOnForStmt(SourceLocation ForLoc,
                           SourceLocation LParenLoc,
                           Stmt *First,
@@ -3802,28 +3845,69 @@ public:
   bool isCopyElisionCandidate(QualType ReturnType, const VarDecl *VD,
                               bool AllowParamOrMoveConstructible);
 
-  void DiagnoseCilkSpawn(Stmt *S);
+  // void DiagnoseCilkSpawn(Stmt *S);
+  // StmtResult ActOnCilkSyncStmt(SourceLocation SyncLoc);
+  // StmtResult ActOnCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *S);
+  // ExprResult ActOnCilkSpawnExpr(SourceLocation SpawnLoc, Expr *E);
+  // ExprResult BuildCilkSpawnExpr(SourceLocation SpawnLoc, Expr *E);
+  // StmtResult HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
+  //                                    SourceLocation LParenLoc,
+  //                                    Stmt *First,
+  //                                    Expr *Condition,
+  //                                    Expr *Increment,
+  //                                    SourceLocation RParenLoc,
+  //                                    Stmt *Body);
+  // StmtResult LiftCilkForLoopLimit(SourceLocation CilkForLoc,
+  //                                 Stmt *First, Expr **Second);
+  // StmtResult ActOnCilkForStmt(SourceLocation CilkForLoc,
+  //                             SourceLocation LParenLoc,
+  //                             Stmt *Init,
+  //                             ConditionResult second,
+  //                             FullExprArg third,
+  //                             SourceLocation RParenLoc,
+  //                             Stmt *Body,
+  //                             VarDecl *LoopVar = nullptr);
+
+  // StmtResult BuildCilkForStmt(SourceLocation CilkForLoc,
+  //                             SourceLocation LParenLoc,
+  //                             Stmt *Init, Expr *Cond, Expr *Inc,
+  //                             SourceLocation RParenLoc, Stmt *Body,
+  //                             Expr *LoopCount, Expr *Stride,
+  //                             QualType SpanType);
+
+  StmtResult ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp,
+                             Scope *CurScope);
+  StmtResult BuildReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp);
+  StmtResult ActOnCapScopeReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp);
+
+  void DiagnoseCilkSpawn(Stmt *S, bool isStmtExpr = false);
+
+  StmtResult ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
+                             bool IsVolatile, unsigned NumOutputs,
+                             unsigned NumInputs, IdentifierInfo **Names,
+                             MultiExprArg Constraints, MultiExprArg Exprs,
+                             Expr *AsmString, MultiExprArg Clobbers,
+                             SourceLocation RParenLoc);
   StmtResult ActOnCilkSyncStmt(SourceLocation SyncLoc);
-  StmtResult ActOnCilkSpawnStmt(SourceLocation SpawnLoc, Stmt *S);
-  ExprResult ActOnCilkSpawnExpr(SourceLocation SpawnLoc, Expr *E);
-  ExprResult BuildCilkSpawnExpr(SourceLocation SpawnLoc, Expr *E);
-  StmtResult HandleSimpleCilkForStmt(SourceLocation CilkForLoc,
-                                     SourceLocation LParenLoc,
-                                     Stmt *First,
-                                     Expr *Condition,
-                                     Expr *Increment,
-                                     SourceLocation RParenLoc,
-                                     Stmt *Body);
-  StmtResult LiftCilkForLoopLimit(SourceLocation CilkForLoc,
-                                  Stmt *First, Expr **Second);
+  ExprResult ActOnCilkSpawnCall(SourceLocation SpawnLoc, Expr *E);
+  ExprResult BuildCilkSpawnCall(SourceLocation SpawnLoc, Expr *E);
+
+  /// \brief Convert a full expression into a CilkSpawnExpr.
+  ExprResult BuildCilkSpawnExpr(Expr *E);
+
+  /// \brief Convert a declaration initialized by a Cilk spawn call into
+  /// a CilkSpawnDecl.
+  CilkSpawnDecl *BuildCilkSpawnDecl(Decl *D);
+
+  bool DiagCilkSpawnFullExpr(Expr *E);
+  bool CheckIfBodyModifiesLoopControlVar(Stmt *Body);
+
   StmtResult ActOnCilkForStmt(SourceLocation CilkForLoc,
                               SourceLocation LParenLoc,
-                              Stmt *Init,
-                              ConditionResult second,
-                              FullExprArg third,
+                              Stmt *First, ConditionResult Second,
+                              FullExprArg Third,
                               SourceLocation RParenLoc,
-                              Stmt *Body,
-                              VarDecl *LoopVar = nullptr);
+                              Stmt *Body);
 
   StmtResult BuildCilkForStmt(SourceLocation CilkForLoc,
                               SourceLocation LParenLoc,
@@ -3832,17 +3916,14 @@ public:
                               Expr *LoopCount, Expr *Stride,
                               QualType SpanType);
 
-  StmtResult ActOnReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp,
-                             Scope *CurScope);
-  StmtResult BuildReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp);
-  StmtResult ActOnCapScopeReturnStmt(SourceLocation ReturnLoc, Expr *RetValExp);
+  void ActOnStartOfCilkForStmt(SourceLocation CilkForLoc, Scope *CurScope,
+                               StmtResult FirstPart);
 
-  StmtResult ActOnGCCAsmStmt(SourceLocation AsmLoc, bool IsSimple,
-                             bool IsVolatile, unsigned NumOutputs,
-                             unsigned NumInputs, IdentifierInfo **Names,
-                             MultiExprArg Constraints, MultiExprArg Exprs,
-                             Expr *AsmString, MultiExprArg Clobbers,
-                             SourceLocation RParenLoc);
+  void ActOnCilkForStmtError();
+
+  ExprResult CalculateCilkForLoopCount(SourceLocation CilkForLoc, Expr *Span,
+                                       Expr *Increment, Expr *StrideExpr,
+                                       int Dir, BinaryOperatorKind Opcode);
 
   void FillInlineAsmIdentifierInfo(Expr *Res,
                                    llvm::InlineAsmIdentifierInfo &Info);
@@ -5275,7 +5356,19 @@ public:
     return ActOnFinishFullExpr(Expr, Expr ? Expr->getExprLoc()
                                           : SourceLocation());
   }
+  enum CilkReceiverKind {
+    CRK_MaybeReceiver,
+    CRK_IsReceiver,
+    CRK_IsNotReceiver
+  };
   ExprResult ActOnFinishFullExpr(Expr *Expr, SourceLocation CC,
+                                 bool DiscardedValue = false,
+                                 bool IsConstexpr = false) {
+    CilkReceiverKind Kind = CRK_IsNotReceiver;
+    return ActOnFinishFullExpr(Expr, CC, Kind, DiscardedValue, IsConstexpr);
+  }
+  ExprResult ActOnFinishFullExpr(Expr *Expr, SourceLocation CC,
+                                 CilkReceiverKind &Kind,
                                  bool DiscardedValue = false,
                                  bool IsConstexpr = false,
                                  bool IsLambdaInitCaptureInitializer = false);

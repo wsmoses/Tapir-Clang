@@ -98,4 +98,4 @@ def ClassScopeFunctionSpecialization : Decl;
 def Import : Decl;
 def OMPThreadPrivate : Decl;
 def Empty : Decl;
-
+def CilkSpawn : Decl;

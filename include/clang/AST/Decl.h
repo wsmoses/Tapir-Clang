@@ -1738,6 +1738,7 @@ private:
   unsigned IsLateTemplateParsed : 1;
   unsigned IsConstexpr : 1;
   unsigned InstantiationIsPending : 1;
+  unsigned IsSpawning : 1;
 
   /// \brief Indicates if the function uses __try.
   unsigned UsesSEHTry : 1;
@@ -1845,7 +1846,8 @@ protected:
         IsDeleted(false), IsTrivial(false), IsDefaulted(false),
         IsExplicitlyDefaulted(false), HasImplicitReturnZero(false),
         IsLateTemplateParsed(false), IsConstexpr(isConstexprSpecified),
-        InstantiationIsPending(false), UsesSEHTry(false), HasSkippedBody(false),
+        InstantiationIsPending(false), IsSpawning(false),
+        UsesSEHTry(false), HasSkippedBody(false),
         WillHaveBody(false), IsCopyDeductionCandidate(false), HasODRHash(false),
         ODRHash(0), EndRangeLoc(NameInfo.getEndLoc()),
         DNLoc(NameInfo.getInfo()) {}
@@ -2041,6 +2043,10 @@ public:
   /// Whether this is a (C++11) constexpr function or constexpr constructor.
   bool isConstexpr() const { return IsConstexpr; }
   void setConstexpr(bool IC) { IsConstexpr = IC; }
+
+  /// \brief Whether this function is a Cilk spawning function.
+  bool isSpawning() const { return IsSpawning; }
+  void setSpawning() { IsSpawning = true; }
 
   /// \brief Whether the instantiation of this function is pending.
   /// This bit is set when the decision to instantiate this function is made
@@ -3882,6 +3888,9 @@ private:
   /// \brief The body of the outlined function.
   llvm::PointerIntPair<Stmt *, 1, bool> BodyAndNothrow;
 
+  /// \brief Whether this CapturedDecl contains Cilk spawns.
+  bool IsSpawning = false;
+
   explicit CapturedDecl(DeclContext *DC, unsigned NumParams);
 
   ImplicitParamDecl *const *getParams() const {
@@ -3901,6 +3910,9 @@ public:
                               unsigned NumParams);
   static CapturedDecl *CreateDeserialized(ASTContext &C, unsigned ID,
                                           unsigned NumParams);
+
+  void setSpawning() { IsSpawning = true; }
+  bool isSpawning() const { return IsSpawning; }
 
   Stmt *getBody() const override;
   void setBody(Stmt *B);

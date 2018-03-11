@@ -1408,16 +1408,28 @@ ExprResult Parser::ParseCastExpression(bool isUnaryExpression,
   //   _Cilk_spawn[opt] postfix-expression '(' argument-expression-list[opt] ')'
   case tok::kw__Cilk_spawn: {
     SourceLocation SpawnLoc = ConsumeToken();
+    if (!getLangOpts().Cilk) {
+      Diag(SpawnLoc, diag::err_cilkplus_disable);
+      SkipUntil(tok::semi, StopAtSemi | StopBeforeMatch);
+      return ExprError();
+    }
+
+    Res = ParseCastExpression(false);
+    // if (Res.isInvalid()) return ExprError();
+    if (!Res.isInvalid())
+      Res = Actions.ActOnCilkSpawnCall(SpawnLoc, Res.get()); 
+    return Res;
+    // SourceLocation SpawnLoc = ConsumeToken();
     // if (!getLangOpts().Cilk) {
     //   Diag(SpawnLoc, diag::err_cilkplus_disable);
     //   SkipUntil(tok::semi, StopAtSemi | StopBeforeMatch);
     //   return ExprError();
     // }
 
-    Res = ParseCastExpression(false);
-    if (!Res.isInvalid())
-      Res = Actions.ActOnCilkSpawnExpr(SpawnLoc, Res.get());
-    return Res;
+    // Res = ParseCastExpression(false);
+    // if (!Res.isInvalid())
+    //   Res = Actions.ActOnCilkSpawnExpr(SpawnLoc, Res.get());
+    // return Res;
   }
   case tok::l_square:
     if (getLangOpts().CPlusPlus11) {

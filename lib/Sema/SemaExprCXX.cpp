@@ -6236,6 +6236,12 @@ Expr *Sema::MaybeCreateExprWithCleanups(Expr *SubExpr) {
 
   CleanupVarDeclMarking();
 
+  if (getLangOpts().Cilk) {
+    // This full expression contains a single valid Cilk spawn.
+    // Keep it clean for the following full expression.
+    CilkSpawnCalls.clear();
+  }
+
   unsigned FirstCleanup = ExprEvalContexts.back().NumCleanupObjects;
   assert(ExprCleanupObjects.size() >= FirstCleanup);
   assert(Cleanup.exprNeedsCleanups() ||
@@ -7521,6 +7527,7 @@ Sema::CorrectDelayedTyposInExpr(Expr *E, VarDecl *InitDecl,
 }
 
 ExprResult Sema::ActOnFinishFullExpr(Expr *FE, SourceLocation CC,
+                                     CilkReceiverKind &Kind,
                                      bool DiscardedValue,
                                      bool IsConstexpr,
                                      bool IsLambdaInitCaptureInitializer) {
@@ -7571,6 +7578,34 @@ ExprResult Sema::ActOnFinishFullExpr(Expr *FE, SourceLocation CC,
     return ExprError();
 
   CheckCompletedExpr(FullExpr.get(), CC, IsConstexpr);
+
+  // Check if this full expression can be a supported Cilk spawn expression:
+  // (1) _Cilk_spawn func();
+  // (2) x = _Cilk_spawn func();
+  // and at most a single spawn within this full expression.
+  bool HasValidCilkSpawn = false;
+  if (getLangOpts().Cilk && !CilkSpawnCalls.empty()) {
+    if (!DiagCilkSpawnFullExpr(FullExpr.get()))
+      return ExprError();
+
+    // Nothing wrong within this full expression, then it is valid.
+    // However, this spawn expression may be placed into an unexpected place,
+    // e.g., the condition of an if-statement, etc. The later check will be
+    // performed before closing a compound statement.
+    HasValidCilkSpawn = true;
+
+    // If this is a full expression initializing a variable, then this
+    // variable is a receiver and confirm this with the caller.
+    if (Kind == CRK_MaybeReceiver)
+      Kind = CRK_IsReceiver;
+  }
+
+  // Build a Cilk spawn expression out of this full expression. If this is
+  // initialize a receiver, then do not build a CilkSpawnExpr.
+  if (getLangOpts().Cilk && HasValidCilkSpawn && (Kind != CRK_IsReceiver)) {
+    FullExpr = MaybeCreateExprWithCleanups(FullExpr);
+    return BuildCilkSpawnExpr(FullExpr.get());
+  }
 
   // At the end of this full expression (which could be a deeply nested
   // lambda), if there is a potential capture within the nested lambda,

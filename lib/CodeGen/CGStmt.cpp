@@ -12,11 +12,13 @@
 //===----------------------------------------------------------------------===//
 
 #include "CodeGenFunction.h"
+#include "CGCilk.h"
 #include "CGDebugInfo.h"
 #include "CodeGenModule.h"
 #include "TargetInfo.h"
 #include "clang/AST/StmtVisitor.h"
 #include "clang/Basic/Builtins.h"
+#include "clang/Basic/CapturedStmt.h"
 #include "clang/Basic/PrettyStackTrace.h"
 #include "clang/Basic/TargetInfo.h"
 #include "clang/Sema/LoopHint.h"
@@ -27,6 +29,7 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/MDBuilder.h"
+#include "llvm/IR/TypeBuilder.h"
 
 using namespace clang;
 using namespace CodeGen;
@@ -162,12 +165,12 @@ void CodeGenFunction::EmitStmt(const Stmt *S, ArrayRef<const Attr *> Attrs) {
     EmitCapturedStmt(*CS, CS->getCapturedRegionKind());
     }
     break;
-  case Stmt::CilkSpawnStmtClass:
-    EmitCilkSpawnStmt(cast<CilkSpawnStmt>(*S));
-    break;
-  case Stmt::CilkForStmtClass:
-    EmitCilkForStmt(cast<CilkForStmt>(*S), Attrs);
-    break;
+  // case Stmt::CilkSpawnStmtClass:
+  //   EmitCilkSpawnStmt(cast<CilkSpawnStmt>(*S));
+  //   break;
+  // case Stmt::CilkForStmtClass:
+  //   EmitCilkForStmt(cast<CilkForStmt>(*S), Attrs);
+  //   break;
   case Stmt::ObjCAtTryStmtClass:
     EmitObjCAtTryStmt(cast<ObjCAtTryStmt>(*S));
     break;
@@ -198,6 +201,9 @@ void CodeGenFunction::EmitStmt(const Stmt *S, ArrayRef<const Attr *> Attrs) {
     break;
   case Stmt::SEHTryStmtClass:
     EmitSEHTryStmt(cast<SEHTryStmt>(*S));
+    break;
+  case Stmt::CilkForStmtClass:
+    EmitCilkForStmt(cast<CilkForStmt>(*S), GetGrainsize(Attrs));
     break;
   case Stmt::OMPParallelDirectiveClass:
     EmitOMPParallelDirective(cast<OMPParallelDirective>(*S));
@@ -368,7 +374,9 @@ bool CodeGenFunction::EmitSimpleStmt(const Stmt *S) {
   case Stmt::DefaultStmtClass:  EmitDefaultStmt(cast<DefaultStmt>(*S));   break;
   case Stmt::CaseStmtClass:     EmitCaseStmt(cast<CaseStmt>(*S));         break;
   case Stmt::SEHLeaveStmtClass: EmitSEHLeaveStmt(cast<SEHLeaveStmt>(*S)); break;
-  case Stmt::CilkSyncStmtClass: EmitCilkSyncStmt(cast<CilkSyncStmt>(*S)); break;
+  // case Stmt::CilkSyncStmtClass: EmitCilkSyncStmt(cast<CilkSyncStmt>(*S)); break;
+  case Stmt::CilkSyncStmtClass:
+    CGM.getCilkPlusRuntime().EmitCilkSync(*this); break;
   }
 
   return true;

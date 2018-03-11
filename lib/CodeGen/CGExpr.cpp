@@ -13,6 +13,7 @@
 
 #include "CGCXXABI.h"
 #include "CGCall.h"
+#include "CGCilk.h"
 #include "CGCleanup.h"
 #include "CGDebugInfo.h"
 #include "CGObjCRuntime.h"
@@ -24,6 +25,7 @@
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/Attr.h"
+#include "clang/AST/Cilk.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/NSAPI.h"
 #include "clang/Frontend/CodeGenOptions.h"
@@ -352,17 +354,27 @@ static Address createReferenceTemporary(CodeGenFunction &CGF,
   switch (M->getStorageDuration()) {
   case SD_FullExpression:
   case SD_Automatic: {
+    // In a captured statement, don't alloca the receiver temp; it is passed in.
+    if (CodeGenFunction::CGCilkSpawnInfo *Info =
+        dyn_cast_or_null<CodeGenFunction::CGCilkSpawnInfo>
+        (CGF.CapturedStmtInfo)) {
+      if (Info->isReceiverDecl(M->getExtendingDecl())) {
+        assert(Info->getReceiverTmp().isValid() &&
+               "Expected receiver temporary in captured statement");
+        return Info->getReceiverTmp();
+      }
+    }
     // If we have a constant temporary array or record try to promote it into a
     // constant global under the same rules a normal constant would've been
     // promoted. This is easier on the optimizer and generally emits fewer
     // instructions.
     QualType Ty = Inner->getType();
-    if (CGF.IsSpawned) {
-      CGF.PushDetachScope();
-      return CGF.CurDetachScope->CreateDetachedMemTemp(Ty,
-                                                       M->getStorageDuration(),
-                                                       "det.ref.tmp");
-    }
+    // if (CGF.IsSpawned) {
+    //   CGF.PushDetachScope();
+    //   return CGF.CurDetachScope->CreateDetachedMemTemp(Ty,
+    //                                                    M->getStorageDuration(),
+    //                                                    "det.ref.tmp");
+    // }
     if (CGF.CGM.getCodeGenOpts().MergeAllConstants &&
         (Ty->isArrayType() || Ty->isRecordType()) &&
         CGF.CGM.isTypeConstant(Ty, true))
@@ -476,7 +488,7 @@ EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *M) {
       EmitAnyExprToMem(E, Object, Qualifiers(), /*IsInit*/true);
     }
   } else {
-    if (!IsSpawned) {
+    // if (!IsSpawned) {
       switch (M->getStorageDuration()) {
       case SD_Automatic:
       case SD_FullExpression:
@@ -494,7 +506,7 @@ EmitMaterializeTemporaryExpr(const MaterializeTemporaryExpr *M) {
       default:
         break;
       }
-    }
+    // }
     EmitAnyExprToMem(E, Object, Qualifiers(), /*IsInit*/true);
   }
   pushTemporaryCleanup(*this, M, E, Object);
@@ -1228,9 +1240,9 @@ LValue CodeGenFunction::EmitLValue(const Expr *E) {
     return EmitCXXUuidofLValue(cast<CXXUuidofExpr>(E));
   case Expr::LambdaExprClass:
     return EmitLambdaLValue(cast<LambdaExpr>(E));
-  case Expr::CilkSpawnExprClass:
-    PushDetachScope();
-    return EmitLValue(cast<CilkSpawnExpr>(E)->getSpawnedExpr());
+  // case Expr::CilkSpawnExprClass:
+  //   PushDetachScope();
+  //   return EmitLValue(cast<CilkSpawnExpr>(E)->getSpawnedExpr());
 
   case Expr::ExprWithCleanupsClass: {
     const auto *cleanups = cast<ExprWithCleanups>(E);
@@ -2404,6 +2416,31 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
                                              AlignmentSource::Decl);
           return MakeAddrLValue(I->second, T);
         }
+        else {
+          // If referencing a loop control variable, then load its
+          // corresponding inner loop control variable.
+          if (CapturedStmtInfo->getKind() == CR_CilkFor) {
+            CGCilkForStmtInfo *CFSI =
+              reinterpret_cast<CGCilkForStmtInfo *>(CapturedStmtInfo);
+            if (CFSI->getCilkForStmt().getLoopControlVar() == VD) {
+              auto Addr = CFSI->getInnerLoopControlVarAddr();
+              // // Addr should be valid except for the initialization of the inner
+              // // loop control var.
+              // if (Addr.isValid())
+              //   return MakeAddrLValue(Addr, T);
+              assert(Addr.isValid() &&
+                     "missing inner loop control variable address");
+              return MakeAddrLValue(Addr, T);
+            }
+          } else if (CapturedStmtInfo->getKind() == CR_CilkSpawn) {
+            CGCilkSpawnInfo *SSI = cast<CGCilkSpawnInfo>(CapturedStmtInfo);
+            if (SSI->isReceiverDecl(ND)) {
+              auto Addr = SSI->getReceiverAddr();
+              if (Addr.isValid())
+                return MakeAddrLValue(Addr, T);
+            }
+          }
+        // Otherwise load it from the captured struct.
         LValue CapLVal =
             EmitCapturedFieldLValue(*this, CapturedStmtInfo->lookup(VD),
                                     CapturedStmtInfo->getContextValue());
@@ -2411,11 +2448,22 @@ LValue CodeGenFunction::EmitDeclRefLValue(const DeclRefExpr *E) {
             Address(CapLVal.getPointer(), getContext().getDeclAlign(VD)),
             CapLVal.getType(), LValueBaseInfo(AlignmentSource::Decl),
             CapLVal.getTBAAInfo());
+        }
       }
-
+      if (isa<BlockDecl>(CurCodeDecl) || LocalDeclMap.count(VD) == 0) {
       assert(isa<BlockDecl>(CurCodeDecl));
       Address addr = GetAddrOfBlockDecl(VD, VD->hasAttr<BlocksAttr>());
       return MakeAddrLValue(addr, T, AlignmentSource::Decl);
+      }
+    }
+    // special case of receiver declared in advance
+    // int i;
+    // i = Spawn foo();
+    else if (CapturedStmtInfo &&
+             (CapturedStmtInfo->getKind() == CR_CilkSpawn) &&
+             CapturedStmtInfo->lookup(VD)) {
+      return EmitCapturedFieldLValue(*this, CapturedStmtInfo->lookup(VD),
+                                     CapturedStmtInfo->getContextValue());
     }
   }
 
@@ -4331,30 +4379,43 @@ LValue CodeGenFunction::EmitBinaryOperatorLValue(const BinaryOperator *E) {
       break;
     }
 
-    if (isa<CilkSpawnExpr>(E->getRHS()->IgnoreImplicit())) {
-      // Emit the LHS before the RHS.
-      LValue LV = EmitCheckedLValue(E->getLHS(), TCK_Store);
+    // if (isa<CilkSpawnExpr>(E->getRHS()->IgnoreImplicit())) {
+    //   // Emit the LHS before the RHS.
+    //   LValue LV = EmitCheckedLValue(E->getLHS(), TCK_Store);
 
-      // Set up to perform a detach.
-      assert(!IsSpawned &&
-             "_Cilk_spawn statement found in spawning environment.");
-      IsSpawned = true;
+    //   // Set up to perform a detach.
+    //   assert(!IsSpawned &&
+    //          "_Cilk_spawn statement found in spawning environment.");
+    //   IsSpawned = true;
 
-      // Emit the expression.
-      RValue RV = EmitAnyExpr(E->getRHS());
-      EmitStoreThroughLValue(RV, LV);
+    //   // Emit the expression.
+    //   RValue RV = EmitAnyExpr(E->getRHS());
+    //   EmitStoreThroughLValue(RV, LV);
 
-      // Finish the detach.
-      assert(CurDetachScope && CurDetachScope->IsDetachStarted() &&
-             "Processing _Cilk_spawn of expression did not produce a detach.");
-      PopDetachScope();
-      IsSpawned = false;
+    //   // Finish the detach.
+    //   assert(CurDetachScope && CurDetachScope->IsDetachStarted() &&
+    //          "Processing _Cilk_spawn of expression did not produce a detach.");
+    //   PopDetachScope();
+    //   IsSpawned = false;
 
-      return LV;
+    //   return LV;
+    // }
+
+    LValue LV;
+    RValue RV;
+    // Cilk Plus needs the LHS evaluated first to handle cases such as
+    // array[f()] = _Cilk_spawn foo();
+    // This evaluation order requirement implies that _Cilk_spawn cannot
+    // spawn Objective C block calls.
+    if (getLangOpts().Cilk && E->getRHS()->isCilkSpawn()) {
+      LV = EmitCheckedLValue(E->getLHS(), TCK_Store);
+      RV = EmitAnyExpr(E->getRHS());
+    } else {
+      RV = EmitAnyExpr(E->getRHS());
+      LV = EmitCheckedLValue(E->getLHS(), TCK_Store);
     }
-
-    RValue RV = EmitAnyExpr(E->getRHS());
-    LValue LV = EmitCheckedLValue(E->getLHS(), TCK_Store);
+    // RValue RV = EmitAnyExpr(E->getRHS());
+    // LValue LV = EmitCheckedLValue(E->getLHS(), TCK_Store);
     if (RV.isScalar())
       EmitNullabilityCheck(LV, RV.getScalarVal(), E->getExprLoc());
     EmitStoreThroughLValue(RV, LV);
@@ -4500,7 +4561,7 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType, const CGCallee &OrigCallee
   assert(CalleeType->isFunctionPointerType() &&
          "Call must have function pointer type!");
 
-  IsSpawnedScope SpawnScp(this);
+  // IsSpawnedScope SpawnScp(this);
 
   const Decl *TargetDecl = OrigCallee.getAbstractInfo().getCalleeDecl();
 
@@ -4670,8 +4731,9 @@ RValue CodeGenFunction::EmitCall(QualType CalleeType, const CGCallee &OrigCallee
     Callee.setFunctionPointer(CalleePtr);
   }
 
-  SpawnScp.RestoreOldScope();
-  return EmitCall(FnInfo, Callee, ReturnValue, Args, nullptr, E->getExprLoc());
+  // SpawnScp.RestoreOldScope();
+  return EmitCall(FnInfo, Callee, ReturnValue, Args, nullptr, E->getExprLoc(),
+                  E->isCilkSpawnCall());
 }
 
 LValue CodeGenFunction::

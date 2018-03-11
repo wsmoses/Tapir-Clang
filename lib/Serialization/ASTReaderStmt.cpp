@@ -617,6 +617,22 @@ void ASTStmtReader::VisitArraySubscriptExpr(ArraySubscriptExpr *E) {
   E->setRBracketLoc(ReadSourceLocation());
 }
 
+//===----------------------------------------------------------------------===//
+// Cilk Plus Expressions and Statements.
+//===----------------------------------------------------------------------===//
+void ASTStmtReader::VisitCilkSpawnExpr(CilkSpawnExpr *E) {
+  llvm_unreachable("not implemented yet");
+}
+
+void ASTStmtReader::VisitCilkSyncStmt(CilkSyncStmt *S) {
+  VisitStmt(S);
+  S->setSyncLoc(ReadSourceLocation());
+}
+
+void ASTStmtReader::VisitCilkForStmt(CilkForStmt *S) {
+  llvm_unreachable("not implemented yet");
+}
+
 void ASTStmtReader::VisitOMPArraySectionExpr(OMPArraySectionExpr *E) {
   VisitExpr(E);
   E->setBase(Record.readSubExpr());
@@ -2991,39 +3007,39 @@ void ASTStmtReader::VisitOMPTargetTeamsDistributeSimdDirective(
   VisitOMPLoopDirective(D);
 }
 
-//===----------------------------------------------------------------------===//
-// Cilk spawn, Cilk sync, Cilk for
-//===----------------------------------------------------------------------===//
+// //===----------------------------------------------------------------------===//
+// // Cilk spawn, Cilk sync, Cilk for
+// //===----------------------------------------------------------------------===//
 
-void ASTStmtReader::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
-  VisitStmt(S);
-  S->setSpawnLoc(ReadSourceLocation());
-  S->setSpawnedStmt(Record.readSubStmt());
-}
+// void ASTStmtReader::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
+//   VisitStmt(S);
+//   S->setSpawnLoc(ReadSourceLocation());
+//   S->setSpawnedStmt(Record.readSubStmt());
+// }
 
-void ASTStmtReader::VisitCilkSpawnExpr(CilkSpawnExpr *E) {
-  VisitExpr(E);
-  E->setSpawnLoc(ReadSourceLocation());
-  E->setSpawnedExpr(Record.readSubExpr());
-}
+// void ASTStmtReader::VisitCilkSpawnExpr(CilkSpawnExpr *E) {
+//   VisitExpr(E);
+//   E->setSpawnLoc(ReadSourceLocation());
+//   E->setSpawnedExpr(Record.readSubExpr());
+// }
 
-void ASTStmtReader::VisitCilkSyncStmt(CilkSyncStmt *S) {
-  VisitStmt(S);
-  S->setSyncLoc(ReadSourceLocation());
-}
+// void ASTStmtReader::VisitCilkSyncStmt(CilkSyncStmt *S) {
+//   VisitStmt(S);
+//   S->setSyncLoc(ReadSourceLocation());
+// }
 
-void ASTStmtReader::VisitCilkForStmt(CilkForStmt *S) {
-  VisitStmt(S);
-  S->setInit(Record.readSubStmt());
-  S->setCond(Record.readSubExpr());
-  // S->setConditionVariable(Record.getContext(), ReadDeclAs<VarDecl>());
-  S->setInc(Record.readSubExpr());
-  S->setLoopVariable(Record.getContext(), ReadDeclAs<VarDecl>());
-  S->setBody(Record.readSubStmt());
-  S->setCilkForLoc(ReadSourceLocation());
-  S->setLParenLoc(ReadSourceLocation());
-  S->setRParenLoc(ReadSourceLocation());
-}
+// void ASTStmtReader::VisitCilkForStmt(CilkForStmt *S) {
+//   VisitStmt(S);
+//   S->setInit(Record.readSubStmt());
+//   S->setCond(Record.readSubExpr());
+//   // S->setConditionVariable(Record.getContext(), ReadDeclAs<VarDecl>());
+//   S->setInc(Record.readSubExpr());
+//   S->setLoopVariable(Record.getContext(), ReadDeclAs<VarDecl>());
+//   S->setBody(Record.readSubStmt());
+//   S->setCilkForLoc(ReadSourceLocation());
+//   S->setLParenLoc(ReadSourceLocation());
+//   S->setRParenLoc(ReadSourceLocation());
+// }
 
 //===----------------------------------------------------------------------===//
 // ASTReader Implementation
@@ -3194,21 +3210,21 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
                                            Record[ASTStmtReader::NumStmtFields]);
       break;
 
-    case STMT_CILKSPAWN:
-      S = new (Context) CilkSpawnStmt(Empty);
-      break;
+    // case STMT_CILKSPAWN:
+    //   S = new (Context) CilkSpawnStmt(Empty);
+    //   break;
 
-    case EXPR_CILKSPAWN:
-      S = new (Context) CilkSpawnExpr(Empty);
-      break;
+    // case EXPR_CILKSPAWN:
+    //   S = new (Context) CilkSpawnExpr(Empty);
+    //   break;
 
-    case STMT_CILKSYNC:
-      S = new (Context) CilkSyncStmt(Empty);
-      break;
+    // case STMT_CILKSYNC:
+    //   S = new (Context) CilkSyncStmt(Empty);
+    //   break;
 
-    case STMT_CILKFOR:
-      S = new (Context) CilkForStmt(Empty);
-      break;
+    // case STMT_CILKFOR:
+    //   S = new (Context) CilkForStmt(Empty);
+    //   break;
 
     case EXPR_PREDEFINED:
       S = new (Context) PredefinedExpr(Empty);
@@ -4061,6 +4077,14 @@ Stmt *ASTReader::ReadStmtFromStream(ModuleFile &F) {
       S = LambdaExpr::CreateDeserialized(Context, NumCaptures);
       break;
     }
+
+    case STMT_CILKSYNC:
+      S = new (Context) CilkSyncStmt(Empty);
+      break;
+
+    case STMT_CILK_FOR:
+      llvm_unreachable("not implemented yet");
+      break;
 
     case STMT_COROUTINE_BODY: {
       unsigned NumParams = Record[ASTStmtReader::NumStmtFields];

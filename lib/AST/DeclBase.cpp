@@ -16,6 +16,7 @@
 #include "clang/AST/ASTMutationListener.h"
 #include "clang/AST/Attr.h"
 #include "clang/AST/AttrIterator.h"
+#include "clang/AST/Cilk.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclCXX.h"
 #include "clang/AST/DeclContextInternals.h"
@@ -782,6 +783,7 @@ unsigned Decl::getIdentifierNamespaceForKind(Kind DeclKind) {
       return IDNS_OMPReduction;
 
     // Never have names.
+    case CilkSpawn:
     case Friend:
     case FriendTemplate:
     case AccessSpec:

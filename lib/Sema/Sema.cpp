@@ -1359,6 +1359,17 @@ void Sema::PushBlockScope(Scope *BlockScope, BlockDecl *Block) {
                                               BlockScope, Block));
 }
 
+void Sema::PushCilkForScope(Scope *S, CapturedDecl *CD, RecordDecl *RD,
+                            const VarDecl *LoopControlVariable,
+                            SourceLocation CilkForLoc) {
+  CapturingScopeInfo *CSI =
+    new CilkForScopeInfo(getDiagnostics(), S, CD, RD, CD->getContextParam(),
+                         LoopControlVariable, CilkForLoc);
+
+  CSI->ReturnType = Context.VoidTy;
+  FunctionScopes.push_back(CSI);
+}
+
 LambdaScopeInfo *Sema::PushLambdaScope() {
   LambdaScopeInfo *const LSI = new LambdaScopeInfo(getDiagnostics());
   FunctionScopes.push_back(LSI);
@@ -1423,6 +1434,13 @@ BlockScopeInfo *Sema::getCurBlock() {
   }
 
   return CurBSI;
+}
+
+CilkForScopeInfo *Sema::getCurCilkFor() {
+  if (FunctionScopes.empty())
+    return nullptr;
+
+  return dyn_cast<CilkForScopeInfo>(FunctionScopes.back());
 }
 
 LambdaScopeInfo *Sema::getCurLambda(bool IgnoreNonLambdaCapturingScope) {

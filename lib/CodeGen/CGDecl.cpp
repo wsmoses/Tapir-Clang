@@ -12,6 +12,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "CGBlocks.h"
+#include "CGCilk.h"
 #include "CGCXXABI.h"
 #include "CGCleanup.h"
 #include "CGDebugInfo.h"
@@ -23,6 +24,7 @@
 #include "TargetInfo.h"
 #include "clang/AST/ASTContext.h"
 #include "clang/AST/CharUnits.h"
+#include "clang/AST/Cilk.h"
 #include "clang/AST/Decl.h"
 #include "clang/AST/DeclObjC.h"
 #include "clang/AST/DeclOpenMP.h"
@@ -136,7 +138,8 @@ void CodeGenFunction::EmitDecl(const Decl &D) {
           EmitVarDecl(*HD);
     return;
   }
-
+  case Decl::CilkSpawn:
+    return EmitCilkSpawnDecl(cast<CilkSpawnDecl>(&D));
   case Decl::OMPDeclareReduction:
     return CGM.EmitOMPDeclareReduction(cast<OMPDeclareReductionDecl>(&D), this);
 
@@ -689,32 +692,32 @@ static void drillIntoBlockVariable(CodeGenFunction &CGF,
   lvalue.setAddress(CGF.emitBlockByrefAddress(lvalue.getAddress(), var));
 }
 
-namespace {
-class SpawnedInitRAII {
-  CodeGenFunction &CGF;
-  bool InitIsSpawned;
-public:
-  SpawnedInitRAII(CodeGenFunction &CGF) : CGF(CGF), InitIsSpawned(false) {}
-  ~SpawnedInitRAII() {
-    if (InitIsSpawned) {
-      // Finish the detach.
-      assert(CGF.CurDetachScope && CGF.CurDetachScope->IsDetachStarted() &&
-             "Processing _Cilk_spawn of expression did not produce detach.");
-      CGF.IsSpawned = false;
-      CGF.PopDetachScope();
-    }
-  }
+// namespace {
+// class SpawnedInitRAII {
+//   CodeGenFunction &CGF;
+//   bool InitIsSpawned;
+// public:
+//   SpawnedInitRAII(CodeGenFunction &CGF) : CGF(CGF), InitIsSpawned(false) {}
+//   ~SpawnedInitRAII() {
+//     if (InitIsSpawned) {
+//       // Finish the detach.
+//       assert(CGF.CurDetachScope && CGF.CurDetachScope->IsDetachStarted() &&
+//              "Processing _Cilk_spawn of expression did not produce detach.");
+//       CGF.IsSpawned = false;
+//       CGF.PopDetachScope();
+//     }
+//   }
 
-  void setInitIsSpawned() {
-    InitIsSpawned = true;
-    assert(!CGF.IsSpawned &&
-           "_Cilk_spawn statement found in spawning environment.");
+//   void setInitIsSpawned() {
+//     InitIsSpawned = true;
+//     assert(!CGF.IsSpawned &&
+//            "_Cilk_spawn statement found in spawning environment.");
 
-    // Prepare to detach.
-    CGF.IsSpawned = true;
-  }
-};
-} // end anonymous namespace
+//     // Prepare to detach.
+//     CGF.IsSpawned = true;
+//   }
+// };
+// } // end anonymous namespace
 
 void CodeGenFunction::EmitNullabilityCheck(LValue LHS, llvm::Value *RHS,
                                            SourceLocation Loc) {
@@ -954,6 +957,16 @@ static bool shouldUseMemSetPlusStoresToInitialize(llvm::Constant *Init,
 /// variable declaration with auto, register, or no storage class specifier.
 /// These turn into simple stack objects, or GlobalValues depending on target.
 void CodeGenFunction::EmitAutoVarDecl(const VarDecl &D) {
+  if (CGCilkSpawnInfo *Info =
+      dyn_cast_or_null<CGCilkSpawnInfo>(CapturedStmtInfo)) {
+    // Do initialization if this decl is inside the helper function.
+    if (Info->isReceiverDecl(&D)) {
+      AutoVarEmission Emission(D);
+      Emission.Addr = Info->getReceiverAddr();
+      EmitAutoVarInit(Emission);
+      return;
+    }
+  }
   AutoVarEmission emission = EmitAutoVarAlloca(D);
   EmitAutoVarInit(emission);
   EmitAutoVarCleanups(emission);
@@ -1120,6 +1133,8 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
     EnsureInsertPoint();
 
     if (!DidCallStackSave) {
+      if (!(CurCGCilkImplicitSyncInfo &&
+            CurCGCilkImplicitSyncInfo->needsImplicitSync())) {
       // Save the stack.
       Address Stack =
         CreateTempAlloca(Int8PtrTy, getPointerAlign(), "saved_stack");
@@ -1133,16 +1148,53 @@ CodeGenFunction::EmitAutoVarAlloca(const VarDecl &D) {
       // Push a cleanup block and restore the stack there.
       // FIXME: in general circumstances, this should be an EH cleanup.
       pushStackRestore(NormalCleanup, Stack);
+      }
     }
 
     llvm::Value *elementCount;
     QualType elementType;
     std::tie(elementCount, elementType) = getVLASize(Ty);
 
+    if (CurCGCilkImplicitSyncInfo &&
+        CurCGCilkImplicitSyncInfo->needsImplicitSync()) {
+      llvm::Type *TypeParams[] = {CGM.SizeTy};
+      llvm::FunctionType *FnTy = llvm::FunctionType::get(
+          CGM.VoidPtrTy, TypeParams, /*isVarArg*/ false);
+      llvm::Constant *F = CGM.CreateBuiltinFunction(FnTy, "malloc");
+
+      uint64_t TypeSize =
+        getContext().getTypeSizeInChars(elementType).getQuantity();
+      llvm::Value *VLASize =
+        Builder.CreateMul(llvm::ConstantInt::get(CGM.SizeTy, TypeSize),
+                          elementCount, "sizeof_val");
+      llvm::Value *Args[] = {VLASize};
+      llvm::Value *VLA = EmitRuntimeCall(F, Args);
+      QualType PtrTy = getContext().getPointerType(elementType);
+      VLA = Builder.CreatePointerBitCastOrAddrSpaceCast(VLA, ConvertType(PtrTy),
+                                                        "vla_ptr");
+      address = Address(VLA, alignment);
+
+      llvm::Type *TypeParams2[] = {CGM.VoidPtrTy};
+      llvm::FunctionType *FnTy2 =
+        llvm::FunctionType::get(CGM.VoidTy, TypeParams2, /*isVarArg*/ false);
+      auto F2 = CGM.CreateBuiltinFunction(FnTy2, "free");
+
+      FunctionArgList Args2;
+      ImplicitParamDecl Dst(CGM.getContext(), /*DC=*/nullptr, SourceLocation(),
+                            /*Id=*/nullptr, CGM.getContext().VoidPtrTy,
+                            ImplicitParamDecl::Other);
+      Args2.push_back(&Dst);
+
+      const CGFunctionInfo &FI = CGM.getTypes().arrangeBuiltinFunctionDeclaration(
+          CGM.getContext().VoidTy, Args2);
+
+      EHStack.pushCleanup<CallCleanupFunction>(NormalAndEHCleanup, F2, &FI, &D);
+    } else {
     llvm::Type *llvmTy = ConvertTypeForMem(elementType);
 
     // Allocate memory for the array.
     address = CreateTempAlloca(llvmTy, alignment, "vla", elementCount);
+    }
   }
 
   setAddrOfLocalVar(&D, address);
@@ -1338,28 +1390,28 @@ void CodeGenFunction::EmitAutoVarInit(const AutoVarEmission &emission) {
   }
 }
 
-static bool InitIsSpawned(const Expr *init) {
-  switch (init->getStmtClass()) {
-  default: return false;
-  case Expr::CilkSpawnExprClass: return true;
-    // Ignore implicit expressions
-  case Expr::ExprWithCleanupsClass:
-    return InitIsSpawned(cast<ExprWithCleanups>(init)->getSubExpr());
-  case Expr::MaterializeTemporaryExprClass:
-    return InitIsSpawned(cast<MaterializeTemporaryExpr>(init)->
-                         GetTemporaryExpr());
-  case Expr::CXXBindTemporaryExprClass:
-    return InitIsSpawned(cast<CXXBindTemporaryExpr>(init)->getSubExpr());
-  case Expr::ImplicitCastExprClass:
-    return InitIsSpawned(cast<ImplicitCastExpr>(init)->getSubExpr());
-    // Ignore the C++ copy constructor
-  case Expr::CXXConstructExprClass:
-    const CXXConstructExpr *CE = cast<CXXConstructExpr>(init);
-    if (CE->getNumArgs() > 0)
-      return InitIsSpawned(CE->getArg(0));
-    return false;
-  }
-}
+// static bool InitIsSpawned(const Expr *init) {
+//   switch (init->getStmtClass()) {
+//   default: return false;
+//   // case Expr::CilkSpawnExprClass: return true;
+//     // Ignore implicit expressions
+//   case Expr::ExprWithCleanupsClass:
+//     return InitIsSpawned(cast<ExprWithCleanups>(init)->getSubExpr());
+//   case Expr::MaterializeTemporaryExprClass:
+//     return InitIsSpawned(cast<MaterializeTemporaryExpr>(init)->
+//                          GetTemporaryExpr());
+//   case Expr::CXXBindTemporaryExprClass:
+//     return InitIsSpawned(cast<CXXBindTemporaryExpr>(init)->getSubExpr());
+//   case Expr::ImplicitCastExprClass:
+//     return InitIsSpawned(cast<ImplicitCastExpr>(init)->getSubExpr());
+//     // Ignore the C++ copy constructor
+//   case Expr::CXXConstructExprClass:
+//     const CXXConstructExpr *CE = cast<CXXConstructExpr>(init);
+//     if (CE->getNumArgs() > 0)
+//       return InitIsSpawned(CE->getArg(0));
+//     return false;
+//   }
+// }
 
 /// Emit an expression as an initializer for a variable at the given
 /// location.  The expression is not necessarily the normal
@@ -1385,9 +1437,9 @@ void CodeGenFunction::EmitExprAsInit(const Expr *init, const ValueDecl *D,
     return;
   }
 
-  SpawnedInitRAII SpawnedInit(*this);
-  if (InitIsSpawned(init))
-    SpawnedInit.setInitIsSpawned();
+  // SpawnedInitRAII SpawnedInit(*this);
+  // if (InitIsSpawned(init))
+  //   SpawnedInit.setInitIsSpawned();
 
   switch (getEvaluationKind(type)) {
   case TEK_Scalar:

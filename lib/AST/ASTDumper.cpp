@@ -443,6 +443,9 @@ namespace  {
     void VisitBindingDecl(const BindingDecl *D);
     void VisitFileScopeAsmDecl(const FileScopeAsmDecl *D);
     void VisitImportDecl(const ImportDecl *D);
+    void VisitCilkSpawnDecl(const CilkSpawnDecl *D);
+    void VisitCapturedStmt(const CapturedStmt *Node);
+    void VisitCilkSpawnExpr(const CilkSpawnExpr *Node);
     void VisitPragmaCommentDecl(const PragmaCommentDecl *D);
     void VisitPragmaDetectMismatchDecl(const PragmaDetectMismatchDecl *D);
     void VisitCapturedDecl(const CapturedDecl *D);
@@ -513,7 +516,7 @@ namespace  {
     void VisitLabelStmt(const LabelStmt *Node);
     void VisitGotoStmt(const GotoStmt *Node);
     void VisitCXXCatchStmt(const CXXCatchStmt *Node);
-    void VisitCapturedStmt(const CapturedStmt *Node);
+    // void VisitCapturedStmt(const CapturedStmt *Node);
 
     // OpenMP
     void VisitOMPExecutableDirective(const OMPExecutableDirective *Node);
@@ -1736,6 +1739,10 @@ void ASTDumper::VisitFriendDecl(const FriendDecl *D) {
     dumpDecl(D->getFriendDecl());
 }
 
+void ASTDumper::VisitCilkSpawnDecl(const CilkSpawnDecl *D) {
+  dumpStmt(D->getCapturedStmt());
+}
+
 //===----------------------------------------------------------------------===//
 // Obj-C Declarations
 //===----------------------------------------------------------------------===//
@@ -1994,15 +2001,45 @@ void ASTDumper::VisitGotoStmt(const GotoStmt *Node) {
   dumpPointer(Node->getLabel());
 }
 
+void ASTDumper::VisitCapturedStmt(const CapturedStmt *Node) {
+  VisitStmt(Node);
+  for (CapturedStmt::const_capture_iterator I = Node->capture_begin(),
+         E = Node->capture_end();
+       I != E; ++I) {
+    dumpChild([=]{
+        OS << "Capture ";
+        switch (I->getCaptureKind()) {
+        case CapturedStmt::VCK_This:
+          OS << "this";
+          break;
+        case CapturedStmt::VCK_ByRef:
+          OS << "byref ";
+          dumpBareDeclRef(I->getCapturedVar());
+          break;
+        case CapturedStmt::VCK_VLAType:
+          OS << "vla  ";
+          dumpBareDeclRef(I->getCapturedVar());
+          break;
+        }
+      });
+  }
+  dumpDecl(Node->getCapturedDecl());
+}
+
+void ASTDumper::VisitCilkSpawnExpr(const CilkSpawnExpr *Node) {
+  VisitExpr(Node);
+  dumpDecl(Node->getSpawnDecl());
+}
+
 void ASTDumper::VisitCXXCatchStmt(const CXXCatchStmt *Node) {
   VisitStmt(Node);
   dumpDecl(Node->getExceptionDecl());
 }
 
-void ASTDumper::VisitCapturedStmt(const CapturedStmt *Node) {
-  VisitStmt(Node);
-  dumpDecl(Node->getCapturedDecl());
-}
+// void ASTDumper::VisitCapturedStmt(const CapturedStmt *Node) {
+//   VisitStmt(Node);
+//   dumpDecl(Node->getCapturedDecl());
+// }
 
 //===----------------------------------------------------------------------===//
 //  OpenMP dumping methods.

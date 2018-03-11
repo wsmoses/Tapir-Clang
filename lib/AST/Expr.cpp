@@ -2117,6 +2117,15 @@ bool Expr::isUnusedResultAWarning(const Expr *&WarnE, SourceLocation &Loc,
     R2 = BO->getRHS()->getSourceRange();
     return true;
   }
+  case CilkSpawnExprClass: {
+    const CilkSpawnExpr *SpawnE = cast<CilkSpawnExpr>(this);
+    const Stmt *SpawnS = SpawnE->getSpawnDecl()->getSpawnStmt();
+    if (isa<Expr>(SpawnS)) {
+      const Expr *E = cast<Expr>(SpawnS);
+      return E->isUnusedResultAWarning(WarnE, Loc, R1, R2, Ctx);
+    }
+    return false;
+  }
   case CompoundAssignOperatorClass:
   case VAArgExprClass:
   case AtomicExprClass:
@@ -3032,6 +3041,7 @@ bool Expr::HasSideEffects(const ASTContext &Ctx,
   case CXXThrowExprClass:
   case CXXNewExprClass:
   case CXXDeleteExprClass:
+  case CilkSpawnExprClass:
   case CoawaitExprClass:
   case DependentCoawaitExprClass:
   case CoyieldExprClass:
@@ -3070,7 +3080,7 @@ bool Expr::HasSideEffects(const ASTContext &Ctx,
   case ShuffleVectorExprClass:
   case ConvertVectorExprClass:
   case AsTypeExprClass:
-  case CilkSpawnExprClass:
+  // case CilkSpawnExprClass:
     // These have a side-effect if any subexpression does.
     break;
 

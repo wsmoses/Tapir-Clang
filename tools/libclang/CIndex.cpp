@@ -5217,14 +5217,14 @@ CXString clang_getCursorKindSpelling(enum CXCursorKind Kind) {
       return cxstring::createRef("StaticAssert");
   case CXCursor_FriendDecl:
     return cxstring::createRef("FriendDecl");
-  case CXCursor_CilkSpawnStmt:
-    return cxstring::createRef("CilkSpawnStmt");
-  case CXCursor_CilkSpawnExpr:
-    return cxstring::createRef("CilkSpawnExpr");
-  case CXCursor_CilkSyncStmt:
-    return cxstring::createRef("CilkSyncStmt");
-  case CXCursor_CilkForStmt:
-    return cxstring::createRef("CilkForStmt");
+  // case CXCursor_CilkSpawnStmt:
+  //   return cxstring::createRef("CilkSpawnStmt");
+  // case CXCursor_CilkSpawnExpr:
+  //   return cxstring::createRef("CilkSpawnExpr");
+  // case CXCursor_CilkSyncStmt:
+  //   return cxstring::createRef("CilkSyncStmt");
+  // case CXCursor_CilkForStmt:
+  //   return cxstring::createRef("CilkForStmt");
   }
 
   llvm_unreachable("Unhandled CXCursorKind");
@@ -5963,6 +5963,7 @@ CXCursor clang_getCursorDefinition(CXCursor C) {
   case Decl::StaticAssert:
   case Decl::Block:
   case Decl::Captured:
+  case Decl::CilkSpawn:
   case Decl::OMPCapturedExpr:
   case Decl::Label:  // FIXME: Is this right??
   case Decl::ClassScopeFunctionSpecialization:

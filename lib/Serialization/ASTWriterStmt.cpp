@@ -1728,21 +1728,48 @@ void ASTStmtWriter::VisitAsTypeExpr(AsTypeExpr *E) {
   Code = serialization::EXPR_ASTYPE;
 }
 
-//===----------------------------------------------------------------------===//
-// Cilk spawn, Cilk sync, Cilk for
-//===----------------------------------------------------------------------===//
-void ASTStmtWriter::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
-  VisitStmt(S);
-  Record.AddSourceLocation(S->getSpawnLoc());
-  Record.AddStmt(S->getSpawnedStmt());
-  Code = serialization::STMT_CILKSPAWN;
-}
+// //===----------------------------------------------------------------------===//
+// // Cilk spawn, Cilk sync, Cilk for
+// //===----------------------------------------------------------------------===//
+// void ASTStmtWriter::VisitCilkSpawnStmt(CilkSpawnStmt *S) {
+//   VisitStmt(S);
+//   Record.AddSourceLocation(S->getSpawnLoc());
+//   Record.AddStmt(S->getSpawnedStmt());
+//   Code = serialization::STMT_CILKSPAWN;
+// }
 
+// void ASTStmtWriter::VisitCilkSpawnExpr(CilkSpawnExpr *E) {
+//   VisitExpr(E);
+//   Record.AddSourceLocation(E->getSpawnLoc());
+//   Record.AddStmt(E->getSpawnedExpr());
+//   Code = serialization::EXPR_CILKSPAWN;
+// }
+
+// void ASTStmtWriter::VisitCilkSyncStmt(CilkSyncStmt *S) {
+//   VisitStmt(S);
+//   Record.AddSourceLocation(S->getSyncLoc());
+//   Code = serialization::STMT_CILKSYNC;
+// }
+
+// void ASTStmtWriter::VisitCilkForStmt(CilkForStmt *S) {
+//   VisitStmt(S);
+//   Record.AddStmt(S->getInit());
+//   Record.AddStmt(S->getCond());
+//   // Record.AddDeclRef(S->getConditionVariable());
+//   Record.AddStmt(S->getInc());
+//   Record.AddDeclRef(S->getLoopVariable());
+//   Record.AddStmt(S->getBody());
+//   Record.AddSourceLocation(S->getCilkForLoc());
+//   Record.AddSourceLocation(S->getLParenLoc());
+//   Record.AddSourceLocation(S->getRParenLoc());
+//   Code = serialization::STMT_CILKFOR;
+// }
+
+//===----------------------------------------------------------------------===//
+// Cilk Plus Expressions and Statements.
+//===----------------------------------------------------------------------===//
 void ASTStmtWriter::VisitCilkSpawnExpr(CilkSpawnExpr *E) {
-  VisitExpr(E);
-  Record.AddSourceLocation(E->getSpawnLoc());
-  Record.AddStmt(E->getSpawnedExpr());
-  Code = serialization::EXPR_CILKSPAWN;
+  llvm_unreachable("not implemented yet");
 }
 
 void ASTStmtWriter::VisitCilkSyncStmt(CilkSyncStmt *S) {
@@ -1752,17 +1779,8 @@ void ASTStmtWriter::VisitCilkSyncStmt(CilkSyncStmt *S) {
 }
 
 void ASTStmtWriter::VisitCilkForStmt(CilkForStmt *S) {
-  VisitStmt(S);
-  Record.AddStmt(S->getInit());
-  Record.AddStmt(S->getCond());
-  // Record.AddDeclRef(S->getConditionVariable());
-  Record.AddStmt(S->getInc());
-  Record.AddDeclRef(S->getLoopVariable());
-  Record.AddStmt(S->getBody());
-  Record.AddSourceLocation(S->getCilkForLoc());
-  Record.AddSourceLocation(S->getLParenLoc());
-  Record.AddSourceLocation(S->getRParenLoc());
-  Code = serialization::STMT_CILKFOR;
+  Code = serialization::STMT_CILK_FOR;
+  llvm_unreachable("not implemented yet");
 }
 
 //===----------------------------------------------------------------------===//

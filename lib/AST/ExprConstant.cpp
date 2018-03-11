@@ -10263,6 +10263,7 @@ static ICEDiag CheckICE(const Expr* E, const ASTContext &Ctx) {
 #define STMT(Node, Base) case Expr::Node##Class:
 #define EXPR(Node, Base)
 #include "clang/AST/StmtNodes.inc"
+  case Expr::CilkSpawnExprClass:
   case Expr::PredefinedExprClass:
   case Expr::FloatingLiteralClass:
   case Expr::ImaginaryLiteralClass:
@@ -10366,8 +10367,8 @@ static ICEDiag CheckICE(const Expr* E, const ASTContext &Ctx) {
     return CheckICE(cast<ParenExpr>(E)->getSubExpr(), Ctx);
   case Expr::GenericSelectionExprClass:
     return CheckICE(cast<GenericSelectionExpr>(E)->getResultExpr(), Ctx);
-  case Expr::CilkSpawnExprClass:
-    return CheckICE(cast<CilkSpawnExpr>(E)->getSpawnedExpr(), Ctx);
+  // case Expr::CilkSpawnExprClass:
+  //   return CheckICE(cast<CilkSpawnExpr>(E)->getSpawnedExpr(), Ctx);
   case Expr::IntegerLiteralClass:
   case Expr::CharacterLiteralClass:
   case Expr::ObjCBoolLiteralExprClass:

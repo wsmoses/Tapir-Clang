@@ -10627,16 +10627,16 @@ public:
     notePostMod(O, UO, UK_ModAsSideEffect);
   }
 
-  void VisitCilkSpawnExpr(CilkSpawnExpr *E) {
-    Object O = getObject(E->getSpawnedExpr(), true);
-    if (!O)
-      return VisitExpr(E);
+  // void VisitCilkSpawnExpr(CilkSpawnExpr *E) {
+  //   Object O = getObject(E->getSpawnedExpr(), true);
+  //   if (!O)
+  //     return VisitExpr(E);
 
-    // Cilk_spawn removes sequencing of the spawned expression.
-    // notePreUse(O, E);
-    Visit(E->getSpawnedExpr());
-    // notePostUse(O, E);
-  }
+  //   // Cilk_spawn removes sequencing of the spawned expression.
+  //   // notePreUse(O, E);
+  //   Visit(E->getSpawnedExpr());
+  //   // notePostUse(O, E);
+  // }
 
   /// Don't visit the RHS of '&&' or '||' if it might not be evaluated.
   void VisitBinLOr(BinaryOperator *BO) {
@@ -11818,6 +11818,10 @@ void Sema::DiagnoseEmptyLoopBody(const Stmt *S,
     StmtLoc = WS->getCond()->getSourceRange().getEnd();
     Body = WS->getBody();
     DiagID = diag::warn_empty_while_body;
+  } else if (const CilkForStmt *CFS = dyn_cast<CilkForStmt>(S)) {
+    StmtLoc = CFS->getCilkForLoc();
+    Body = CFS->getBody()->getCapturedStmt();
+    DiagID = diag::warn_empty_for_body;
   } else
     return; // Neither `for' nor `while'.
 

@@ -16,6 +16,7 @@
 #include "CGCUDARuntime.h"
 #include "CGCXXABI.h"
 #include "CGCall.h"
+#include "CGCilk.h"
 #include "CGDebugInfo.h"
 #include "CGObjCRuntime.h"
 #include "CGOpenCLRuntime.h"
@@ -133,6 +134,8 @@ CodeGenModule::CodeGenModule(ASTContext &C, const HeaderSearchOptions &HSO,
     createOpenMPRuntime();
   if (LangOpts.CUDA)
     createCUDARuntime();
+  if (LangOpts.Cilk)
+    createCilkPlusRuntime();
 
   // Enable TBAA unless it's suppressed. ThreadSanitizer needs TBAA even at O0.
   if (LangOpts.Sanitize.has(SanitizerKind::Thread) ||
@@ -218,6 +221,11 @@ void CodeGenModule::createOpenMPRuntime() {
 
 void CodeGenModule::createCUDARuntime() {
   CUDARuntime.reset(CreateNVCUDARuntime(*this));
+}
+
+void CodeGenModule::createCilkPlusRuntime() {
+  //CilkPlusRuntime = new CGCilkPlusRuntime;
+  CilkPlusRuntime.reset(new CGCilkPlusRuntime);
 }
 
 void CodeGenModule::addReplacement(StringRef Name, llvm::Constant *C) {

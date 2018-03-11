@@ -83,20 +83,21 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorCall(
     ReturnValueSlot ReturnValue,
     llvm::Value *This, llvm::Value *ImplicitParam, QualType ImplicitParamTy,
     const CallExpr *CE, CallArgList *RtlArgs) {
-  IsSpawnedScope SpawnedScp(this);
+  // IsSpawnedScope SpawnedScp(this);
   const FunctionProtoType *FPT = MD->getType()->castAs<FunctionProtoType>();
   CallArgList Args;
-  if (CE)
-    if (auto *OCE = dyn_cast<CXXOperatorCallExpr>(CE))
-      if (OCE->isAssignmentOp())
-        SpawnedScp.RestoreOldScope();
+  // if (CE)
+  //   if (auto *OCE = dyn_cast<CXXOperatorCallExpr>(CE))
+  //     if (OCE->isAssignmentOp())
+  //       SpawnedScp.RestoreOldScope();
   MemberCallInfo CallInfo = commonEmitCXXMemberOrOperatorCall(
       *this, MD, This, ImplicitParam, ImplicitParamTy, CE, Args, RtlArgs);
   auto &FnInfo = CGM.getTypes().arrangeCXXMethodCall(
       Args, FPT, CallInfo.ReqArgs, CallInfo.PrefixSize);
-  SpawnedScp.RestoreOldScope();
+  // SpawnedScp.RestoreOldScope();
   return EmitCall(FnInfo, Callee, ReturnValue, Args, nullptr,
-                  CE ? CE->getExprLoc() : SourceLocation());
+                  CE ? CE->getExprLoc() : SourceLocation(),
+                  CE ? CE->isCilkSpawnCall() : false);
 }
 
 RValue CodeGenFunction::EmitCXXDestructorCall(
@@ -203,7 +204,7 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
     const Expr *Base) {
   assert(isa<CXXMemberCallExpr>(CE) || isa<CXXOperatorCallExpr>(CE));
 
-  IsSpawnedScope SpawnedScp(this);
+  // IsSpawnedScope SpawnedScp(this);
 
   // Compute the object pointer.
   bool CanUseVirtualCall = MD->isVirtual() && !HasQualifier;
@@ -242,7 +243,7 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
   CallArgList RtlArgStorage;
   CallArgList *RtlArgs = nullptr;
   if (auto *OCE = dyn_cast<CXXOperatorCallExpr>(CE)) {
-    if (OCE->isAssignmentOp() && !SpawnedScp.OldScopeIsSpawned()) {
+    if (OCE->isAssignmentOp()/* && !SpawnedScp.OldScopeIsSpawned()*/) {
       RtlArgs = &RtlArgStorage;
       EmitCallArgs(*RtlArgs, MD->getType()->castAs<FunctionProtoType>(),
                    drop_begin(CE->arguments(), 1), CE->getDirectCallee(),
@@ -266,18 +267,18 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
       if (MD->isCopyAssignmentOperator() || MD->isMoveAssignmentOperator()) {
         // We don't like to generate the trivial copy/move assignment operator
         // when it isn't necessary; just produce the proper effect here.
-        if (isa<CXXOperatorCallExpr>(CE) && SpawnedScp.OldScopeIsSpawned()) {
-          SpawnedScp.RestoreOldScope();
-          RtlArgs = &RtlArgStorage;
-          EmitCallArgs(*RtlArgs, MD->getType()->castAs<FunctionProtoType>(),
-                       drop_begin(CE->arguments(), 1), CE->getDirectCallee());
-        }
+        // if (isa<CXXOperatorCallExpr>(CE) && SpawnedScp.OldScopeIsSpawned()) {
+        //   SpawnedScp.RestoreOldScope();
+        //   RtlArgs = &RtlArgStorage;
+        //   EmitCallArgs(*RtlArgs, MD->getType()->castAs<FunctionProtoType>(),
+        //                drop_begin(CE->arguments(), 1), CE->getDirectCallee());
+        // }
         LValue RHS = isa<CXXOperatorCallExpr>(CE)
                          ? MakeNaturalAlignAddrLValue(
                                (*RtlArgs)[0].RV.getScalarVal(),
                                (*(CE->arg_begin() + 1))->getType())
                          : EmitLValue(*CE->arg_begin());
-        SpawnedScp.RestoreOldScope();
+        // SpawnedScp.RestoreOldScope();
         EmitAggregateAssign(This, RHS.getAddress(), CE->getType());
         return RValue::get(This.getPointer());
       }
@@ -287,7 +288,7 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
         // Trivial move and copy ctor are the same.
         assert(CE->getNumArgs() == 1 && "unexpected argcount for trivial ctor");
         Address RHS = EmitLValue(*CE->arg_begin()).getAddress();
-        SpawnedScp.RestoreOldScope();
+        // SpawnedScp.RestoreOldScope();
         EmitAggregateCopy(This, RHS, (*CE->arg_begin())->getType());
         return RValue::get(This.getPointer());
       }
@@ -349,7 +350,7 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
            "Destructor shouldn't have explicit parameters");
     assert(ReturnValue.isNull() && "Destructor shouldn't have return value");
     if (UseVirtualCall) {
-      SpawnedScp.RestoreOldScope();
+      // SpawnedScp.RestoreOldScope();
       CGM.getCXXABI().EmitVirtualDestructorCall(
           *this, Dtor, Dtor_Complete, This, cast<CXXMemberCallExpr>(CE));
     } else {
@@ -367,7 +368,7 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
                   CGM.GetAddrOfFunction(GlobalDecl(DDtor, Dtor_Complete), Ty),
                                      DDtor);
       }
-      SpawnedScp.RestoreOldScope();
+      // SpawnedScp.RestoreOldScope();
       EmitCXXMemberOrOperatorCall(
           CalleeDecl, Callee, ReturnValue, This.getPointer(),
           /*ImplicitParam=*/nullptr, QualType(), CE, nullptr);
@@ -409,7 +410,7 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
         *this, CalleeDecl, This, UseVirtualCall);
   }
 
-  SpawnedScp.RestoreOldScope();
+  // SpawnedScp.RestoreOldScope();
   return EmitCXXMemberOrOperatorCall(
       CalleeDecl, Callee, ReturnValue, This.getPointer(),
       /*ImplicitParam=*/nullptr, QualType(), CE, RtlArgs);
@@ -418,7 +419,7 @@ RValue CodeGenFunction::EmitCXXMemberOrOperatorMemberCallExpr(
 RValue
 CodeGenFunction::EmitCXXMemberPointerCallExpr(const CXXMemberCallExpr *E,
                                               ReturnValueSlot ReturnValue) {
-  IsSpawnedScope SpawnedScp(this);
+  // IsSpawnedScope SpawnedScp(this);
   const BinaryOperator *BO =
       cast<BinaryOperator>(E->getCallee()->IgnoreParens());
   const Expr *BaseExpr = BO->getLHS();
@@ -464,10 +465,11 @@ CodeGenFunction::EmitCXXMemberPointerCallExpr(const CXXMemberCallExpr *E,
 
   // And the rest of the call args
   EmitCallArgs(Args, FPT, E->arguments());
-  SpawnedScp.RestoreOldScope();
+  // SpawnedScp.RestoreOldScope();
   return EmitCall(CGM.getTypes().arrangeCXXMethodCall(Args, FPT, required,
                                                       /*PrefixSize=*/0),
-                  Callee, ReturnValue, Args, nullptr, E->getExprLoc());
+                  Callee, ReturnValue, Args, nullptr, E->getExprLoc(),
+                  E->isCilkSpawnCall());
 }
 
 RValue
@@ -476,24 +478,9 @@ CodeGenFunction::EmitCXXOperatorMemberCallExpr(const CXXOperatorCallExpr *E,
                                                ReturnValueSlot ReturnValue) {
   assert(MD->isInstance() &&
          "Trying to emit a member call expr on a static method!");
-  bool SpawnedExpr = E->isAssignmentOp() &&
-    isa<CilkSpawnExpr>(E->getArg(1)->IgnoreImplicit());
-  if (SpawnedExpr) {
-    // Set up to perform a detach.
-    assert(!IsSpawned &&
-           "_Cilk_spawn statement found in spawning environment.");
-    IsSpawned = true;
-  }
   RValue Result = EmitCXXMemberOrOperatorMemberCallExpr(
       E, MD, ReturnValue, /*HasQualifier=*/false, /*Qualifier=*/nullptr,
       /*IsArrow=*/false, E->getArg(0));
-  if (SpawnedExpr && IsSpawned) {
-    // Finish the detach.
-    assert(CurDetachScope->IsDetachStarted() &&
-           "Processing _Cilk_spawn of expression did not produce a detach.");
-    PopDetachScope();
-    IsSpawned = false;
-  }
   return Result;
 }
 

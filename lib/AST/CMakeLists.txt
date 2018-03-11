@@ -14,6 +14,7 @@ add_clang_library(clangAST
   ASTTypeTraits.cpp
   AttrImpl.cpp
   CXXInheritance.cpp
+  Cilk.cpp
   Comment.cpp
   CommentBriefParser.cpp
   CommentCommandTraits.cpp

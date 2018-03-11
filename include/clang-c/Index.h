@@ -2502,23 +2502,24 @@ enum CXCursorKind {
    */
   CXCursor_OMPTargetTeamsDistributeSimdDirective = 279,
 
-  /** \brief A _Cilk_spawn statement.
-   */
-  CXCursor_CilkSpawnStmt                 = 280,
+  /* /\** \brief A _Cilk_spawn statement. */
+  /*  *\/ */
+  /* CXCursor_CilkSpawnStmt                 = 280, */
 
-  /** \brief Wrapper for an expression preceded by _Cilk_spawn.
-   */
-  CXCursor_CilkSpawnExpr                 = 281,
+  /* /\** \brief Wrapper for an expression preceded by _Cilk_spawn. */
+  /*  *\/ */
+  /* CXCursor_CilkSpawnExpr                 = 281, */
 
-  /** \brief A _Cilk_sync statement.
-   */
-  CXCursor_CilkSyncStmt                  = 282,
+  /* /\** \brief A _Cilk_sync statement. */
+  /*  *\/ */
+  /* CXCursor_CilkSyncStmt                  = 282, */
 
-  /** \brief A _Cilk_for statement.
-   */
-  CXCursor_CilkForStmt                   = 283,
+  /* /\** \brief A _Cilk_for statement. */
+  /*  *\/ */
+  /* CXCursor_CilkForStmt                   = 283, */
 
-  CXCursor_LastStmt = CXCursor_CilkForStmt,
+  /* CXCursor_LastStmt = CXCursor_CilkForStmt, */
+  CXCursor_LastStmt = CXCursor_OMPTargetTeamsDistributeSimdDirective,
 
   /**
    * \brief Cursor that represents the translation unit itself.

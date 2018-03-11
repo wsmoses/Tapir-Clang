@@ -8623,6 +8623,8 @@ def err_multiple_spawns: Error<
   "multiple spawn calls within a full expression">;
 def note_multiple_spawns: Note<
   "another spawn here">;
+def err_cilk_spawn_disable: Error<
+  "_Cilk_spawn disabled in statement expression">;
 
 // cilk_for
 def err_cilk_for_initializer_expected_variable : Error<
@@ -8701,6 +8703,9 @@ def err_cilk_for_cannot_break: Error<
 def warn_cilk_for_loop_count_downcast: Warning<
   "implicit loop count downcast from %0 to %1 in '_Cilk_for'">,
   InGroup<Conversion>, DefaultWarn;
+
+def note_local_variable_declared_here : Note<
+  "%0 declared here">;
 
 def err_cilk_for_grainsize_negative: Error<
   "the behavior of Cilk for is unspecified for a negative grainsize">;

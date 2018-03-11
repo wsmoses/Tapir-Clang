@@ -874,9 +874,9 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
     case Stmt::PackExpansionExprClass:
     case Stmt::SubstNonTypeTemplateParmPackExprClass:
     case Stmt::FunctionParmPackExprClass:
-    case Stmt::CilkSpawnStmtClass:
-    case Expr::CilkSpawnExprClass:
-    case Stmt::CilkSyncStmtClass:
+    // case Stmt::CilkSpawnStmtClass:
+    // case Expr::CilkSpawnExprClass:
+    // case Stmt::CilkSyncStmtClass:
     case Stmt::CoroutineBodyStmtClass:
     case Stmt::CoawaitExprClass:
     case Stmt::DependentCoawaitExprClass:
@@ -963,6 +963,8 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
     case Stmt::SwitchStmtClass:
     case Stmt::WhileStmtClass:
     case Expr::MSDependentExistsStmtClass:
+    // case Stmt::CilkForStmtClass:
+    case Stmt::CilkSyncStmtClass:
     case Stmt::CilkForStmtClass:
       llvm_unreachable("Stmt should not be in analyzer evaluation loop");
 
@@ -1175,6 +1177,9 @@ void ExprEngine::Visit(const Stmt *S, ExplodedNode *Pred,
       VisitBlockExpr(cast<BlockExpr>(S), Pred, Dst);
       Bldr.addNodes(Dst);
       break;
+
+    case Stmt::CilkSpawnExprClass:
+      llvm_unreachable("not implemented yet");
 
     case Stmt::LambdaExprClass:
       if (AMgr.options.shouldInlineLambdas()) {

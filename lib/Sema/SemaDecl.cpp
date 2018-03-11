@@ -10153,7 +10153,8 @@ bool Sema::DeduceVariableDeclarationType(VarDecl *VDecl, bool DirectInit,
 /// AddInitializerToDecl - Adds the initializer Init to the
 /// declaration dcl. If DirectInit is true, this is C++ direct
 /// initialization rather than copy initialization.
-void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
+void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit,
+                                bool &IsCilkSpawnReceiver) {
   // If there is no declaration, there was an error parsing it.  Just ignore
   // the initializer.
   if (!RealDecl || RealDecl->isInvalidDecl()) {
@@ -10378,9 +10379,16 @@ void Sema::AddInitializerToDecl(Decl *RealDecl, Expr *Init, bool DirectInit) {
   //   struct T { S a, b; } t = { Temp(), Temp() }
   //
   // we should destroy the first Temp before constructing the second.
+  // We may initlize this variable with a Cilk Spawn:
+  //
+  //  int x = _Cilk_spawn func();
+  //
+  CilkReceiverKind Kind = CRK_MaybeReceiver;
   ExprResult Result = ActOnFinishFullExpr(Init, VDecl->getLocation(),
-                                          false,
+                                          Kind, false,
                                           VDecl->isConstexpr());
+  // Confirm if this is initializing a variable with a spawn call.
+  IsCilkSpawnReceiver = getLangOpts().Cilk && (Kind == CRK_IsReceiver);
   if (Result.isInvalid()) {
     VDecl->setInvalidDecl();
     return;

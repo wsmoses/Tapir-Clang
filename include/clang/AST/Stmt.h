@@ -2121,7 +2121,38 @@ private:
 
   /// \brief The pointer part is the implicit the outlined function and the 
   /// int part is the captured region kind, 'CR_Default' etc.
-  llvm::PointerIntPair<CapturedDecl *, 1, CapturedRegionKind> CapDeclAndKind;
+
+  // The old code here used to use
+  //
+  // llvm::PointerIntPair<CapturedDecl *, 1, CapturedRegionKind> CapDeclAndKind;
+  //
+  // This had to be changed because PointerIntPair supports a maximum of
+  // only 2 bits for use for the integer, and for INTEL_CUSTOMIZATION
+  // there are at least 3 bits needed, since there are 5 separate values
+  // in the CapturedRegionKind type.  So, changed this code to use two
+  // separate fields, and created this new class that mimics some interfaces
+  // of llvm::PointerIntPair because that isolates all Intel specific
+  // changes to right here.
+  //
+  class CapturedDeclAndKindType {
+  public:
+    CapturedDeclAndKindType(CapturedDecl *CD, CapturedRegionKind CK) {
+      CapDecl = CD;
+      CapKind = CK;
+    }
+
+    CapturedDecl * getPointer() const { return CapDecl; }
+
+    CapturedRegionKind getInt() const { return CapKind; }
+
+    void setPointer(CapturedDecl * CD) { CapDecl = CD; }
+
+    void setInt(CapturedRegionKind CK)  { CapKind = CK; }
+
+  private:
+    CapturedDecl * CapDecl;
+    CapturedRegionKind CapKind;
+  } CapDeclAndKind;
 
   /// \brief The record for captured variables, a RecordDecl or CXXRecordDecl.
   RecordDecl *TheRecordDecl = nullptr;

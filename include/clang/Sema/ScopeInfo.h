@@ -55,7 +55,7 @@ namespace sema {
 class CompoundScopeInfo {
 public:
   CompoundScopeInfo()
-    : HasEmptyLoopBodies(false) { }
+      : HasEmptyLoopBodies(false), HasCilkSpawn(false) { }
 
   /// \brief Whether this compound stamement contains `for' or `while' loops
   /// with empty bodies.
@@ -63,6 +63,12 @@ public:
 
   void setHasEmptyLoopBodies() {
     HasEmptyLoopBodies = true;
+  }
+
+  /// \brief Whether this compound statement contains _Cilk_spawn statements.
+  bool HasCilkSpawn;
+  void setHasCilkSpawn() {
+    HasCilkSpawn = true;
   }
 };
 
@@ -85,7 +91,8 @@ protected:
     SK_Function,
     SK_Block,
     SK_Lambda,
-    SK_CapturedRegion
+    SK_CapturedRegion,
+    SK_CilkFor
   };
   
 public:
@@ -653,7 +660,7 @@ public:
     return Captures[CaptureMap[Var] - 1];
   }
 
-  const Capture &getCapture(VarDecl *Var) const {
+  const Capture &getCapture(const VarDecl *Var) const {
     llvm::DenseMap<VarDecl*, unsigned>::const_iterator Known
       = CaptureMap.find(Var);
     assert(Known != CaptureMap.end() && "Variable has not been captured");
@@ -662,7 +669,8 @@ public:
 
   static bool classof(const FunctionScopeInfo *FSI) { 
     return FSI->Kind == SK_Block || FSI->Kind == SK_Lambda
-                                 || FSI->Kind == SK_CapturedRegion;
+                                 || FSI->Kind == SK_CapturedRegion
+                                 || FSI->Kind == SK_CilkFor;
   }
 };
 
@@ -694,7 +702,7 @@ public:
 };
 
 /// \brief Retains information about a captured region.
-class CapturedRegionScopeInfo final : public CapturingScopeInfo {
+class CapturedRegionScopeInfo : public CapturingScopeInfo {
 public:
   /// \brief The CapturedDecl for this statement.
   CapturedDecl *TheCapturedDecl;
@@ -707,13 +715,16 @@ public:
   /// \brief The kind of captured region.
   unsigned short CapRegionKind;
   unsigned short OpenMPLevel;
+  /// \brief Whether any of the capture expressions require cleanups.
+  bool ExprNeedsCleanups;
 
   CapturedRegionScopeInfo(DiagnosticsEngine &Diag, Scope *S, CapturedDecl *CD,
                           RecordDecl *RD, ImplicitParamDecl *Context,
                           CapturedRegionKind K, unsigned OpenMPLevel)
     : CapturingScopeInfo(Diag, ImpCap_CapturedRegion),
       TheCapturedDecl(CD), TheRecordDecl(RD), TheScope(S),
-      ContextParam(Context), CapRegionKind(K), OpenMPLevel(OpenMPLevel)
+      ContextParam(Context), CapRegionKind(K), OpenMPLevel(OpenMPLevel),
+      ExprNeedsCleanups(false)
   {
     Kind = SK_CapturedRegion;
   }
@@ -727,12 +738,48 @@ public:
       return "default captured statement";
     case CR_OpenMP:
       return "OpenMP region";
+    case CR_CilkSpawn:
+      return "_Cilk_spawn";
+    case CR_CilkFor:
+      return "_Cilk_for";
     }
     llvm_unreachable("Invalid captured region kind!");
   }
 
   static bool classof(const FunctionScopeInfo *FSI) {
-    return FSI->Kind == SK_CapturedRegion;
+    return FSI->Kind == SK_CapturedRegion
+      || FSI->Kind == SK_CilkFor;
+  }
+};
+
+/// \brief Retains information about a Cilk for capturing region.
+class CilkForScopeInfo : public CapturedRegionScopeInfo {
+public:
+  /// \brief The source location of the Cilk for.
+  SourceLocation CilkForLoc;
+
+  /// \brief The loop control variable of this Cilk for loop.
+  const VarDecl *LoopControlVar;
+
+  /// \brief The local copy of the loop control variable.
+  VarDecl *InnerLoopControlVar;
+
+  CilkForScopeInfo(DiagnosticsEngine &Diag, Scope *S, CapturedDecl *CD,
+                   RecordDecl *RD, ImplicitParamDecl *Context,
+                   const VarDecl *VD, SourceLocation Loc)
+      : CapturedRegionScopeInfo(Diag, S, CD, RD, Context, CR_CilkFor, 0),
+        CilkForLoc(Loc), LoopControlVar(VD), InnerLoopControlVar(nullptr) {
+    Kind = SK_CilkFor;
+  }
+
+  bool isLoopControlVar(const VarDecl *VD) const {
+    return VD && (VD == LoopControlVar);
+  }
+
+  virtual ~CilkForScopeInfo();
+
+  static bool classof(const FunctionScopeInfo *FSI) {
+    return FSI->Kind == SK_CilkFor;
   }
 };
 

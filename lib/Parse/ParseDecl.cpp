@@ -2228,7 +2228,7 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
     break;
     }
   }
-
+  bool IsCilkSpawnReceiver = false;
   // Parse declarator '=' initializer.
   // If a '==' or '+=' is found, suggest a fixit to '='.
   if (isTokenEqualOrEqualTypo()) {
@@ -2282,7 +2282,8 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
         Actions.ActOnInitializerError(ThisDecl);
       } else
         Actions.AddInitializerToDecl(ThisDecl, Init.get(),
-                                     /*DirectInit=*/false);
+                                     /*DirectInit=*/false,
+                                     IsCilkSpawnReceiver);
     }
   } else if (Tok.is(tok::l_paren)) {
     // Parse C++ direct initializer: '(' expression-list ')'
@@ -2326,7 +2327,8 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
                                                           T.getCloseLocation(),
                                                           Exprs);
       Actions.AddInitializerToDecl(ThisDecl, Initializer.get(),
-                                   /*DirectInit=*/true);
+                                   /*DirectInit=*/true,
+                                   IsCilkSpawnReceiver);
     }
   } else if (getLangOpts().CPlusPlus11 && Tok.is(tok::l_brace) &&
              (!CurParsedObjCImpl || !D.isFunctionDeclarator())) {
@@ -2342,14 +2344,18 @@ Decl *Parser::ParseDeclarationAfterDeclaratorAndAttributes(
     if (Init.isInvalid()) {
       Actions.ActOnInitializerError(ThisDecl);
     } else
-      Actions.AddInitializerToDecl(ThisDecl, Init.get(), /*DirectInit=*/true);
+      Actions.AddInitializerToDecl(ThisDecl, Init.get(), /*DirectInit=*/true,
+                                   IsCilkSpawnReceiver);
 
   } else {
     Actions.ActOnUninitializedDecl(ThisDecl);
   }
 
   Actions.FinalizeDeclaration(ThisDecl);
+  Actions.DiscardCleanupsInEvaluationContext();
 
+  if (getLangOpts().Cilk && IsCilkSpawnReceiver && isa<VarDecl>(ThisDecl))
+    return Actions.BuildCilkSpawnDecl(ThisDecl);
   return ThisDecl;
 }
 

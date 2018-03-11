@@ -13,6 +13,7 @@
 
 #include "CodeGenFunction.h"
 #include "CGBlocks.h"
+#include "CGCilk.h"
 #include "CGCleanup.h"
 #include "CGCUDARuntime.h"
 #include "CGCXXABI.h"
@@ -66,14 +67,17 @@ CodeGenFunction::CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext)
       Builder(cgm, cgm.getModule().getContext(), llvm::ConstantFolder(),
               CGBuilderInserterTy(this)),
       CurFn(nullptr), ReturnValue(Address::invalid()),
-      CapturedStmtInfo(nullptr), SanOpts(CGM.getLangOpts().Sanitize),
+      CapturedStmtInfo(nullptr),
+      CurCGCilkImplicitSyncInfo(nullptr),
+      SanOpts(CGM.getLangOpts().Sanitize),
       IsSanitizerScope(false), CurFuncIsThunk(false), AutoreleaseResult(false),
       SawAsmBlock(false), IsOutlinedSEHHelper(false), BlockInfo(nullptr),
       BlockPointer(nullptr), LambdaThisCaptureField(nullptr),
       NormalCleanupDest(nullptr), NextCleanupDestIndex(1),
       FirstBlockInfo(nullptr), EHResumeBlock(nullptr), ExceptionSlot(nullptr),
-      EHSelectorSlot(nullptr), IsSpawned(false), CurSyncRegion(nullptr),
-      CurDetachScope(nullptr), DebugInfo(CGM.getModuleDebugInfo()),
+      EHSelectorSlot(nullptr),
+      // IsSpawned(false), CurSyncRegion(nullptr), CurDetachScope(nullptr),
+      DebugInfo(CGM.getModuleDebugInfo()),
       DisableDebugInfo(false), DidCallStackSave(false), IndirectBranch(nullptr),
       PGO(cgm), SwitchInsn(nullptr), SwitchWeights(nullptr),
       CaseRangeBlock(nullptr), UnreachableBlock(nullptr), NumReturnExprs(0),
@@ -81,7 +85,9 @@ CodeGenFunction::CodeGenFunction(CodeGenModule &cgm, bool suppressNewContext)
       CXXABIThisValue(nullptr), CXXThisValue(nullptr),
       CXXStructorImplicitParamDecl(nullptr),
       CXXStructorImplicitParamValue(nullptr), OutermostConditional(nullptr),
-      CurLexicalScope(nullptr), TerminateLandingPad(nullptr),
+      CurLexicalScope(nullptr),
+      ExceptionsDisabled(false),
+      TerminateLandingPad(nullptr),
       TerminateHandler(nullptr), TrapBB(nullptr),
       ShouldEmitLifetimeMarkers(
           shouldEmitLifetimeMarkers(CGM.getCodeGenOpts(), CGM.getLangOpts())) {
@@ -118,7 +124,7 @@ CodeGenFunction::~CodeGenFunction() {
   // something.
   if (FirstBlockInfo)
     destroyBlockInfos(FirstBlockInfo);
-
+  delete CurCGCilkImplicitSyncInfo;
   if (getLangOpts().OpenMP && CurFn)
     CGM.getOpenMPRuntime().functionFinished(*this);
 }
@@ -314,8 +320,8 @@ static void EmitIfUsed(CodeGenFunction &CGF, llvm::BasicBlock *BB) {
 void CodeGenFunction::FinishFunction(SourceLocation EndLoc) {
   assert(BreakContinueStack.empty() &&
          "mismatched push/pop in break/continue stack!");
-  assert(!CurDetachScope &&
-         "mismatched push/pop in detach-scope stack!");
+  // assert(!CurDetachScope &&
+  //        "mismatched push/pop in detach-scope stack!");
 
   bool OnlySimpleReturnStmts = NumSimpleReturnExprs > 0
     && NumSimpleReturnExprs == NumReturnExprs
@@ -1063,6 +1069,18 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
   EmitStartEHSpec(CurCodeDecl);
 
   PrologueCleanupDepth = EHStack.stable_begin();
+  // If emitting a spawning function, a Cilk stack frame will be allocated and
+  // fully initialized before processing any function parameters, which
+  // makes associated cleanups happen last.
+  //
+  // If emitting a helper function (parallel region), a Cilk stack frame will
+  // be allocated and partially initialized before processing any parameters.
+  if (getLangOpts().Cilk && D && D->isSpawning()) {
+    CurCGCilkImplicitSyncInfo = CreateCilkImplicitSyncInfo(*this);
+    CGM.getCilkPlusRuntime().EmitCilkParentStackFrame(*this);
+    if (CurCGCilkImplicitSyncInfo->needsImplicitSync())
+      CGM.getCilkPlusRuntime().pushCilkImplicitSyncCleanup(*this);
+  }
   EmitFunctionProlog(*CurFnInfo, CurFn, Args);
 
   if (D && isa<CXXMethodDecl>(D) && cast<CXXMethodDecl>(D)->isInstance()) {

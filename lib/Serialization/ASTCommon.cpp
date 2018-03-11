@@ -305,6 +305,7 @@ bool serialization::isRedeclarableDeclKind(unsigned Kind) {
   case Decl::StaticAssert:
   case Decl::Block:
   case Decl::Captured:
+  case Decl::CilkSpawn:
   case Decl::ClassScopeFunctionSpecialization:
   case Decl::Import:
   case Decl::OMPThreadPrivate:

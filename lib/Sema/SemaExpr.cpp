@@ -13709,6 +13709,9 @@ Sema::PushExpressionEvaluationContext(ExpressionEvaluationContext NewContext,
   Cleanup.reset();
   if (!MaybeODRUseExprs.empty())
     std::swap(MaybeODRUseExprs, ExprEvalContexts.back().SavedMaybeODRUseExprs);
+  if (!CilkSpawnCalls.empty())
+    std::swap(CilkSpawnCalls, ExprEvalContexts.back().SavedCilkSpawnCalls);
+
 }
 
 void
@@ -13775,6 +13778,8 @@ void Sema::PopExpressionEvaluationContext() {
                             Rec.SavedMaybeODRUseExprs.end());
   }
 
+  // Restore Cilk spawn calls into the current evaluation context.
+  CilkSpawnCalls.swap(Rec.SavedCilkSpawnCalls);
   // Pop the current expression evaluation context off the stack.
   ExprEvalContexts.pop_back();
 
@@ -13791,6 +13796,7 @@ void Sema::DiscardCleanupsInEvaluationContext() {
          ExprCleanupObjects.end());
   Cleanup.reset();
   MaybeODRUseExprs.clear();
+  CilkSpawnCalls.clear();
 }
 
 ExprResult Sema::HandleExprEvaluationContextForTypeof(Expr *E) {
@@ -14070,6 +14076,91 @@ diagnoseUncapturableValueReference(Sema &S, SourceLocation loc,
   // capture.
 }
 
+// Build a VarDecl to copy-construct the Cilk for loop control variable,
+// which will be captured by copy or by reference.
+//
+// For example,
+//
+// _Cilk_for (T i = 0; i < 10; i++) { }
+//
+// the loop control variable 'i' will be captured as follows:
+//
+// class capture {
+//   T &__ref;
+//   capture(const T &i) : __ref(i) {}
+// };
+//
+// We construct the following local declaration:
+//
+// T __i(capture.__ref);
+//
+// Any reference to 'i' inside the captured region will reference this local
+// copy, instead.
+//
+static MemberExpr *createMemberExpr(Sema &S, ASTContext &C, Expr *Base,
+                                   FieldDecl *Member) {
+  assert(Base->isRValue() && "-> base must be a pointer rvalue");
+  SourceLocation Loc;
+  NestedNameSpecifierLoc SpecifierLoc;
+  DeclAccessPair FoundDecl = DeclAccessPair::make(Member, Member->getAccess());
+  DeclarationNameInfo NameInfo(Member->getDeclName(), Loc);
+  QualType MemTy = Member->getType().getNonReferenceType();
+  MemberExpr *E = MemberExpr::Create(C, Base, /*isArrow*/true,
+                                     Loc,
+                                     SpecifierLoc,
+                                     Loc, Member, FoundDecl, NameInfo,
+                                     /*TemplateArgs*/0, MemTy, VK_LValue,
+                                     OK_Ordinary);
+  S.MarkMemberReferenced(E);
+  return E;
+}
+
+static void buildInnerLoopControlVar(Sema &S, CilkForScopeInfo *FSI,
+                                     const VarDecl *Var, FieldDecl *FD) {
+  // Only for loop control variables
+  if (!FSI->isLoopControlVar(Var))
+    return;
+
+  CapturedDecl *ForDecl = FSI->TheCapturedDecl;
+  DeclContext *DC = CapturedDecl::castToDeclContext(ForDecl);
+  RecordDecl *RD = FSI->TheRecordDecl;
+
+  EnterExpressionEvaluationContext Scope(
+      S, Sema::ExpressionEvaluationContext::PotentiallyEvaluated);
+
+  // Build member expression to the captured loop control variable.
+  MemberExpr *MemExpr = nullptr;
+  {
+    // Create the local variable for this loop control variable.
+    QualType ParamType = S.Context.getPointerType(S.Context.getTagDeclType(RD));
+    ExprResult Ref = S.BuildDeclRefExpr(FSI->ContextParam, ParamType, VK_LValue,
+                                        FSI->CilkForLoc);
+    Ref = S.DefaultLvalueConversion(Ref.get());
+    MemExpr = createMemberExpr(S, S.Context, Ref.get(), FD);
+  }
+
+  // Create the local variable for this loop control variable.
+  VarDecl *InnerVar = nullptr;
+  {
+    IdentifierInfo *VarName = nullptr;
+    {
+      SmallString<8> Str;
+      llvm::raw_svector_ostream OS(Str);
+      OS << "__cv_" << Var->getName();
+      VarName = &S.Context.Idents.get(OS.str());
+    }
+    SourceLocation Loc = FD->getLocation();
+    QualType VarType = Var->getType().getNonReferenceType();
+    InnerVar = VarDecl::Create(S.Context, DC, Loc, Loc, VarName, VarType,
+                               S.Context.getTrivialTypeSourceInfo(VarType, Loc),
+                               SC_None);
+    InnerVar->setImplicit();
+    DC->addDecl(InnerVar);
+  }
+
+  S.AddInitializerToDecl(InnerVar, MemExpr, /*Direct*/true);
+  FSI->InnerLoopControlVar = InnerVar;
+}
 
 static bool isVariableAlreadyCapturedInScopeInfo(CapturingScopeInfo *CSI, VarDecl *Var,
                                       bool &SubCapturesAreNested,
@@ -14382,6 +14473,10 @@ static bool captureInCapturedRegion(CapturedRegionScopeInfo *RSI,
                                             DeclRefType, VK_LValue, Loc);
     Var->setReferenced(true);
     Var->markUsed(S.Context);
+    // Only build for a Cilk for.
+    if (CilkForScopeInfo *CFSI = dyn_cast<CilkForScopeInfo>(RSI))
+      buildInnerLoopControlVar(S, CFSI, Var, Field);
+
   }
 
   // Actually capture the variable.
@@ -14822,6 +14917,7 @@ void Sema::CleanupVarDeclMarking() {
   }
 
   MaybeODRUseExprs.clear();
+  CilkSpawnCalls.clear();
 }
 
 
