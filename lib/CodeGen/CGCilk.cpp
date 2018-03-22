@@ -30,6 +30,8 @@
 #include "llvm/IR/CallSite.h"
 #include "llvm/Transforms/Utils/BasicBlockUtils.h"
 
+#define INLINE_CILK 1
+
 namespace {
 
 struct __cilkrts_pedigree {};
@@ -182,7 +184,9 @@ public:
         TypeBuilder<uint32_t, X>::get(C),              // mxcsr
         TypeBuilder<uint16_t, X>::get(C),              // fpcsr
         TypeBuilder<uint16_t, X>::get(C),              // reserved
-        TypeBuilder<__cilkrts_pedigree, X>::get(C)     // parent_pedigree
+        StructType::get(
+            TypeBuilder<__cilkrts_pedigree, X>::get(C)     // parent_pedigree
+                              )
         );
     return Ty;
   }
@@ -216,11 +220,6 @@ typedef llvm::TypeBuilder<__cilkrts_pedigree, false> PedigreeBuilder;
 static llvm::StructType *
 GetCilkStackFrame(clang::CodeGen::CodeGenFunction &CGF) {
   return StackFrameBuilder::get(CGF.getLLVMContext());
-}
-
-static Value *
-Get_Address_As_VoidPt (LLVMContext &Ctx, CGBuilderTy &B, Value *A){
-  return B.CreateBitOrPointerCast(A, TypeBuilder<void *, false>::get(Ctx));
 }
 
 static llvm::PointerType *
@@ -440,8 +439,11 @@ static Function *Get__cilkrts_pop_frame(CodeGenFunction &CGF) {
 
   B.CreateRetVoid();
 
+#if INLINE_CILK
+  Fn->addFnAttr(Attribute::AlwaysInline);
+#else
   Fn->addFnAttr(Attribute::InlineHint);
-  // Fn->addFnAttr(Attribute::AlwaysInline);
+#endif
 
   return Fn;
 }
@@ -485,20 +487,32 @@ static Function *Get__cilkrts_detach(CodeGenFunction &CGF) {
 
   // __cilkrts_stack_frame *parent = sf->call_parent;
   Value *Parent = LoadField(B, SF, StackFrameBuilder::call_parent);
-
+  auto ParentAddr = Address(Parent,
+                            CharUnits::fromQuantity(CGF.PointerAlignInBytes));
   // __cilkrts_stack_frame *volatile *tail = w->tail;
   auto Tail = Address(LoadField(B, W, WorkerBuilder::tail,
                                 llvm::AtomicOrdering::Acquire),
                       CharUnits::fromQuantity(CGF.PointerAlignInBytes));
 
   // sf->spawn_helper_pedigree = w->pedigree;
-  StoreField(B, LoadField(B, W, WorkerBuilder::pedigree), SF,
-             StackFrameBuilder::parent_pedigree);
+  // StoreField(B, LoadField(B, W, WorkerBuilder::pedigree), SF,
+  //            StackFrameBuilder::parent_pedigree);
+  Value *WorkerPedigree = LoadField(B, W, WorkerBuilder::pedigree);
+  Value *NewHelperPedigree = B.CreateInsertValue(
+      LoadField(B, SF, StackFrameBuilder::parent_pedigree),
+      WorkerPedigree, { 0 });
+  StoreField(B, NewHelperPedigree, SF, StackFrameBuilder::parent_pedigree);
 
   // parent->parent_pedigree = w->pedigree;
-  StoreField(B, LoadField(B, W, WorkerBuilder::pedigree),
-             Address(Parent, CharUnits::fromQuantity(CGF.PointerAlignInBytes)),
+  // StoreField(B, LoadField(B, W, WorkerBuilder::pedigree),
+  //            Address(Parent, CharUnits::fromQuantity(CGF.PointerAlignInBytes)),
+  //            StackFrameBuilder::parent_pedigree);
+  Value *NewParentPedigree = B.CreateInsertValue(
+      LoadField(B, ParentAddr, StackFrameBuilder::parent_pedigree),
+      WorkerPedigree, { 0 });
+  StoreField(B, NewParentPedigree, ParentAddr,
              StackFrameBuilder::parent_pedigree);
+
   // Value *CallP =
   //   B.CreateBitOrPointerCast(LoadField(B, SF, StackFrameBuilder::call_parent),
   //                            GetCilkStackFramePtr(CGF));
@@ -516,7 +530,7 @@ static Function *Get__cilkrts_detach(CodeGenFunction &CGF) {
 
   // w->pedigree.next = &sf->spawn_helper_pedigree;
   StoreField(B,
-             GEP(B, SF, StackFrameBuilder::parent_pedigree).getPointer(),
+             GEP(B, GEP(B, SF, StackFrameBuilder::parent_pedigree), 0).getPointer(),
              GEP(B, W, WorkerBuilder::pedigree),
              PedigreeBuilder::next, llvm::AtomicOrdering::Release);
 
@@ -544,8 +558,11 @@ static Function *Get__cilkrts_detach(CodeGenFunction &CGF) {
 
   B.CreateRetVoid();
 
+#if INLINE_CILK
+  Fn->addFnAttr(Attribute::AlwaysInline);
+#else
   Fn->addFnAttr(Attribute::InlineHint);
-  // Fn->addFnAttr(Attribute::AlwaysInline);
+#endif
 
   return Fn;
 }
@@ -748,12 +765,21 @@ static Function *GetCilkSyncFn(CodeGenFunction &CGF) {
     CGBuilderTy B(CGF, SaveState);
 
     // sf.parent_pedigree = sf.worker->pedigree;
-    StoreField(
-        B,
+    // StoreField(
+    //     B,
+    //     LoadField(B, Address(LoadField(B, SF, StackFrameBuilder::worker,
+    //                                    llvm::AtomicOrdering::Acquire),
+    //                          CharUnits::fromQuantity(CGF.PointerAlignInBytes)),
+    //               WorkerBuilder::pedigree),
+    //     SF, StackFrameBuilder::parent_pedigree);
+    Value *NewParentPedigree = B.CreateInsertValue(
+        LoadField(B, SF, StackFrameBuilder::parent_pedigree),
         LoadField(B, Address(LoadField(B, SF, StackFrameBuilder::worker,
                                        llvm::AtomicOrdering::Acquire),
                              CharUnits::fromQuantity(CGF.PointerAlignInBytes)),
-                  WorkerBuilder::pedigree),
+                  WorkerBuilder::pedigree), { 0 });
+    StoreField(
+        B, NewParentPedigree,
         SF, StackFrameBuilder::parent_pedigree);
 
     // if (!CILK_SETJMP(sf.ctx))
@@ -948,8 +974,11 @@ static Function *Get__cilkrts_enter_frame_1(CodeGenFunction &CGF) {
     B.CreateRetVoid();
   }
 
+#if INLINE_CILK
+  Fn->addFnAttr(Attribute::AlwaysInline);
+#else
   Fn->addFnAttr(Attribute::InlineHint);
-  // Fn->addFnAttr(Attribute::AlwaysInline);
+#endif
 
   return Fn;
 }
@@ -999,14 +1028,14 @@ static Function *Get__cilkrts_enter_frame_fast_1(CodeGenFunction &CGF) {
   StoreField(B, SF.getPointer(),
              Address(W, CharUnits::fromQuantity(CGF.PointerAlignInBytes)),
              WorkerBuilder::current_stack_frame, llvm::AtomicOrdering::Release);
-  // StoreField(B, Get_Address_As_VoidPt(Ctx, B, SF.getPointer()),
-  //            Address(W, CharUnits::fromQuantity(CGF.PointerAlignInBytes)),
-  //            WorkerBuilder::current_stack_frame);
 
   B.CreateRetVoid();
 
+#if INLINE_CILK
+  Fn->addFnAttr(Attribute::AlwaysInline);
+#else
   Fn->addFnAttr(Attribute::InlineHint);
-  // Fn->addFnAttr(Attribute::AlwaysInline);
+#endif
 
   return Fn;
 }
@@ -1038,8 +1067,11 @@ static Function *GetCilkParentPrologue(CodeGenFunction &CGF) {
 
   B.CreateRetVoid();
 
+#if INLINE_CILK
+  Fn->addFnAttr(Attribute::AlwaysInline);
+#else
   Fn->addFnAttr(Attribute::InlineHint);
-  // Fn->addFnAttr(Attribute::AlwaysInline);
+#endif
 
   return Fn;
 }
@@ -1099,8 +1131,11 @@ static Function *GetCilkParentEpilogue(CodeGenFunction &CGF) {
     B.CreateRetVoid();
   }
 
+#if INLINE_CILK
+  Fn->addFnAttr(Attribute::AlwaysInline);
+#else
   Fn->addFnAttr(Attribute::InlineHint);
-  // Fn->addFnAttr(Attribute::AlwaysInline);
+#endif
 
   return Fn;
 }
@@ -1136,8 +1171,11 @@ static llvm::Function *GetCilkHelperPrologue(CodeGenFunction &CGF) {
 
   B.CreateRetVoid();
 
+#if INLINE_CILK
+  Fn->addFnAttr(Attribute::AlwaysInline);
+#else
   Fn->addFnAttr(Attribute::InlineHint);
-  // Fn->addFnAttr(Attribute::AlwaysInline);
+#endif
 
   return Fn;
 }
@@ -1196,8 +1234,11 @@ static llvm::Function *GetCilkHelperEpilogue(CodeGenFunction &CGF) {
     B.CreateRetVoid();
   }
 
+#if INLINE_CILK
+  Fn->addFnAttr(Attribute::AlwaysInline);
+#else
   Fn->addFnAttr(Attribute::InlineHint);
-  // Fn->addFnAttr(Attribute::AlwaysInline);
+#endif
 
   return Fn;
 }
