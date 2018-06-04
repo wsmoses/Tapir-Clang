@@ -568,8 +568,11 @@ void tools::gnutools::Linker::ConstructJob(Compilation &C, const JobAction &JA,
       StringRef Name = A->getValue();
       if (Name == "cilk") 
         CmdArgs.push_back("-lcilkrts");
-      else if (Name == "qthreads")
+      else if (Name == "qthreads"){
         CmdArgs.push_back("-lqthread");
+        CmdArgs.push_back("-lhwloc");
+        CmdArgs.push_back("-lpthread");
+      }
     }
   }
 
