@@ -2690,6 +2690,7 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   LangOpts.Rhino = Args.hasArg(OPT_frhino);
   LangOpts.Detach = Args.hasArg(OPT_fdetach);
   LangOpts.Cilk = Args.hasArg(OPT_fcilkplus);
+  LangOpts.Tapir = llvm::TapirTargetType::None;
 
   // FIXME: Fix -ftapir=* parsing to use conventional mechanisms for handling
   // arguments.
