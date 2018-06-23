@@ -28,14 +28,14 @@ namespace clang {
     TSW_long,
     TSW_longlong
   };
-  
+
   /// \brief Specifies the signedness of a type, e.g., signed or unsigned.
   enum TypeSpecifierSign {
     TSS_unspecified,
     TSS_signed,
     TSS_unsigned
   };
-  
+
   enum TypeSpecifiersPipe {
     TSP_unspecified,
     TSP_pipe
@@ -76,7 +76,21 @@ namespace clang {
     TST_atomic,           // C11 _Atomic
 #define GENERIC_IMAGE_TYPE(ImgType, Id) TST_##ImgType##_t, // OpenCL image types
 #include "clang/Basic/OpenCLImageTypes.def"
-    TST_error // erroneous type
+    TST_error, // erroneous type
+
+    // Scaffold additions
+    TST_abit,
+    TST_cbit,
+    TST_qbit,
+    TST_qstruct,
+    TST_qunion,
+
+    // RKQC additions
+    TST_qint,
+    TST_zero_to_zero,
+    TST_zero_to_garbage,
+    TST_one_to_one,
+    TST_one_to_garbage
   };
 
   /// \brief Structure that packs information about the type specifiers that
@@ -130,7 +144,7 @@ namespace clang {
     /// An Objective-C property is a logical field of an Objective-C
     /// object which is read and written via Objective-C method calls.
     OK_ObjCProperty,
-    
+
     /// An Objective-C array/dictionary subscripting which reads an
     /// object or writes at the subscripted array/dictionary element via
     /// Objective-C method calls.

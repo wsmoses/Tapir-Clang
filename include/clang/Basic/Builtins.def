@@ -102,6 +102,41 @@
 #  define LANGBUILTIN(ID, TYPE, ATTRS, BUILTIN_LANG) BUILTIN(ID, TYPE, ATTRS)
 #endif
 
+// Scaffold builtin gates:
+// q for 'q'bit
+// l for c'l'assical bit
+BUILTIN(CNOT , "vqq"  , "")
+BUILTIN(X , "vq"  , "")
+BUILTIN(Y , "vq"  , "")
+BUILTIN(Z , "vq"  , "")
+BUILTIN(H , "vq"  , "")
+BUILTIN(T , "vq"  , "")
+BUILTIN(Tdag , "vq"  , "")
+BUILTIN(S , "vq"  , "")
+BUILTIN(Sdag , "vq"  , "")
+BUILTIN(Rz , "vqd"  , "")
+BUILTIN(Rx , "vqd"  , "")
+BUILTIN(Ry , "vqd"  , "")
+
+BUILTIN(PrepX , "vqi"  , "")
+BUILTIN(PrepZ , "vqi"  , "")
+BUILTIN(MeasX , "lq"  , "")
+BUILTIN(MeasZ , "lq"  , "")
+BUILTIN(Toffoli , "vqqq"  , "")
+BUILTIN(Fredkin , "vqqq"  , "")
+
+// RKQC builtin gates:
+BUILTIN(cnot , "vqq"  , "")
+BUILTIN(toffoli , "vqqq" , "")
+BUILTIN(NOT  , "vq" , "")
+BUILTIN(assign_value_of_b_to_a  , "vqqi" , "")
+BUILTIN(assign_value_of_0_to_a  , "vqi" , "")
+BUILTIN(assign_value_of_1_to_a  , "vqi" , "")
+BUILTIN(a_eq_a_plus_b  , "vqqi" , "")
+BUILTIN(a_eq_a_minus_b  , "vqqi" , "")
+BUILTIN(a_eq_a_plus_b_times_c  , "vqqqi" , "")
+BUILTIN(a_swap_b  , "vqqi" , "")
+
 // Standard libc/libm functions:
 BUILTIN(__builtin_atan2 , "ddd"  , "Fnc")
 BUILTIN(__builtin_atan2f, "fff"  , "Fnc")
@@ -896,7 +931,7 @@ LIBBUILTIN(strlcpy, "zc*cC*z",    "f",     "string.h", ALL_GNU_LANGUAGES)
 LIBBUILTIN(strlcat, "zc*cC*z",    "f",     "string.h", ALL_GNU_LANGUAGES)
 //   id objc_msgSend(id, SEL, ...)
 LIBBUILTIN(objc_msgSend, "GGH.",   "f",     "objc/message.h", OBJC_LANG)
-// long double objc_msgSend_fpret(id self, SEL op, ...) 
+// long double objc_msgSend_fpret(id self, SEL op, ...)
 LIBBUILTIN(objc_msgSend_fpret, "LdGH.", "f", "objc/message.h", OBJC_LANG)
 // _Complex long double objc_msgSend_fp2ret(id self, SEL op, ...)
 LIBBUILTIN(objc_msgSend_fp2ret, "XLdGH.", "f", "objc/message.h", OBJC_LANG)

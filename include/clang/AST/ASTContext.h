@@ -981,6 +981,14 @@ public:
   CanQualType PseudoObjectTy, ARCUnbridgedCastTy;
   CanQualType ObjCBuiltinIdTy, ObjCBuiltinClassTy, ObjCBuiltinSelTy;
   CanQualType ObjCBuiltinBoolTy;
+  CanQualType AbitTy;
+  CanQualType CbitTy;
+  CanQualType QbitTy;
+  CanQualType QintTy;
+  CanQualType zzBitTy;
+  CanQualType zgBitTy;
+  CanQualType ooBitTy;
+  CanQualType ogBitTy;
 #define IMAGE_TYPE(ImgType, Id, SingletonId, Access, Suffix) \
   CanQualType SingletonId;
 #include "clang/Basic/OpenCLImageTypes.def"
@@ -1441,7 +1449,7 @@ public:
   /// The sizeof operator requires this (C99 6.5.3.4p4).
   CanQualType getSizeType() const;
 
-  /// \brief Return the unique signed counterpart of 
+  /// \brief Return the unique signed counterpart of
   /// the integer type corresponding to size_t.
   CanQualType getSignedSizeType() const;
 

@@ -63,6 +63,10 @@ protected:
   bool HasFloat128;
   unsigned char PointerWidth, PointerAlign;
   unsigned char BoolWidth, BoolAlign;
+  unsigned char AbitWidth, AbitAlign; // Scaffold
+  unsigned char CbitWidth, CbitAlign; // Scaffold
+  unsigned char QbitWidth, QbitAlign; // Scaffold
+  unsigned char QintWidth, QintAlign; // RKQC
   unsigned char IntWidth, IntAlign;
   unsigned char HalfWidth, HalfAlign;
   unsigned char FloatWidth, FloatAlign;
@@ -388,6 +392,22 @@ public:
   unsigned getWCharWidth() const { return getTypeWidth(WCharType); }
   unsigned getWCharAlign() const { return getTypeAlign(WCharType); }
 
+  /// \brief Return Scaffold Abit type width and align.
+  unsigned getAbitWidth() const { return 8; }
+  unsigned getAbitAlign() const { return 8; }
+
+  /// \brief Return Scaffold Cbit type width and align.
+  unsigned getCbitWidth() const { return 1; }
+  unsigned getCbitAlign() const { return 1; }
+
+  /// \brief Return Scaffold Qbit type width and Align.
+  unsigned getQbitWidth() const { return 16; }
+  unsigned getQbitAlign() const { return 16; }
+
+  /// \brief Return RKQC Qint type width and Align.
+  unsigned getQintWidth() const { return 16; }
+  unsigned getQintAlign() const { return 16; }
+
   /// getChar16Width/Align - Return the size of 'char16_t' for this target, in
   /// bits.
   unsigned getChar16Width() const { return getTypeWidth(Char16Type); }
@@ -625,7 +645,7 @@ public:
   /// ReturnCanonical = true and Name = "rax", will return "ax".
   StringRef getNormalizedGCCRegisterName(StringRef Name,
                                          bool ReturnCanonical = false) const;
- 
+
   virtual StringRef getConstraintRegister(const StringRef &Constraint,
                                           const StringRef &Expression) const {
     return "";

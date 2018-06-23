@@ -49,16 +49,16 @@ namespace clang {
     const unsigned VERSION_MINOR = 0;
 
     /// \brief An ID number that refers to an identifier in an AST file.
-    /// 
+    ///
     /// The ID numbers of identifiers are consecutive (in order of discovery)
     /// and start at 1. 0 is reserved for NULL.
     typedef uint32_t IdentifierID;
-    
+
     /// \brief An ID number that refers to a declaration in an AST file.
     ///
     /// The ID numbers of declarations are consecutive (in order of
-    /// discovery), with values below NUM_PREDEF_DECL_IDS being reserved. 
-    /// At the start of a chain of precompiled headers, declaration ID 1 is 
+    /// discovery), with values below NUM_PREDEF_DECL_IDS being reserved.
+    /// At the start of a chain of precompiled headers, declaration ID 1 is
     /// used for the translation unit declaration.
     typedef uint32_t DeclID;
 
@@ -90,13 +90,13 @@ namespace clang {
       TypeID asTypeID(unsigned FastQuals) const {
         if (Idx == uint32_t(-1))
           return TypeID(-1);
-        
+
         return (Idx << Qualifiers::FastWidth) | FastQuals;
       }
       static TypeIdx fromTypeID(TypeID ID) {
         if (ID == TypeID(-1))
           return TypeIdx(-1);
-        
+
         return TypeIdx(ID >> Qualifiers::FastWidth);
       }
     };
@@ -112,7 +112,7 @@ namespace clang {
         return QualType::getFromOpaquePtr((void*) 2);
       }
       static inline unsigned getHashValue(QualType T) {
-        assert(!T.getLocalFastQualifiers() && 
+        assert(!T.getLocalFastQualifiers() &&
                "hash invalid for types with fast quals");
         uintptr_t v = reinterpret_cast<uintptr_t>(T.getAsOpaquePtr());
         return (unsigned(v) >> 4) ^ (unsigned(v) >> 9);
@@ -143,8 +143,8 @@ namespace clang {
 
     /// \brief The number of predefined selector IDs.
     const unsigned int NUM_PREDEF_SELECTOR_IDS = 1;
-    
-    /// \brief An ID number that refers to a set of CXXBaseSpecifiers in an 
+
+    /// \brief An ID number that refers to a set of CXXBaseSpecifiers in an
     /// AST file.
     typedef uint32_t CXXBaseSpecifiersID;
 
@@ -158,7 +158,7 @@ namespace clang {
 
     /// \brief An ID number that refers to a submodule in a module file.
     typedef uint32_t SubmoduleID;
-    
+
     /// \brief The number of predefined submodule IDs.
     const unsigned int NUM_PREDEF_SUBMODULE_IDS = 1;
 
@@ -275,7 +275,7 @@ namespace clang {
       /// generate the AST file, including both its file ID and its
       /// name.
       ORIGINAL_FILE,
-      
+
       /// \brief The directory that the PCH was originally created in.
       ORIGINAL_PCH_DIR,
 
@@ -663,15 +663,15 @@ namespace clang {
     enum PreprocessorDetailRecordTypes {
       /// \brief Describes a macro expansion within the preprocessing record.
       PPD_MACRO_EXPANSION = 0,
-      
+
       /// \brief Describes a macro definition within the preprocessing record.
       PPD_MACRO_DEFINITION = 1,
-      
+
       /// \brief Describes an inclusion directive within the preprocessing
       /// record.
       PPD_INCLUSION_DIRECTIVE = 2
     };
-    
+
     /// \brief Record types used within a submodule description block.
     enum SubmoduleRecordTypes {
       /// \brief Metadata for submodules as a whole.
@@ -688,10 +688,10 @@ namespace clang {
       SUBMODULE_TOPHEADER = 4,
       /// \brief Specifies an umbrella directory.
       SUBMODULE_UMBRELLA_DIR = 5,
-      /// \brief Specifies the submodules that are imported by this 
+      /// \brief Specifies the submodules that are imported by this
       /// submodule.
       SUBMODULE_IMPORTS = 6,
-      /// \brief Specifies the submodules that are re-exported from this 
+      /// \brief Specifies the submodules that are re-exported from this
       /// submodule.
       SUBMODULE_EXPORTS = 7,
       /// \brief Specifies a required feature.
@@ -826,6 +826,18 @@ namespace clang {
       PREDEF_TYPE_OMP_ARRAY_SECTION = 42,
       /// \brief The '__float128' type
       PREDEF_TYPE_FLOAT128_ID = 43,
+      /// \brief The 'qbit' type in Scaffold
+      PREDEF_TYPE_QBIT_ID = 44,
+      /// \brief The 'cbit' type in Scaffold
+      PREDEF_TYPE_CBIT_ID = 45,
+      /// \brief The 'qint' type in RKQC
+      PREDEF_TYPE_QINT_ID = 45,
+      PREDEF_TYPE_zzBit_ID = 46,
+      PREDEF_TYPE_zgBit_ID = 47,
+      PREDEF_TYPE_ooBit_ID = 48,
+      PREDEF_TYPE_ogBit_ID = 49,
+      /// \brief the 'abit' type in Scaffold
+      PREDEF_TYPE_ABIT_ID = 50
       /// \brief OpenCL image types with auto numeration
 #define IMAGE_TYPE(ImgType, Id, SingletonId, Access, Suffix) \
       PREDEF_TYPE_##Id##_ID,
@@ -961,7 +973,7 @@ namespace clang {
       /// \brief C ucontext_t typedef type
       SPECIAL_TYPE_UCONTEXT_T                  = 7
     };
-    
+
     /// \brief The number of special type IDs.
     const unsigned NumSpecialTypeIDs = 8;
 
@@ -969,7 +981,7 @@ namespace clang {
     ///
     /// These declaration IDs correspond to predefined declarations in the AST
     /// context, such as the NULL declaration ID. Such declarations are never
-    /// actually serialized, since they will be built by the AST context when 
+    /// actually serialized, since they will be built by the AST context when
     /// it is created.
     enum PredefinedDeclIDs {
       /// \brief The NULL declaration.
@@ -1037,7 +1049,7 @@ namespace clang {
     /// \brief Record code for a list of local redeclarations of a declaration.
     /// This can occur within DECLTYPES_BLOCK_ID.
     const unsigned int LOCAL_REDECLARATIONS = 50;
-    
+
     /// \brief Record codes for each kind of declaration.
     ///
     /// These constants describe the declaration records that can occur within
@@ -1222,7 +1234,7 @@ namespace clang {
     ///
     /// These constants describe the records that describe statements
     /// or expressions. These records  occur within type and declarations
-    /// block, so they begin with record values of 128.  Each constant 
+    /// block, so they begin with record values of 128.  Each constant
     /// describes a record for a specific statement or expression class in the
     /// AST.
     enum StmtCode {
@@ -1363,7 +1375,7 @@ namespace clang {
       EXPR_OBJC_ARRAY_LITERAL,
       EXPR_OBJC_DICTIONARY_LITERAL,
 
-    
+
       /// \brief An ObjCEncodeExpr record.
       EXPR_OBJC_ENCODE,
       /// \brief An ObjCSelectorExpr record.
@@ -1405,7 +1417,7 @@ namespace clang {
       EXPR_OBJC_AVAILABILITY_CHECK,
 
       // C++
-      
+
       /// \brief A CXXCatchStmt record.
       STMT_CXX_CATCH,
       /// \brief A CXXTryStmt record.
@@ -1452,9 +1464,9 @@ namespace clang {
       EXPR_CXX_NEW,               // CXXNewExpr
       EXPR_CXX_DELETE,            // CXXDeleteExpr
       EXPR_CXX_PSEUDO_DESTRUCTOR, // CXXPseudoDestructorExpr
-      
+
       EXPR_EXPR_WITH_CLEANUPS,    // ExprWithCleanups
-      
+
       EXPR_CXX_DEPENDENT_SCOPE_MEMBER,   // CXXDependentScopeMemberExpr
       EXPR_CXX_DEPENDENT_SCOPE_DECL_REF, // DependentScopeDeclRefExpr
       EXPR_CXX_UNRESOLVED_CONSTRUCT,     // CXXUnresolvedConstructExpr
@@ -1468,7 +1480,7 @@ namespace clang {
       EXPR_BINARY_CONDITIONAL_OPERATOR,  // BinaryConditionalOperator
       EXPR_TYPE_TRAIT,            // TypeTraitExpr
       EXPR_ARRAY_TYPE_TRAIT,      // ArrayTypeTraitIntExpr
-      
+
       EXPR_PACK_EXPANSION,        // PackExpansionExpr
       EXPR_SIZEOF_PACK,           // SizeOfPackExpr
       EXPR_SUBST_NON_TYPE_TEMPLATE_PARM, // SubstNonTypeTemplateParmExpr
@@ -1478,7 +1490,7 @@ namespace clang {
       EXPR_CXX_FOLD,              // CXXFoldExpr
 
       // CUDA
-      EXPR_CUDA_KERNEL_CALL,       // CUDAKernelCallExpr      
+      EXPR_CUDA_KERNEL_CALL,       // CUDAKernelCallExpr
 
       // OpenCL
       EXPR_ASTYPE,                 // AsTypeExpr
@@ -1588,22 +1600,22 @@ namespace clang {
     struct LocalRedeclarationsInfo {
       DeclID FirstID;      // The ID of the first declaration
       unsigned Offset;     // Offset into the array of redeclaration chains.
-      
+
       friend bool operator<(const LocalRedeclarationsInfo &X,
                             const LocalRedeclarationsInfo &Y) {
         return X.FirstID < Y.FirstID;
       }
-      
+
       friend bool operator>(const LocalRedeclarationsInfo &X,
                             const LocalRedeclarationsInfo &Y) {
         return X.FirstID > Y.FirstID;
       }
-      
+
       friend bool operator<=(const LocalRedeclarationsInfo &X,
                              const LocalRedeclarationsInfo &Y) {
         return X.FirstID <= Y.FirstID;
       }
-      
+
       friend bool operator>=(const LocalRedeclarationsInfo &X,
                              const LocalRedeclarationsInfo &Y) {
         return X.FirstID >= Y.FirstID;
@@ -1614,22 +1626,22 @@ namespace clang {
     struct ObjCCategoriesInfo {
       DeclID DefinitionID; // The ID of the definition
       unsigned Offset;     // Offset into the array of category lists.
-      
+
       friend bool operator<(const ObjCCategoriesInfo &X,
                             const ObjCCategoriesInfo &Y) {
         return X.DefinitionID < Y.DefinitionID;
       }
-      
+
       friend bool operator>(const ObjCCategoriesInfo &X,
                             const ObjCCategoriesInfo &Y) {
         return X.DefinitionID > Y.DefinitionID;
       }
-      
+
       friend bool operator<=(const ObjCCategoriesInfo &X,
                              const ObjCCategoriesInfo &Y) {
         return X.DefinitionID <= Y.DefinitionID;
       }
-      
+
       friend bool operator>=(const ObjCCategoriesInfo &X,
                              const ObjCCategoriesInfo &Y) {
         return X.DefinitionID >= Y.DefinitionID;

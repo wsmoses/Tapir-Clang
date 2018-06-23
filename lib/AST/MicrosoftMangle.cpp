@@ -755,7 +755,7 @@ void MicrosoftCXXNameMangler::mangleUnqualifiedName(const NamedDecl *ND,
     //   type [ -> template-parameters]
     //      \-> namespace[s]
     // What we do is we create a new mangler, mangle the same type (without
-    // a namespace suffix) to a string using the extra mangler and then use 
+    // a namespace suffix) to a string using the extra mangler and then use
     // the mangled type name as a key to check the mangling of different types
     // for aliasing.
 
@@ -1811,6 +1811,11 @@ void MicrosoftCXXNameMangler::mangleType(const BuiltinType *T, Qualifiers,
   case BuiltinType::Char32:
     Out << "_U";
     break;
+  // Scaffold cbit & qbit added here since there is no "default" in here
+  case BuiltinType::Abit:
+  case BuiltinType::Cbit:
+  case BuiltinType::Qbit:
+  case BuiltinType::Qint:
   case BuiltinType::WChar_S:
   case BuiltinType::WChar_U:
     Out << "_W";

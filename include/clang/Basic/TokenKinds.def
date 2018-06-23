@@ -210,6 +210,9 @@ PUNCTUATOR(hash,                "#")
 PUNCTUATOR(hashhash,            "##")
 PUNCTUATOR(hashat,              "#@")
 
+// Scaffold Punctuators
+PUNCTUATOR(dotdot,      "..")
+
 // C++ Support
 PUNCTUATOR(periodstar,          ".*")
 PUNCTUATOR(arrowstar,           "->*")
@@ -250,6 +253,7 @@ PUNCTUATOR(caretcaret,            "^^")
 //   KEYZVECTOR - This is a keyword for the System z vector extensions,
 //                which are heavily based on AltiVec
 //   KEYBORLAND - This is a keyword if Borland extensions are enabled
+//   KEYSCAF  - This is a keyword if Scaffold extensions are enabled
 //   KEYCOROUTINES - This is a keyword if support for the C++ coroutines
 //                   TS is enabled
 //   BOOLSUPPORT - This is a keyword if 'bool' is a built-in type
@@ -304,6 +308,19 @@ KEYWORD(__func__                    , KEYALL)
 KEYWORD(__objc_yes                  , KEYALL)
 KEYWORD(__objc_no                   , KEYALL)
 
+//Scaffold added keywords
+KEYWORD(abit                        , KEYSCAF)
+KEYWORD(cbit                        , KEYSCAF)
+KEYWORD(qbit                        , KEYSCAF)
+KEYWORD(qint                        , KEYSCAF)
+KEYWORD(zero_to_zero                , KEYSCAF)
+KEYWORD(zero_to_garbage             , KEYSCAF)
+KEYWORD(one_to_one                  , KEYSCAF)
+KEYWORD(one_to_garbage              , KEYSCAF)
+KEYWORD(module                      , KEYSCAF)
+KEYWORD(rkqc                        , KEYSCAF)
+KEYWORD(qstruct                     , KEYSCAF)
+KEYWORD(qunion                      , KEYSCAF)
 
 // C++ 2.11p1: Keywords.
 KEYWORD(asm                         , KEYCXX|KEYGNU)
