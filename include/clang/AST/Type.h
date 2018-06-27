@@ -1859,6 +1859,11 @@ public:
   const RecordType *getAsStructureType() const;
   /// NOTE: getAs*ArrayType are methods on ASTContext.
   const RecordType *getAsUnionType() const;
+
+    // Scaffold Additions
+  const RecordType *getAsQstructureType() const;
+  const RecordType *getAsQunionType() const;
+
   const ComplexType *getAsComplexIntegerType() const; // GCC complex int type.
   const ObjCObjectType *getAsObjCInterfaceType() const;
   // The following is a convenience method that returns an ObjCObjectPointerType
@@ -4497,7 +4502,12 @@ enum TagTypeKind {
   /// \brief The "class" keyword.
   TTK_Class,
   /// \brief The "enum" keyword.
-  TTK_Enum
+  TTK_Enum,
+  /// Scaffold additions.
+  /// \brief The "qstruct" keyword.
+  TTK_Qstruct,
+  /// \brief The "qunion" keyword.
+  TTK_Qunion
 };
 
 /// \brief The elaboration keyword that precedes a qualified type name or
@@ -4516,6 +4526,11 @@ enum ElaboratedTypeKeyword {
   /// \brief The "typename" keyword precedes the qualified type name, e.g.,
   /// \c typename T::type.
   ETK_Typename,
+  /// Scaffold additions.
+  /// \brief The "qstruct" keyword introduces the elaborated-type-specifier.
+  ETK_Qstruct,
+  /// \brief The "qunion" keyword introduces the elaborated-type-specifier.
+  ETK_Qunion,
   /// \brief No keyword precedes the qualified type name.
   ETK_None
 };

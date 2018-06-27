@@ -632,6 +632,7 @@ void CodeGenModule::ErrorUnsupported(const Stmt *S, const char *Type) {
   std::string Msg = Type;
   getDiags().Report(Context.getFullLoc(S->getLocStart()), DiagID)
     << Msg << S->getSourceRange();
+  assert( 0 && "fails Unsupported");
 }
 
 /// ErrorUnsupported - Print out an error that codegen doesn't support the

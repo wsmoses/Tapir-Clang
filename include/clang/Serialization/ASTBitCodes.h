@@ -837,7 +837,7 @@ namespace clang {
       PREDEF_TYPE_ooBit_ID = 48,
       PREDEF_TYPE_ogBit_ID = 49,
       /// \brief the 'abit' type in Scaffold
-      PREDEF_TYPE_ABIT_ID = 50
+      PREDEF_TYPE_ABIT_ID = 50,
       /// \brief OpenCL image types with auto numeration
 #define IMAGE_TYPE(ImgType, Id, SingletonId, Access, Suffix) \
       PREDEF_TYPE_##Id##_ID,

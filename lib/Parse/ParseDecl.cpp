@@ -731,7 +731,7 @@ void Parser::ParseNullabilityTypeSpecifiers(ParsedAttributes &attrs) {
       if (!getLangOpts().ObjC1)
         Diag(AttrNameLoc, diag::ext_nullability)
           << AttrName;
-      attrs.addNew(AttrName, AttrNameLoc, nullptr, AttrNameLoc, nullptr, 0, 
+      attrs.addNew(AttrName, AttrNameLoc, nullptr, AttrNameLoc, nullptr, 0,
                    AttributeList::AS_Keyword);
       break;
     }
@@ -839,7 +839,7 @@ VersionTuple Parser::ParseVersionTuple(SourceRange &Range) {
               StopAtSemi | StopBeforeMatch | StopAtCodeCompletion);
     return VersionTuple();
   }
-  
+
   // Warn if separators, be it '.' or '_', do not match.
   if (AfterMajorSeparator != AfterMinorSeparator)
     Diag(Tok, diag::warn_expected_consistent_version_separator);
@@ -1014,7 +1014,7 @@ void Parser::ParseAvailabilityAttribute(IdentifierInfo &Availability,
         continue;
       }
     }
-    
+
     SourceRange VersionRange;
     VersionTuple Version = ParseVersionTuple(VersionRange);
 
@@ -1226,7 +1226,7 @@ void Parser::ParseObjCBridgeRelatedAttribute(IdentifierInfo &ObjCBridgeRelated,
     Diag(Tok, diag::err_expected) << tok::l_paren;
     return;
   }
-  
+
   // Parse the related class name.
   if (Tok.isNot(tok::identifier)) {
     Diag(Tok, diag::err_objcbridge_related_expected_related_class);
@@ -1257,7 +1257,7 @@ void Parser::ParseObjCBridgeRelatedAttribute(IdentifierInfo &ObjCBridgeRelated,
     SkipUntil(tok::r_paren, StopAtSemi);
     return;
   }
-  
+
   // Parse optional instance method name.
   IdentifierLoc *InstanceMethod = nullptr;
   if (Tok.is(tok::identifier))
@@ -1267,14 +1267,14 @@ void Parser::ParseObjCBridgeRelatedAttribute(IdentifierInfo &ObjCBridgeRelated,
     SkipUntil(tok::r_paren, StopAtSemi);
     return;
   }
-  
+
   // Closing ')'.
   if (T.consumeClose())
     return;
-  
+
   if (endLoc)
     *endLoc = T.getCloseLocation();
-  
+
   // Record this attribute
   attrs.addNew(&ObjCBridgeRelated,
                SourceRange(ObjCBridgeRelatedLoc, T.getCloseLocation()),
@@ -2012,7 +2012,7 @@ Parser::DeclGroupPtrTy Parser::ParseDeclGroup(ParsingDeclSpec &DS,
     DeclsInGroup.push_back(FirstDecl);
 
   bool ExpectSemi = Context != Declarator::ForContext;
-  
+
   // If we don't have a comma, it is either the end of the list (a ';') or an
   // error, bail out.
   SourceLocation CommaLoc;
@@ -3519,6 +3519,44 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
       isInvalid = DS.SetTypeSpecType(DeclSpec::TST_char32, Loc, PrevSpec,
                                      DiagID, Policy);
       break;
+
+     // Scaffold declaration specifiers
+    case tok::kw_abit:
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_abit, Loc, PrevSpec,
+                                     DiagID, Policy);
+      break;
+    case tok::kw_cbit:
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_cbit, Loc, PrevSpec,
+                                     DiagID, Policy);
+      break;
+    case tok::kw_qbit:
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_qbit, Loc, PrevSpec,
+                                     DiagID, Policy);
+      break;
+
+    case tok::kw_qint:
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_qbit, Loc, PrevSpec,
+                                     DiagID, Policy);
+      break;
+
+    case tok::kw_zero_to_zero:
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_qbit, Loc, PrevSpec,
+                                     DiagID, Policy);
+      break;
+
+    case tok::kw_zero_to_garbage:
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_qbit, Loc, PrevSpec,
+                                     DiagID, Policy);
+      break;
+    case tok::kw_one_to_one:
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_qbit, Loc, PrevSpec,
+                                     DiagID, Policy);
+      break;
+    case tok::kw_one_to_garbage:
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_qbit, Loc, PrevSpec,
+                                     DiagID, Policy);
+      break;
+
     case tok::kw_bool:
     case tok::kw__Bool:
       if (Tok.is(tok::kw_bool) &&
@@ -3579,7 +3617,10 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
     case tok::kw_class:
     case tok::kw_struct:
     case tok::kw___interface:
-    case tok::kw_union: {
+    case tok::kw_union:
+      // Scaffold.
+    case tok::kw_qstruct:
+    case tok::kw_qunion:  {
       tok::TokenKind Kind = Tok.getKind();
       ConsumeToken();
 
@@ -3692,6 +3733,20 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
       ParseOpenCLQualifiers(DS.getAttributes());
       break;
 
+    // Scaffold qmodule. They are implicitly "void".
+    // FIXME: is this cheating?!
+    case tok::kw_qmodule:
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_void, Loc, PrevSpec,
+              DiagID, Policy);
+
+      break;
+
+    case tok::kw_rkqc:
+      isInvalid = DS.SetTypeSpecType(DeclSpec::TST_void, Loc, PrevSpec,
+              DiagID, Policy);
+
+      break;
+
     case tok::less:
       // GCC ObjC supports types like "<SomeProtocol>" as a synonym for
       // "id<SomeProtocol>".  This is hopelessly old fashioned and dangerous,
@@ -3707,7 +3762,7 @@ void Parser::ParseDeclarationSpecifiers(DeclSpec &DS,
                                PrevSpec, DiagID, Type.get(),
                                Actions.getASTContext().getPrintingPolicy()))
           Diag(StartLoc, DiagID) << PrevSpec;
-        
+
         DS.SetRangeEnd(EndLoc);
       } else {
         DS.SetTypeSpecError();
@@ -3827,6 +3882,8 @@ void Parser::ParseStructDeclaration(
     FirstDeclarator = false;
   }
 }
+
+/// Scaffold qstruct and qunion are embedded here.
 
 /// ParseStructUnionBody
 ///       struct-contents:
@@ -4609,6 +4666,18 @@ bool Parser::isTypeSpecifierQualifier() {
 
     // typedef-name
   case tok::annot_typename:
+
+    // Scaffold type specifiers such as qbit
+  case tok::kw_abit:
+  case tok::kw_cbit:
+  case tok::kw_qbit:
+  case tok::kw_qint:
+  case tok::kw_zero_to_zero:
+  case tok::kw_zero_to_garbage:
+  case tok::kw_one_to_one:
+  case tok::kw_one_to_garbage:
+  case tok::kw_qstruct:
+  case tok::kw_qunion:
     return true;
 
     // GNU ObjC bizarre protocol extension: <proto1,proto2> with implicit 'id'.
@@ -4745,11 +4814,26 @@ bool Parser::isDeclarationSpecifier(bool DisambiguatingWithExpression) {
   case tok::kw__Decimal128:
   case tok::kw___vector:
 
+    // Scaffold type specifiers such as qbit
+  case tok::kw_abit:
+  case tok::kw_cbit:
+  case tok::kw_qbit:
+  case tok::kw_qint:
+  case tok::kw_zero_to_zero:
+  case tok::kw_zero_to_garbage:
+  case tok::kw_one_to_one:
+  case tok::kw_one_to_garbage:
+
     // struct-or-union-specifier (C99) or class-specifier (C++)
   case tok::kw_class:
   case tok::kw_struct:
   case tok::kw_union:
   case tok::kw___interface:
+
+    // Scaffold's qstruct-or-qunion
+  case tok::kw_qstruct:
+  case tok::kw_qunion:
+
     // enum-specifier
   case tok::kw_enum:
 
@@ -5506,7 +5590,7 @@ void Parser::ParseDirectDeclarator(Declarator &D) {
         AllowDeductionGuide = false;
       } else {
         AllowConstructorName = (D.getContext() == Declarator::MemberContext);
-        AllowDeductionGuide = 
+        AllowDeductionGuide =
           (D.getContext() == Declarator::FileContext ||
            D.getContext() == Declarator::MemberContext);
       }
@@ -5950,7 +6034,7 @@ void Parser::ParseFunctionDeclarator(Declarator &D,
     EndLoc = RParenLoc;
   } else {
     if (Tok.isNot(tok::r_paren))
-      ParseParameterDeclarationClause(D, FirstArgAttrs, ParamInfo, 
+      ParseParameterDeclarationClause(D, FirstArgAttrs, ParamInfo,
                                       EllipsisLoc);
     else if (RequiresArg)
       Diag(Tok, diag::err_argument_required_after_attribute);
@@ -6258,12 +6342,12 @@ void Parser::ParseParameterDeclarationClause(
     ParseDeclarationSpecifiers(DS);
 
 
-    // Parse the declarator.  This is "PrototypeContext" or 
-    // "LambdaExprParameterContext", because we must accept either 
+    // Parse the declarator.  This is "PrototypeContext" or
+    // "LambdaExprParameterContext", because we must accept either
     // 'declarator' or 'abstract-declarator' here.
-    Declarator ParmDeclarator(DS, 
+    Declarator ParmDeclarator(DS,
               D.getContext() == Declarator::LambdaExprContext ?
-                                  Declarator::LambdaExprParameterContext : 
+                                  Declarator::LambdaExprParameterContext :
                                                 Declarator::PrototypeContext);
     ParseDeclarator(ParmDeclarator);
 
@@ -6351,7 +6435,7 @@ void Parser::ParseParameterDeclarationClause(
       }
 
       ParamInfo.push_back(DeclaratorChunk::ParamInfo(ParmII,
-                                          ParmDeclarator.getIdentifierLoc(), 
+                                          ParmDeclarator.getIdentifierLoc(),
                                           Param, std::move(DefArgToks)));
     }
 
@@ -6723,6 +6807,14 @@ bool Parser::TryAltiVecVectorTokenOutOfLine() {
   case tok::kw_float:
   case tok::kw_double:
   case tok::kw_bool:
+  case tok::kw_abit:
+  case tok::kw_cbit:
+  case tok::kw_qbit:
+  case tok::kw_qint:
+  case tok::kw_zero_to_zero:
+  case tok::kw_zero_to_garbage:
+  case tok::kw_one_to_one:
+  case tok::kw_one_to_garbage:
   case tok::kw___bool:
   case tok::kw___pixel:
     Tok.setKind(tok::kw___vector);
@@ -6757,6 +6849,14 @@ bool Parser::TryAltiVecTokenOutOfLine(DeclSpec &DS, SourceLocation Loc,
     case tok::kw_float:
     case tok::kw_double:
     case tok::kw_bool:
+    case tok::kw_abit:
+    case tok::kw_cbit:
+    case tok::kw_qbit:
+    case tok::kw_qint:
+    case tok::kw_zero_to_zero:
+    case tok::kw_zero_to_garbage:
+    case tok::kw_one_to_one:
+    case tok::kw_one_to_garbage:
     case tok::kw___bool:
     case tok::kw___pixel:
       isInvalid = DS.SetTypeAltiVecVector(true, Loc, PrevSpec, DiagID, Policy);

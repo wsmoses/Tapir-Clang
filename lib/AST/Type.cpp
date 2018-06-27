@@ -2402,6 +2402,8 @@ TypeWithKeyword::getKeywordForTypeSpec(unsigned TypeSpec) {
   case TST_interface: return ETK_Interface;
   case TST_union: return ETK_Union;
   case TST_enum: return ETK_Enum;
+  case TST_qstruct: return ETK_Qstruct;
+  case TST_qunion: return ETK_Qunion;
   }
 }
 
@@ -2413,6 +2415,8 @@ TypeWithKeyword::getTagTypeKindForTypeSpec(unsigned TypeSpec) {
   case TST_interface: return TTK_Interface;
   case TST_union: return TTK_Union;
   case TST_enum: return TTK_Enum;
+  case TST_qstruct: return TTK_Qstruct;
+  case TST_qunion: return TTK_Qunion;
   }
 
   llvm_unreachable("Type specifier is not a tag type kind.");
@@ -2426,6 +2430,8 @@ TypeWithKeyword::getKeywordForTagTypeKind(TagTypeKind Kind) {
   case TTK_Interface: return ETK_Interface;
   case TTK_Union: return ETK_Union;
   case TTK_Enum: return ETK_Enum;
+  case TST_qstruct: return ETK_Qstruct;
+  case TST_qunion: return ETK_Qunion;
   }
   llvm_unreachable("Unknown tag type kind.");
 }
@@ -2438,6 +2444,8 @@ TypeWithKeyword::getTagTypeKindForKeyword(ElaboratedTypeKeyword Keyword) {
   case ETK_Interface: return TTK_Interface;
   case ETK_Union: return TTK_Union;
   case ETK_Enum: return TTK_Enum;
+  case ETK_Qstruct: return TTK_Qstruct;
+  case ETK_Qunion: return TTK_Qunion;
   case ETK_None: // Fall through.
   case ETK_Typename:
     llvm_unreachable("Elaborated type keyword is not a tag type kind.");
@@ -2456,7 +2464,9 @@ TypeWithKeyword::KeywordIsTagTypeKind(ElaboratedTypeKeyword Keyword) {
   case ETK_Interface:
   case ETK_Union:
   case ETK_Enum:
-    return true;
+  case ETK_Qstruct:
+  case ETK_Qunion:
+      return true;
   }
   llvm_unreachable("Unknown elaborated type keyword.");
 }
@@ -2470,6 +2480,8 @@ StringRef TypeWithKeyword::getKeywordName(ElaboratedTypeKeyword Keyword) {
   case ETK_Interface: return "__interface";
   case ETK_Union:  return "union";
   case ETK_Enum:   return "enum";
+  case ETK_Qstruct: return "qstruct";
+  case ETK_Qunion: return "qunion";
   }
 
   llvm_unreachable("Unknown elaborated type keyword.");

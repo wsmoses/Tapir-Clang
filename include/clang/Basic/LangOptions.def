@@ -80,6 +80,7 @@
 #endif
 
 // FIXME: A lot of the BENIGN_ options should be COMPATIBLE_ instead.
+LANGOPT(Scaffold          , 1, 1, "Scaffold")
 LANGOPT(C99               , 1, 0, "C99")
 LANGOPT(C11               , 1, 0, "C11")
 LANGOPT(MSVCCompat        , 1, 0, "Microsoft Visual C++ full compatibility mode")

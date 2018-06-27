@@ -1945,6 +1945,243 @@ RValue CodeGenFunction::EmitBuiltinExpr(const FunctionDecl *FD,
     StringRef Str = cast<StringLiteral>(AnnotationStrExpr)->getString();
     return RValue::get(EmitAnnotationCall(F, AnnVal, Str, E->getExprLoc()));
   }
+
+  // RKQC
+  case Builtin::BIcnot: {
+    Value *ControlQbit = EmitScalarExpr(E->getArg(0));
+    Value *TargetQbit = EmitScalarExpr(E->getArg(1));
+    std::vector<llvm::Type*> TyVector;
+    TyVector.push_back(ControlQbit->getType());
+    TyVector.push_back(TargetQbit->getType());
+    llvm::ArrayRef<llvm::Type*> Tys = llvm::makeArrayRef(TyVector);
+    Value *F = CGM.getIntrinsic(Intrinsic::cnot, Tys);
+    return RValue::get(Builder.CreateCall(F, {ControlQbit, TargetQbit}));
+  }
+  case Builtin::BItoffoli: {
+    Value *ControlQbit1 = EmitScalarExpr(E->getArg(0));
+    Value *ControlQbit2 = EmitScalarExpr(E->getArg(1));
+    Value *TargetQbit = EmitScalarExpr(E->getArg(2));
+    std::vector<llvm::Type*> TyVector;
+    TyVector.push_back(ControlQbit1->getType());
+    TyVector.push_back(ControlQbit2->getType());
+    TyVector.push_back(TargetQbit->getType());
+    llvm::ArrayRef<llvm::Type*> Tys = llvm::makeArrayRef(TyVector);
+    Value *F = CGM.getIntrinsic(Intrinsic::toffoli, Tys);
+    return RValue::get(
+            Builder.CreateCall(F, {ControlQbit1, ControlQbit2, TargetQbit}));
+  }
+  case Builtin::BINOT: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *F = CGM.getIntrinsic(Intrinsic::NOT,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, TargetQbit));
+  }
+  case Builtin::BIassign_value_of_b_to_a: {
+    Value *ControlQbit = EmitScalarExpr(E->getArg(0));
+    Value *TargetQbit = EmitScalarExpr(E->getArg(1));
+    Value *Size = EmitScalarExpr(E->getArg(2));
+    std::vector<llvm::Type*> TyVector;
+    TyVector.push_back(ControlQbit->getType());
+    TyVector.push_back(TargetQbit->getType());
+    llvm::ArrayRef<llvm::Type*> Tys = llvm::makeArrayRef(TyVector);
+    Value *F = CGM.getIntrinsic(Intrinsic::assign_value_of_b_to_a, Tys);
+    return RValue::get(Builder.CreateCall(F, {ControlQbit, TargetQbit, Size}));
+  }
+  case Builtin::BIassign_value_of_0_to_a: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *Size = EmitScalarExpr(E->getArg(1));
+    Value *F = CGM.getIntrinsic(Intrinsic::assign_value_of_0_to_a,
+            llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, {TargetQbit, Size}));
+  }
+  case Builtin::BIassign_value_of_1_to_a: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *Size = EmitScalarExpr(E->getArg(1));
+    Value *F = CGM.getIntrinsic(Intrinsic::assign_value_of_1_to_a,
+            llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, {TargetQbit, Size}));
+  }
+  case Builtin::BIa_eq_a_plus_b: {
+    Value *ControlQbit = EmitScalarExpr(E->getArg(0));
+    Value *TargetQbit = EmitScalarExpr(E->getArg(1));
+    Value *Size = EmitScalarExpr(E->getArg(2));
+    std::vector<llvm::Type*> TyVector;
+    TyVector.push_back(ControlQbit->getType());
+    TyVector.push_back(TargetQbit->getType());
+    llvm::ArrayRef<llvm::Type*> Tys = llvm::makeArrayRef(TyVector);
+    Value *F = CGM.getIntrinsic(Intrinsic::a_eq_a_plus_b, Tys);
+    return RValue::get(Builder.CreateCall(F, {ControlQbit, TargetQbit, Size}));
+  }
+  case Builtin::BIa_eq_a_minus_b: {
+    Value *ControlQbit = EmitScalarExpr(E->getArg(0));
+    Value *TargetQbit = EmitScalarExpr(E->getArg(1));
+    Value *Size = EmitScalarExpr(E->getArg(2));
+    std::vector<llvm::Type*> TyVector;
+    TyVector.push_back(ControlQbit->getType());
+    TyVector.push_back(TargetQbit->getType());
+    llvm::ArrayRef<llvm::Type*> Tys = llvm::makeArrayRef(TyVector);
+    Value *F = CGM.getIntrinsic(Intrinsic::a_eq_a_minus_b, Tys);
+    return RValue::get(Builder.CreateCall(F, {ControlQbit, TargetQbit, Size}));
+  }
+  case Builtin::BIa_eq_a_plus_b_times_c: {
+    Value *ControlQbit = EmitScalarExpr(E->getArg(0));
+    Value *TargetQbit = EmitScalarExpr(E->getArg(1));
+    Value *TargetQbit2 = EmitScalarExpr(E->getArg(2));
+    Value *Size = EmitScalarExpr(E->getArg(3));
+    std::vector<llvm::Type*> TyVector;
+    TyVector.push_back(ControlQbit->getType());
+    TyVector.push_back(TargetQbit->getType());
+    TyVector.push_back(TargetQbit2->getType());
+    llvm::ArrayRef<llvm::Type*> Tys = llvm::makeArrayRef(TyVector);
+    Value *F = CGM.getIntrinsic(Intrinsic::a_eq_a_plus_b_times_c, Tys);
+    return RValue::get(Builder.CreateCall(
+                F, {ControlQbit, TargetQbit, TargetQbit2, Size}));
+  }
+  case Builtin::BIa_swap_b: {
+    Value *ControlQbit = EmitScalarExpr(E->getArg(0));
+    Value *TargetQbit = EmitScalarExpr(E->getArg(1));
+    Value *Size = EmitScalarExpr(E->getArg(2));
+    std::vector<llvm::Type*> TyVector;
+    TyVector.push_back(ControlQbit->getType());
+    TyVector.push_back(TargetQbit->getType());
+    llvm::ArrayRef<llvm::Type*> Tys = llvm::makeArrayRef(TyVector);
+    Value *F = CGM.getIntrinsic(Intrinsic::a_swap_b, Tys);
+    return RValue::get(Builder.CreateCall(F, {ControlQbit, TargetQbit, Size}));
+  }
+
+  // Scaffold
+  case Builtin::BICNOT: {
+    Value *ControlQbit = EmitScalarExpr(E->getArg(0));
+    Value *TargetQbit = EmitScalarExpr(E->getArg(1));
+    std::vector<llvm::Type*> TyVector;
+    TyVector.push_back(ControlQbit->getType());
+    TyVector.push_back(TargetQbit->getType());
+    llvm::ArrayRef<llvm::Type*> Tys = llvm::makeArrayRef(TyVector);
+    Value *F = CGM.getIntrinsic(Intrinsic::CNOT, Tys);
+    return RValue::get(Builder.CreateCall(F, {ControlQbit, TargetQbit}));
+  }
+  case Builtin::BIX: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *F = CGM.getIntrinsic(Intrinsic::X,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, TargetQbit));
+  }
+  case Builtin::BIY: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *F = CGM.getIntrinsic(Intrinsic::Y,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, TargetQbit));
+  }
+  case Builtin::BIZ: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *F = CGM.getIntrinsic(Intrinsic::Z,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, TargetQbit));
+  }
+  case Builtin::BIH: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *F = CGM.getIntrinsic(Intrinsic::H,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, TargetQbit));
+  }
+  case Builtin::BIT: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *F = CGM.getIntrinsic(Intrinsic::T,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, TargetQbit));
+  }
+  case Builtin::BITdag: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *F = CGM.getIntrinsic(Intrinsic::Tdag,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, TargetQbit));
+  }
+  case Builtin::BIS: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *F = CGM.getIntrinsic(Intrinsic::S,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, TargetQbit));
+  }
+  case Builtin::BISdag: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *F = CGM.getIntrinsic(Intrinsic::Sdag,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, TargetQbit));
+  }
+  case Builtin::BIRx: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *TargetDouble = EmitScalarExpr(E->getArg(1));
+    Value *F = CGM.getIntrinsic(Intrinsic::Rx,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, {TargetQbit, TargetDouble}));
+  }
+  case Builtin::BIRy: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *TargetDouble = EmitScalarExpr(E->getArg(1));
+    Value *F = CGM.getIntrinsic(Intrinsic::Ry,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, {TargetQbit, TargetDouble}));
+  }
+  case Builtin::BIRz: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *TargetDouble = EmitScalarExpr(E->getArg(1));
+    Value *F = CGM.getIntrinsic(Intrinsic::Rz,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, {TargetQbit, TargetDouble}));
+  }
+  case Builtin::BIPrepX: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *TargetInt = EmitScalarExpr(E->getArg(1));
+    Value *F = CGM.getIntrinsic(Intrinsic::PrepX,
+            llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, {TargetQbit, TargetInt}));
+  }
+  case Builtin::BIPrepZ: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *TargetInt = EmitScalarExpr(E->getArg(1));
+    Value *F = CGM.getIntrinsic(Intrinsic::PrepZ,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, {TargetQbit, TargetInt}));
+  }
+  case Builtin::BIMeasX: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *F = CGM.getIntrinsic(Intrinsic::MeasX,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, TargetQbit));
+  }
+  case Builtin::BIMeasZ: {
+    Value *TargetQbit = EmitScalarExpr(E->getArg(0));
+    Value *F = CGM.getIntrinsic(Intrinsic::MeasZ,
+        llvm::makeArrayRef(TargetQbit->getType()));
+    return RValue::get(Builder.CreateCall(F, TargetQbit));
+  }
+  case Builtin::BIToffoli: {
+    Value *ControlQbit1 = EmitScalarExpr(E->getArg(0));
+    Value *ControlQbit2 = EmitScalarExpr(E->getArg(1));
+    Value *TargetQbit = EmitScalarExpr(E->getArg(2));
+    std::vector<llvm::Type*> TyVector;
+    TyVector.push_back(ControlQbit1->getType());
+    TyVector.push_back(ControlQbit2->getType());
+    TyVector.push_back(TargetQbit->getType());
+    llvm::ArrayRef<llvm::Type*> Tys = llvm::makeArrayRef(TyVector);
+    Value *F = CGM.getIntrinsic(Intrinsic::Toffoli, Tys);
+    return RValue::get(
+            Builder.CreateCall(F, {ControlQbit1, ControlQbit2, TargetQbit}));
+  }
+  case Builtin::BIFredkin: {
+    Value *ControlQreg = EmitScalarExpr(E->getArg(0));
+    Value *TargetQbit1 = EmitScalarExpr(E->getArg(1));
+    Value *TargetQbit2 = EmitScalarExpr(E->getArg(2));
+    std::vector<llvm::Type*> TyVector;
+    TyVector.push_back(ControlQreg->getType());
+    TyVector.push_back(TargetQbit1->getType());
+    TyVector.push_back(TargetQbit2->getType());
+    llvm::ArrayRef<llvm::Type*> Tys = llvm::makeArrayRef(TyVector);
+    Value *F = CGM.getIntrinsic(Intrinsic::Fredkin, Tys);
+    return RValue::get(
+            Builder.CreateCall(F, {ControlQreg, TargetQbit1, TargetQbit2}));
+  }
+
   case Builtin::BI__builtin_addcb:
   case Builtin::BI__builtin_addcs:
   case Builtin::BI__builtin_addc:

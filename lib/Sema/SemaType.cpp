@@ -1419,7 +1419,9 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
   case DeclSpec::TST_enum:
   case DeclSpec::TST_union:
   case DeclSpec::TST_struct:
-  case DeclSpec::TST_interface: {
+  case DeclSpec::TST_interface:
+  case DeclSpec::TST_qstruct: // Scaffold's Additions
+  case DeclSpec::TST_qunion: {
     TypeDecl *D = dyn_cast_or_null<TypeDecl>(DS.getRepAsDecl());
     if (!D) {
       // This can happen in C++ with ambiguous lookups.
@@ -1543,6 +1545,16 @@ static QualType ConvertDeclSpecToType(TypeProcessingState &state) {
     Result = Context.IntTy;
     declarator.setInvalidType(true);
     break;
+
+  // Scaffold types
+  case DeclSpec::TST_abit: Result = Context.AbitTy; break;
+  case DeclSpec::TST_cbit: Result = Context.CbitTy; break;
+  case DeclSpec::TST_qbit: Result = Context.QbitTy; break;
+  case DeclSpec::TST_qint: Result = Context.QintTy; break;
+  case DeclSpec::TST_zero_to_zero: Result = Context.QintTy; break;
+  case DeclSpec::TST_zero_to_garbage: Result = Context.QintTy; break;
+  case DeclSpec::TST_one_to_one: Result = Context.QintTy; break;
+  case DeclSpec::TST_one_to_garbage: Result = Context.QintTy; break;
   }
 
   if (S.getLangOpts().OpenCL &&
@@ -2822,6 +2834,8 @@ static QualType GetDeclSpecTypeForDeclarator(TypeProcessingState &state,
       case TTK_Union:  Error = Cxx ? 3 : 4; /* Union member */ break;
       case TTK_Class:  Error = 5; /* Class member */ break;
       case TTK_Interface: Error = 6; /* Interface member */ break;
+      case TTK_Qstruct:
+      case TTK_Qunion: llvm_unreachable("unhandled quantum tag");
       }
       if (D.getDeclSpec().isFriendSpecified())
         Error = 20; // Friend type

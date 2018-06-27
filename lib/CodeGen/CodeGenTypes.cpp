@@ -443,6 +443,45 @@ llvm::Type *CodeGenTypes::ConvertType(QualType T) {
                                  static_cast<unsigned>(Context.getTypeSize(T)));
       break;
 
+    // Scaffold
+    case BuiltinType::Abit:
+      ResultType = llvm::IntegerType::get(getLLVMContext(),
+                                 static_cast<unsigned>(Context.getTypeSize(T)));
+      break;
+
+    // Scaffold Cbit copied from Qbit
+    case BuiltinType::Cbit:
+      ResultType = llvm::IntegerType::get(getLLVMContext(),
+                                 static_cast<unsigned>(Context.getTypeSize(T)));
+      break;
+
+    // Scaffold Qbit added to avoid warning
+    case BuiltinType::Qbit:
+      ResultType = llvm::IntegerType::get(getLLVMContext(),
+                                 static_cast<unsigned>(Context.getTypeSize(T)));
+      break;
+
+    case BuiltinType::Qint:
+      ResultType = llvm::IntegerType::get(getLLVMContext(),
+                                 static_cast<unsigned>(Context.getTypeSize(T)));
+      break;
+    case BuiltinType::zzBit:
+      ResultType = llvm::IntegerType::get(getLLVMContext(),
+                                 static_cast<unsigned>(Context.getTypeSize(T)));
+      break;
+    case BuiltinType::zgBit:
+      ResultType = llvm::IntegerType::get(getLLVMContext(),
+                                 static_cast<unsigned>(Context.getTypeSize(T)));
+      break;
+    case BuiltinType::ooBit:
+      ResultType = llvm::IntegerType::get(getLLVMContext(),
+                                 static_cast<unsigned>(Context.getTypeSize(T)));
+      break;
+    case BuiltinType::ogBit:
+      ResultType = llvm::IntegerType::get(getLLVMContext(),
+                                 static_cast<unsigned>(Context.getTypeSize(T)));
+      break;
+
     case BuiltinType::Half:
       // Half FP can either be storage-only (lowered to i16) or native.
       ResultType =
