@@ -91,6 +91,15 @@ set(files
   xsaveoptintrin.h
   xsavesintrin.h
   xtestintrin.h
+  )
+
+set(cuda_wrapper_files
+  cuda_wrappers/algorithm
+  cuda_wrappers/complex
+  cuda_wrappers/new
+)
+
+set(cilk_files
   cilk/cilk.h
   cilk/cilk_api.h
   cilk/cilk_api_linux.h
@@ -113,21 +122,21 @@ set(files
   cilk/reducer_opxor.h
   cilk/reducer_ostream.h
   cilk/reducer_string.h
+)
+
+set(cilktools_files
   cilktools/cilkscreen.h
   cilktools/cilkview.h
   cilktools/fake_mutex.h
   cilktools/lock_guard.h
+)
+
+set(internal_files
   internal/abi.h
   internal/cilk_fake.h
   internal/cilk_version.h
   internal/metacall.h
   internal/rev.mk
-  )
-
-set(cuda_wrapper_files
-  cuda_wrappers/algorithm
-  cuda_wrappers/complex
-  cuda_wrappers/new
 )
 
 set(output_dir ${LLVM_LIBRARY_OUTPUT_INTDIR}/clang/${CLANG_VERSION}/include)
@@ -137,7 +146,7 @@ clang_tablegen(arm_neon.h -gen-arm-neon
   SOURCE ${CLANG_SOURCE_DIR}/include/clang/Basic/arm_neon.td)
 
 set(out_files)
-foreach( f ${files} ${cuda_wrapper_files} )
+foreach( f ${files} ${cuda_wrapper_files} ${cilk_files} ${cilktools_files} ${internal_files} )
   set( src ${CMAKE_CURRENT_SOURCE_DIR}/${f} )
   set( dst ${output_dir}/${f} )
   add_custom_command(OUTPUT ${dst}
@@ -167,6 +176,24 @@ install(
   COMPONENT clang-headers
   PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
   DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/cuda_wrappers)
+
+install(
+  FILES ${cilk_files}
+  COMPONENT clang-headers
+  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+  DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/cilk)
+
+install(
+  FILES ${cilktools_files}
+  COMPONENT clang-headers
+  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+  DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/cilktools)
+
+install(
+  FILES ${internal_files}
+  COMPONENT clang-headers
+  PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
+  DESTINATION lib${LLVM_LIBDIR_SUFFIX}/clang/${CLANG_VERSION}/include/internal)
 
 if (NOT CMAKE_CONFIGURATION_TYPES) # don't add this for IDE's.
   add_custom_target(install-clang-headers
