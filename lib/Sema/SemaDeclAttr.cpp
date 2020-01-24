@@ -3621,6 +3621,36 @@ void Sema::AddAlignValueAttr(SourceRange AttrRange, Decl *D, Expr *E,
   D->addAttr(::new (Context) AlignValueAttr(TmpAttr));
 }
 
+static void handleReducerAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
+  S.AddReducerAttr(AL.getRange(), D, AL.getArgAsExpr(0), AL.getArgAsExpr(1), AL.getArgAsExpr(2),
+                      AL.getAttributeSpellingListIndex());
+}
+
+void Sema::AddReducerAttr(SourceRange AttrRange, Decl *D, Expr *Red, Expr *Init, Expr *Dest,
+                             unsigned SpellingListIndex) {
+  SourceLocation AttrLoc = AttrRange.getBegin();
+
+  llvm::errs() << "red\n"; Red->dump();
+  llvm::errs() << "init\n"; Init->dump();
+  llvm::errs() << "dest\n"; Dest->dump();
+  QualType T;
+  if (auto *TD = dyn_cast<TypedefNameDecl>(D))
+    T = TD->getUnderlyingType();
+  else if (auto *VD = dyn_cast<ValueDecl>(D)) {
+    T = VD->getType();
+    VD->setType(T);
+  }
+  else
+    llvm_unreachable("Unknown decl type for reducer");
+
+  llvm::errs() << "type of decl\n"; T->dump();
+
+    D->addAttr(::new (Context)
+               ReducerAttr(AttrRange, Context, Red, Init,Dest,
+               SpellingListIndex));
+    return;
+}
+
 static void handleAlignedAttr(Sema &S, Decl *D, const ParsedAttr &AL) {
   // check the attribute arguments.
   if (AL.getNumArgs() > 1) {
@@ -6413,6 +6443,9 @@ static void ProcessDeclAttribute(Sema &S, Scope *scope, Decl *D,
     break;
   case ParsedAttr::AT_AlignValue:
     handleAlignValueAttr(S, D, AL);
+    break;
+  case ParsedAttr::AT_Reducer:
+    handleReducerAttr(S, D, AL);
     break;
   case ParsedAttr::AT_AllocSize:
     handleAllocSizeAttr(S, D, AL);
